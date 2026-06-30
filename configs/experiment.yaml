@@ -1,0 +1,35 @@
+base_url: "http://127.0.0.1:8000"
+endpoint: "/v1/completions"
+model: ""                 # empty means query the served name from /v1/models
+tokenizer: "Qwen/Qwen3-8B"
+use_token_ids: true
+
+# workload buckets spanning short chat to long context
+buckets:
+  - {input_len: 128,  output_len: 128, weight: 1.0}
+  - {input_len: 1024, output_len: 256, weight: 1.0}
+  - {input_len: 4096, output_len: 256, weight: 1.0}
+  - {input_len: 8192, output_len: 512, weight: 0.5}
+seed: 1234
+
+mode: "closed"            # closed for fixed concurrency, open for Poisson arrivals
+concurrency: 16
+qps: 4.0
+max_inflight: 512
+warmup_s: 15.0
+measure_s: 60.0
+request_timeout_s: 600.0
+
+# service level objective used for goodput
+ttft_slo_s: 1.0
+itl_slo_s: 0.05
+
+power_backend: "none"     # none, nvidia_smi, sysfs, tegrastats
+power_sysfs_path: ""
+power_rails: []
+power_interval_ms: 100
+scrape_vllm_metrics: true
+
+config_label: "single"
+out_dir: "results"
+run_note: ""
