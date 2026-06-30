@@ -34,3 +34,9 @@ export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm:26.04-py3}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+
+# nvcr.io/nvidia/vllm tags do not consistently bundle Ray (26.04-py3 does not,
+# though earlier tags did), so start_ray.sh installs it explicitly. Pinned to
+# the version NVIDIA's own 26.01-py3 image shipped, a combination already
+# validated against this vLLM build. Re-check when bumping VLLM_IMAGE.
+export RAY_VERSION="${RAY_VERSION:-2.53.0}"

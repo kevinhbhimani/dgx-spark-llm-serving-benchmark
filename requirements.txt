@@ -2,3 +2,5 @@ aiohttp>=3.9
 numpy>=1.24
 transformers>=4.44
 pyyaml>=6.0
+pandas
+matplotlib

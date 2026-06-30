@@ -3,12 +3,18 @@
 #   On Diya:   scripts/start_ray.sh head
 #   On Hoedus: scripts/start_ray.sh worker
 #   Either:    scripts/start_ray.sh stop
-# Ray runs inside the container so its version matches the vLLM build exactly.
+# Ray runs inside the container, installed at a pinned version (RAY_VERSION),
+# so head and worker always agree even though it isn't bundled in every image tag.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
 
 ROLE="${1:-head}"
+
+# Installed at container start rather than baked into the image: some
+# nvcr.io/nvidia/vllm tags (e.g. 26.04-py3) do not bundle Ray. See RAY_VERSION
+# in connectx_env.sh.
+RAY_SETUP="pip install -q 'ray[default]==$RAY_VERSION'"
 
 docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
@@ -25,8 +31,23 @@ show_container_logs() {
 }
 
 require_running() {
-  sleep 8
-  if ! docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null | grep -q true; then
+  # The container installs ray[default] before calling `ray start` (see
+  # RAY_SETUP above), which can take well over a minute on a slow or flaky
+  # DNS path to pypi.org, so poll for readiness instead of a fixed sleep.
+  local waited=0 timeout=180
+  while (( waited < timeout )); do
+    if ! docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null | grep -q true; then
+      show_container_logs
+      exit 1
+    fi
+    if docker exec "$VLLM_CONTAINER" ray status >/dev/null 2>&1; then
+      break
+    fi
+    sleep 3
+    waited=$((waited + 3))
+  done
+  if (( waited >= timeout )); then
+    echo "[ray] timed out after ${timeout}s waiting for ray status" >&2
     show_container_logs
     exit 1
   fi
@@ -39,7 +60,7 @@ case "$ROLE" in
     echo "[ray] head on $HEAD_IP:$RAY_PORT over $CX_IFACE"
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$HEAD_IP" "$VLLM_IMAGE" \
-      -lc "ray start --head --node-ip-address=$HEAD_IP --port=$RAY_PORT --block"
+      -lc "$RAY_SETUP && ray start --head --node-ip-address=$HEAD_IP --port=$RAY_PORT --block"
     ;;
   worker)
     LOCAL_IP="$(ip -4 -o addr show "$CX_IFACE" | awk '{print $4}' | cut -d/ -f1)"
@@ -50,7 +71,7 @@ case "$ROLE" in
     echo "[ray] worker $LOCAL_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$LOCAL_IP" "$VLLM_IMAGE" \
-      -lc "ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$LOCAL_IP --block"
+      -lc "$RAY_SETUP && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$LOCAL_IP --block"
     ;;
   stop)
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
