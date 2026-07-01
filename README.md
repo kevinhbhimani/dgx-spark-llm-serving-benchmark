@@ -361,6 +361,20 @@ Available formats are `pdf`, `png`, and `both`. The plotting script writes
 throughput scaling, latency-throughput, tail latency, goodput, capacity,
 reliability, and energy figures when the needed columns are present.
 
+If a sweep was rerun so the same `config_label` and load (concurrency or
+`qps`) appear twice in `index.csv`, `plot_results.py` keeps only the run with
+more completed requests (its percentiles rest on a larger sample) and prints
+a `note:` line naming both runs so you can compare them yourself; without
+this, two contradictory points at the same x value draw a zigzag through the
+figures instead of a curve. Separately, any point backed by fewer than
+`--min-samples` completed requests (default 20) is circled in the figures
+and listed in a `warning:` line, since its percentiles are small-sample noise
+rather than a real reading, not a capacity signal to draw conclusions from.
+This shows up at the lowest loads (few requests fit in the window even when
+the server keeps up) and at loads beyond a config's capacity (requests queue
+faster than they complete, so few finish inside the window at all). A longer
+`--measure-s` gives more completions to trust at high concurrency.
+
 ## Metric Semantics
 
 The logical measurement window starts after warmup and lasts `measure_s`
@@ -493,3 +507,12 @@ extra checks if installed locally.
   block for the same window as throughput.
 - Interconnect model validation: record the `all_reduce_perf` log from
   `scripts/interconnect_microbench.sh` alongside the serving sweep.
+- `tp2`/`pp2` capacity ceiling: on a ConnectX Ethernet link (not NVLink), a
+  `tp2` sweep can peak at a much lower concurrency than `single` and then
+  collapse (completions per window fall toward zero, KV cache occupancy
+  stays low throughout, ruling out KV cache exhaustion as the cause). This
+  points at cross-node all-reduce overhead as the bottleneck rather than a
+  benchmark defect; confirm with the `interconnect_microbench.sh` log, and
+  rerun the collapsed points with a longer `--measure-s` before reporting
+  their percentiles, since few completions per window means those numbers
+  are noise (see `plot_results.py`'s low-sample circles).

@@ -23,8 +23,13 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")                      # headless, safe over ssh
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, NullFormatter
 
+
+# Below this many completions in the measurement window, percentiles are small
+# sample noise rather than a real reading (see fig_* functions and warn_low_n).
+MIN_SAMPLES = 20
 
 # ---- configuration appearance ------------------------------------------------
 CONFIG_ORDER = ["single", "tp2", "pp2"]
@@ -116,7 +121,10 @@ def style_for(cfg: str, i: int) -> dict:
 
 
 def group(df: pd.DataFrame, cfg: str):
-    """Return (sorted_subframe, load_column, mode) for one configuration."""
+    """Return (sorted_subframe, load_column, mode) for one configuration.
+
+    Assumes df has already been deduplicated by dedupe_index().
+    """
     g = df[df["config_label"] == cfg].copy()
     mode = str(g["mode"].iloc[0]) if "mode" in g.columns and len(g) else "closed"
     load_col = "concurrency" if mode == "closed" else "target_qps"
@@ -125,8 +133,99 @@ def group(df: pd.DataFrame, cfg: str):
     return g.sort_values(load_col), load_col, mode
 
 
+def dedupe_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop duplicate (config, load) rows, keeping the better-supported run.
+
+    If the same load value was measured more than once (e.g. a sweep was
+    rerun), plotting all of them draws a line that zigzags through two
+    contradictory points at the same x value. Keep the run with more
+    completed requests, since its percentiles rest on a larger sample; ties
+    go to the chronologically later run. Dropped runs are reported so the
+    discrepancy can be investigated in index.csv.
+    """
+    parts = []
+    for cfg in configs_present(df):
+        g = df[df["config_label"] == cfg].copy()   # preserves file/chronological order
+        mode = str(g["mode"].iloc[0]) if "mode" in g.columns and len(g) else "closed"
+        load_col = "concurrency" if mode == "closed" else "target_qps"
+        if load_col not in g.columns:
+            load_col = "concurrency" if "concurrency" in g.columns else g.columns[0]
+        if "requests_completed" in g.columns:
+            # stable sort: ties keep chronological order, so keep="last" below
+            # then prefers the later run among equally-supported duplicates
+            g = g.sort_values("requests_completed", kind="stable", na_position="first")
+        dup_mask = g.duplicated(subset=[load_col], keep="last")
+        if dup_mask.any():
+            kept = g[~dup_mask]
+            for _, row in g[dup_mask].iterrows():
+                match = kept[kept[load_col] == row[load_col]]
+                winner = match.iloc[0] if len(match) else None
+                winner_tag = winner.get("run_tag", "?") if winner is not None else "?"
+                n_dropped = row.get("requests_completed", "?")
+                n_winner = winner.get("requests_completed", "?") if winner is not None else "?"
+                print(f"  note: {cfg} {load_col}={row[load_col]:g}: run "
+                      f"{row.get('run_tag', '?')} (n={n_dropped}) superseded by "
+                      f"{winner_tag} (n={n_winner}); dropped from the figures "
+                      f"(compare both in index.csv)")
+            g = kept
+        parts.append(g)
+    return pd.concat(parts) if parts else df
+
+
 def has(df: pd.DataFrame, cols: list[str]) -> bool:
     return all(c in df.columns and df[c].notna().any() for c in cols)
+
+
+def mark_low_n(ax, g, xcol: str, ycol: str) -> bool:
+    """Circle points backed by fewer than MIN_SAMPLES completions.
+
+    Returns whether any point was marked, so callers can add a legend entry.
+    """
+    if "requests_completed" not in g.columns:
+        return False
+    mask = g["requests_completed"] < MIN_SAMPLES
+    if not mask.any():
+        return False
+    ax.scatter(g.loc[mask, xcol], g.loc[mask, ycol], s=90, facecolors="none",
+               edgecolors="0.15", linewidths=1.3, zorder=6)
+    return True
+
+
+LOW_N_PROXY = Line2D([], [], marker="o", linestyle="none", markersize=7,
+                     markerfacecolor="none", markeredgecolor="0.15",
+                     label=f"n < {MIN_SAMPLES} (unreliable)")
+
+
+def add_low_n_legend(ax, any_marked: bool, **legend_kwargs) -> None:
+    """Re-add the legend with a low-n proxy entry appended.
+
+    Pass the same kwargs (loc, fontsize, ncol, ...) used for the figure's
+    original ax.legend() call so this doesn't reset its placement.
+    """
+    if not any_marked:
+        return
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles + [LOW_N_PROXY], labels + [LOW_N_PROXY.get_label()],
+              **legend_kwargs)
+
+
+def warn_low_n(df: pd.DataFrame) -> None:
+    if "requests_completed" not in df.columns:
+        return
+    any_bad = False
+    for cfg in configs_present(df):
+        g, lc, _ = group(df, cfg)
+        bad = g[g["requests_completed"] < MIN_SAMPLES]
+        if len(bad):
+            any_bad = True
+            pts = ", ".join(f"{lc}={v:g} (n={int(n)})"
+                            for v, n in zip(bad[lc], bad["requests_completed"]))
+            print(f"  warning: {cfg} has {len(bad)} point(s) with fewer than "
+                  f"{MIN_SAMPLES} completed requests in the window: {pts}")
+    if any_bad:
+        print(f"           percentiles at those loads are small-sample noise, not "
+              f"a capacity reading; circled (o) in the figures. A longer "
+              f"--measure-s at high concurrency gives more completions to trust.")
 
 
 def set_load_axis(ax, loads, mode: str) -> None:
@@ -161,16 +260,19 @@ def fig_throughput_scaling(df, out, fmts):
         return
     fig, ax = plt.subplots(figsize=(COL_W, PANEL_H))
     all_loads = []
+    any_low_n = False
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
         ax.plot(g[lc], g["tok_thru_tps"], marker=s["marker"], color=s["color"],
                 label=s["label"])
+        any_low_n |= mark_low_n(ax, g, lc, "tok_thru_tps")
         all_loads += g[lc].tolist()
     set_load_axis(ax, all_loads, mode)
     ax.set_ylabel("Output token throughput (tok/s)")
     ax.set_ylim(bottom=0)
     ax.legend()
+    add_low_n_legend(ax, any_low_n)
     save(fig, "throughput_scaling", out, fmts)
 
 
@@ -178,6 +280,7 @@ def fig_latency_throughput(df, out, fmts):
     if not has(df, ["tok_thru_tps", "ttft_p50", "itl_p50"]):
         return
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
+    any_low_n = False
     for i, cfg in enumerate(configs_present(df)):
         g, lc, _ = group(df, cfg)
         s = style_for(cfg, i)
@@ -185,6 +288,8 @@ def fig_latency_throughput(df, out, fmts):
                  color=s["color"], label=s["label"])
         axr.plot(g["tok_thru_tps"], g["itl_p50"] * 1e3, marker=s["marker"],
                  color=s["color"], label=s["label"])
+        any_low_n |= mark_low_n(axl, g, "tok_thru_tps", "ttft_p50")
+        any_low_n |= mark_low_n(axr, g, "tok_thru_tps", "itl_p50")
         # annotate each point with its load so the swept parameter is visible
         for x, y, c in zip(g["tok_thru_tps"], g["ttft_p50"] * 1e3, g[lc]):
             if pd.notna(x) and pd.notna(y):
@@ -197,6 +302,7 @@ def fig_latency_throughput(df, out, fmts):
     axr.set_ylabel("Median inter token latency (ms)")
     axr.set_ylim(bottom=0)
     axl.legend()
+    add_low_n_legend(axl, any_low_n)
     save(fig, "latency_throughput", out, fmts)
 
 
@@ -205,6 +311,7 @@ def fig_tail_latency(df, out, fmts):
         return
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
     all_loads = []
+    any_low_n = False
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
@@ -216,12 +323,19 @@ def fig_tail_latency(df, out, fmts):
                  color=s["color"], label=f"{s['label']} p50")
         axr.plot(g[lc], g["itl_p99"] * 1e3, marker=s["marker"], linestyle="--",
                  color=s["color"], alpha=0.7, label=f"{s['label']} p99")
+        any_low_n |= mark_low_n(axl, g, lc, "ttft_p50")
+        any_low_n |= mark_low_n(axl, g, lc, "ttft_p99")
+        any_low_n |= mark_low_n(axr, g, lc, "itl_p50")
+        any_low_n |= mark_low_n(axr, g, lc, "itl_p99")
         all_loads += g[lc].tolist()
     for ax, title in ((axl, "TTFT (ms)"), (axr, "Inter token latency (ms)")):
         set_load_axis(ax, all_loads, mode)
         ax.set_yscale("log")
         ax.set_ylabel(title)
-    axl.legend(ncol=1)
+    tail_legend_kwargs = dict(ncol=2, loc="upper center",
+                              bbox_to_anchor=(0.5, -0.18), fontsize=7)
+    axl.legend(**tail_legend_kwargs)
+    add_low_n_legend(axl, any_low_n, **tail_legend_kwargs)
     save(fig, "tail_latency", out, fmts)
 
 
@@ -230,6 +344,7 @@ def fig_goodput(df, out, fmts):
         return
     fig, ax = plt.subplots(figsize=(COL_W, PANEL_H))
     all_loads = []
+    any_low_n = False
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
@@ -239,11 +354,13 @@ def fig_goodput(df, out, fmts):
             ax.plot(g[lc], g["req_thru_rps"], marker=s["marker"], linestyle=":",
                     color=s["color"], alpha=0.5,
                     label=f"{s['label']} achieved")
+        any_low_n |= mark_low_n(ax, g, lc, "goodput_rps")
         all_loads += g[lc].tolist()
     set_load_axis(ax, all_loads, mode)
     ax.set_ylabel("Goodput under SLO (req/s)")
     ax.set_ylim(bottom=0)
     ax.legend()
+    add_low_n_legend(ax, any_low_n)
     save(fig, "goodput", out, fmts)
 
 
@@ -330,18 +447,27 @@ def fig_energy(df, out, fmts):
 
 # ---- main --------------------------------------------------------------------
 def main() -> None:
+    global MIN_SAMPLES
     ap = argparse.ArgumentParser(description="Plot PMBS26 figures from index.csv")
     ap.add_argument("--index", default="results/index.csv")
     ap.add_argument("--out", default="figs")
     ap.add_argument("--format", default="both", choices=["pdf", "png", "both"])
     ap.add_argument("--dpi", type=int, default=200)
+    ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES,
+                    help="completions below this make a point's percentiles "
+                         "unreliable; such points are circled (default: %(default)s)")
     args = ap.parse_args()
+
+    MIN_SAMPLES = args.min_samples
+    LOW_N_PROXY.set_label(f"n < {MIN_SAMPLES} (unreliable)")
 
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
     set_rc(args.dpi)
     df = load_index(args.index)
 
     print(f"loaded {len(df)} rows, configs: {', '.join(configs_present(df))}")
+    df = dedupe_index(df)
+    warn_low_n(df)
     fig_throughput_scaling(df, args.out, fmts)
     fig_latency_throughput(df, args.out, fmts)
     fig_tail_latency(df, args.out, fmts)
