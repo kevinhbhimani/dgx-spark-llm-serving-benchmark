@@ -36,12 +36,18 @@ class Workload:
         if self.tok is None:
             return None
         max_input = max((b.input_len for b in self.cfg.buckets), default=8192)
-        words = max(max_input * 4, 32768)
-        text = " ".join(
-            f"benchmark_segment_{i}_latency_cache_{(i * 17) % 997}"
-            for i in range(words)
-        )
-        return self.tok(text, add_special_tokens=False)["input_ids"]
+        target_tokens = max(max_input * 4, 32768)
+        ids = []
+        i = 0
+        chunk_segments = 512
+        while len(ids) < target_tokens:
+            text = " ".join(
+                f"benchmark_segment_{j}_latency_cache_{(j * 17) % 997}"
+                for j in range(i, i + chunk_segments)
+            )
+            ids.extend(self.tok(text, add_special_tokens=False)["input_ids"])
+            i += chunk_segments
+        return ids
 
     def _make_prompt(self, input_len):
         if self.tok is not None and self._base_ids:

@@ -158,6 +158,7 @@ Common script environment variables:
 ```bash
 export MODEL=Qwen/Qwen3-8B
 export PORT=8000
+export MAXLEN=8704
 export VLLM_IMAGE=nvcr.io/nvidia/vllm:26.04-py3
 export HF_TOKEN=...
 export HF_CACHE=$HOME/.cache/huggingface
@@ -188,6 +189,11 @@ Start vLLM on the serving node:
 ```bash
 MODEL=Qwen/Qwen3-8B scripts/launch_server.sh single
 ```
+
+`MAXLEN` is passed to vLLM as `--max-model-len`, which counts prompt tokens plus
+generated tokens. The default full workload needs at least `8704` because its
+largest request is `8192` input tokens and `512` output tokens. The launcher
+defaults to `8704`; if you lower it, also lower the largest workload bucket.
 
 On Grace unified memory, stale page cache can cause false out-of-memory errors
 when loading large models. Set `DROP_CACHES=1` to flush it before launch. This
@@ -416,6 +422,15 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
 - Smoke test works but real runs are slow or fail: the real config uses much
   longer prompts and outputs. Reduce buckets temporarily or increase
   `request_timeout_s`.
+- vLLM returns `400 Bad Request` with a maximum context length message: make
+  sure `MAXLEN`/`--max-model-len` is at least the largest `input_len +
+  output_len` in the workload. The default experiment needs `8704`.
+- `goodput=0.00` with successful requests: the run completed, but the measured
+  TTFT or mean ITL did not meet `ttft_slo_s`/`itl_slo_s`. Loosen the SLOs if you
+  want a capacity curve for a less strict service target.
+- `PyTorch was not found` from Transformers on the benchmark client is harmless
+  for this harness because it only loads tokenizers locally. vLLM and PyTorch
+  run inside the serving container.
 - Tokenizer download fails: set `HF_TOKEN`, log in with the Hugging Face CLI, or
   set `tokenizer` to a local tokenizer path.
 - Docker cannot access the GPU: verify `docker run --gpus all ... nvidia-smi`
@@ -431,6 +446,9 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
   existing MPI-enabled nccl-tests checkout.
 - No energy figure is generated: rerun with a non-`none` power backend. The
   plotting script skips energy when the index has no power columns.
+- `plot_results.py` reports `Expected 29 fields`: an older `index.csv` row was
+  likely missing a trailing newline before another run appended. New runs guard
+  against this; split the concatenated row or start a fresh `OUT_DIR`.
 
 ## Development Checks
 

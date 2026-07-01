@@ -16,7 +16,9 @@ MODEL="${MODEL:-Qwen/Qwen3-8B}"
 PORT="${PORT:-8000}"
 DTYPE="${DTYPE:-auto}"
 QUANT="${QUANT:-}"             # for example fp8; empty means none
-MAXLEN="${MAXLEN:-8192}"
+# vLLM max model length is prompt + generated tokens. The default experiment's
+# largest bucket is 8192 input + 512 output, so use at least 8704 by default.
+MAXLEN="${MAXLEN:-8704}"
 GPU_UTIL="${GPU_UTIL:-0.90}"
 
 common=( --host 0.0.0.0 --port "$PORT" --dtype "$DTYPE"

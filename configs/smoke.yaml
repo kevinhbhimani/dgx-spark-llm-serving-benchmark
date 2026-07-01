@@ -18,7 +18,7 @@ measure_s: 10.0
 request_timeout_s: 120.0
 
 ttft_slo_s: 1.0
-itl_slo_s: 0.05
+itl_slo_s: 0.10
 
 power_backend: "none"
 power_sysfs_path: ""

@@ -82,7 +82,14 @@ NUMERIC_COLS = [
 def load_index(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         sys.exit(f"index not found: {path}")
-    df = pd.read_csv(path)
+    try:
+        df = pd.read_csv(path)
+    except pd.errors.ParserError as e:
+        sys.exit(
+            f"could not parse {path}: {e}\n"
+            "Check for a concatenated row from an older run whose final line "
+            "was missing a newline, or write new results to a fresh OUT_DIR."
+        )
     df.columns = [c.strip() for c in df.columns]
     df = df.loc[:, ~df.columns.str.startswith("Unnamed")]   # drop trailing blanks
     for c in NUMERIC_COLS:

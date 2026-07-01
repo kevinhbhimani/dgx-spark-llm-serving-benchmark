@@ -5,6 +5,8 @@ tokenizer: "Qwen/Qwen3-8B"
 use_token_ids: true
 
 # workload buckets spanning short chat to long context
+# The largest request is 8192 input + 512 output = 8704 total tokens, so vLLM
+# must be launched with --max-model-len/ MAXLEN of at least 8704.
 buckets:
   - {input_len: 128,  output_len: 128, weight: 1.0}
   - {input_len: 1024, output_len: 256, weight: 1.0}

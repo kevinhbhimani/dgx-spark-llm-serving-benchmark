@@ -51,6 +51,7 @@ INDEX_FIELDS = [
 def _load_tokenizer(cfg):
     if not cfg.tokenizer:
         return None
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     from transformers import AutoTokenizer
     return AutoTokenizer.from_pretrained(cfg.tokenizer)
 
@@ -103,6 +104,11 @@ def _append_index(out_dir, s):
         "tokens_per_watt": energy.get("tokens_per_watt"),
     }
     new = not os.path.exists(idx)
+    if not new and os.path.getsize(idx) > 0:
+        with open(idx, "rb+") as f:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                f.write(b"\n")
     with open(idx, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=INDEX_FIELDS, extrasaction="ignore")
         if new:
