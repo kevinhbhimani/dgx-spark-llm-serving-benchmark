@@ -7,6 +7,10 @@
 # Optional env vars:
 #   DROP_CACHES=1   flush the page cache before launch (requires sudo); recommended
 #                   before large model loads on Grace unified memory to avoid false OOM.
+#   GPU_UTIL        override --gpu-memory-utilization (default 0.90 single, 0.80 tp2/pp2).
+#                   On Grace unified memory, GPU util shares the same pool as host
+#                   memory, so tp2/pp2 default lower to leave headroom for Ray's
+#                   node memory monitor (see README troubleshooting).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
@@ -19,7 +23,11 @@ QUANT="${QUANT:-}"             # for example fp8; empty means none
 # vLLM max model length is prompt + generated tokens. The default experiment's
 # largest bucket is 8192 input + 512 output, so use at least 8704 by default.
 MAXLEN="${MAXLEN:-8704}"
-GPU_UTIL="${GPU_UTIL:-0.90}"
+if [[ "$CONFIG" == "tp2" || "$CONFIG" == "pp2" ]]; then
+  GPU_UTIL="${GPU_UTIL:-0.80}"
+else
+  GPU_UTIL="${GPU_UTIL:-0.90}"
+fi
 
 common=( --host 0.0.0.0 --port "$PORT" --dtype "$DTYPE"
          --max-model-len "$MAXLEN" --gpu-memory-utilization "$GPU_UTIL"

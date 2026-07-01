@@ -447,6 +447,15 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
   Grace unified memory rather than a real leak (the reported "top memory
   users" list won't account for most of the usage). Restart Ray on both nodes
   with `DROP_CACHES=1` (see step 2 above) before relaunching.
+- Same `ray.exceptions.OutOfMemoryError`, but it happens later, right after
+  `Available KV cache memory: ...` logs during model load rather than at Ray
+  startup: this is a real overcommit, not stale cache. On Grace unified
+  memory, `--gpu-memory-utilization` reserves from the same pool the OS,
+  Docker, and Ray need, so `0.90` (fine on a discrete-GPU box) can leave too
+  little headroom for Ray's 95% node memory threshold once weights and KV
+  cache are both resident. `scripts/launch_server.sh` defaults `GPU_UTIL` to
+  `0.80` for `tp2`/`pp2` for this reason; lower it further with `GPU_UTIL=0.7
+  scripts/launch_server.sh tp2` if it recurs.
 - Dual-node performance looks like Wi-Fi or management-network traffic: rerun
   `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
   counters during a `tp2` run.
