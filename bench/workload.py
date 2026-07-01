@@ -19,6 +19,18 @@ class Workload:
         self.rng = random.Random(cfg.seed)
         self._base_ids = self._build_base_ids()
         self.specs = self._load_trace(cfg.trace_path) if cfg.trace_path else None
+        if self.specs is not None and not self.specs:
+            raise ValueError(f"trace is empty: {cfg.trace_path}")
+        if self.specs is None:
+            self._validate_buckets()
+
+    def _validate_buckets(self):
+        if not self.cfg.buckets:
+            raise ValueError("at least one workload bucket is required")
+        if any(b.input_len <= 0 or b.output_len <= 0 for b in self.cfg.buckets):
+            raise ValueError("bucket input_len and output_len must be positive")
+        if sum(b.weight for b in self.cfg.buckets) <= 0:
+            raise ValueError("at least one workload bucket weight must be positive")
 
     def _build_base_ids(self):
         if self.tok is None:
@@ -57,7 +69,13 @@ class Workload:
                     prompt = rec["prompt"]
                     in_len = in_len or len(prompt.split())
                 else:
+                    if in_len <= 0:
+                        raise ValueError(f"trace record missing input_len: {path}")
                     prompt = self._make_prompt(in_len)
+                if in_len <= 0 or out_len <= 0:
+                    raise ValueError(
+                        f"trace records require positive input/output lengths: {path}"
+                    )
                 specs.append(RequestSpec(in_len, out_len, prompt))
         return specs
 

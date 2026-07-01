@@ -19,7 +19,7 @@ if [[ ! -x "$NCCL_TESTS_DIR/build/all_reduce_perf" ]]; then
     echo "[microbench] failed to create $NCCL_TESTS_DIR" >&2
     exit 1
   fi
-  make -C "$NCCL_TESTS_DIR"
+  make -C "$NCCL_TESTS_DIR" MPI=1
 fi
 
 export NCCL_SOCKET_IFNAME="$IFACE"

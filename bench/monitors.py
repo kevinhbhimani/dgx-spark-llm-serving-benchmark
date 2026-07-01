@@ -113,8 +113,14 @@ class VLLMMetricsScraper:
     KEYS = [
         "vllm:num_requests_running",
         "vllm:num_requests_waiting",
-        "vllm:kv_cache_usage_perc",   # renamed from gpu_cache_usage_perc in vLLM 0.19
+        "vllm:kv_cache_usage_perc",
     ]
+    METRIC_ALIASES = {
+        # Older vLLM builds exposed this as gpu_cache_usage_perc. Keep summaries
+        # stable by normalizing it to the current index/summary field.
+        "vllm:gpu_cache_usage_perc": "vllm:kv_cache_usage_perc",
+    }
+    SCRAPE_KEYS = KEYS + list(METRIC_ALIASES)
 
     def __init__(self, base_url, interval_s=1.0):
         self.url = base_url.rstrip("/") + "/metrics"
@@ -147,10 +153,11 @@ class VLLMMetricsScraper:
         for line in text.splitlines():
             if line.startswith("#"):
                 continue
-            for k in self.KEYS:
-                if line.startswith(k):
+            for raw_key in self.SCRAPE_KEYS:
+                if line.startswith(raw_key):
+                    key = self.METRIC_ALIASES.get(raw_key, raw_key)
                     try:
-                        self._series[k].append((now, float(line.rsplit(" ", 1)[1])))
+                        self._series[key].append((now, float(line.rsplit(" ", 1)[1])))
                     except (ValueError, IndexError):
                         pass
 

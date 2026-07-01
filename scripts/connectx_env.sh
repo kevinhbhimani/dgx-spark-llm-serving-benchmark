@@ -5,12 +5,12 @@
 # The names Diya and Hoedus resolve to these ConnectX addresses on both nodes
 # via /etc/hosts, including self references, so prefer the names everywhere.
 
-export CX_IFACE="enp1s0f0np0"
+export CX_IFACE="${CX_IFACE:-enp1s0f0np0}"
 
-export DIYA_HOST="Diya"
-export HOEDUS_HOST="Hoedus"
-export DIYA_IP="10.10.10.1"
-export HOEDUS_IP="10.10.10.2"
+export DIYA_HOST="${DIYA_HOST:-Diya}"
+export HOEDUS_HOST="${HOEDUS_HOST:-Hoedus}"
+export DIYA_IP="${DIYA_IP:-10.10.10.1}"
+export HOEDUS_IP="${HOEDUS_IP:-10.10.10.2}"
 
 # head node for Ray and the torch rendezvous, Diya by default
 export HEAD_HOST="${HEAD_HOST:-$DIYA_HOST}"

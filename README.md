@@ -1,15 +1,356 @@
 # DGX Spark LLM Serving Benchmark
 
-This repository contains the benchmarking harness used for the PMBS26 serving
-methodology. It drives a vLLM OpenAI-compatible server and records the same
-client-side metrics for single Spark, dual Spark tensor parallel, and dual Spark
-pipeline parallel deployments.
+This repository contains a client-side benchmarking harness for LLM serving on
+DGX Spark. It drives a vLLM OpenAI-compatible server, measures streaming latency
+and throughput, optionally samples power and vLLM Prometheus metrics, and writes
+CSV/JSON outputs that can be plotted for single-node, dual-node tensor parallel,
+and dual-node pipeline parallel experiments.
 
 The default request path is the vLLM completions endpoint (`/v1/completions`).
-The harness sends streaming greedy requests with `max_tokens == min_tokens`,
+Requests are streaming, greedy requests with `max_tokens == min_tokens`,
 `ignore_eos: true`, and `temperature: 0.0` so output length is controlled by the
 workload definition. Output tokens are counted as content-bearing streaming
 chunks, which matches the validated vLLM greedy streaming behavior.
+
+## Quick Start
+
+Run these commands from the repository root.
+
+1. Create and activate a Python environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+2. Check the local client tools:
+
+```bash
+python -m bench.run_benchmark --help
+python plot_results.py --help
+```
+
+3. Start a vLLM server. If you are using the included Docker launcher on one
+   Spark node, run this in one terminal:
+
+```bash
+export MODEL=Qwen/Qwen3-8B
+# export HF_TOKEN=...    # only needed for gated Hugging Face models
+scripts/launch_server.sh single
+```
+
+The launch command stays in the foreground while vLLM is running. If you already
+have a vLLM-compatible server, skip the launcher and use its URL as `BASE_URL` or
+`--base-url`.
+
+4. In another terminal, run a short smoke test:
+
+```bash
+source .venv/bin/activate
+python -m bench.run_benchmark \
+  --config configs/smoke.yaml \
+  --config-label smoke \
+  --base-url http://127.0.0.1:8000
+```
+
+`configs/smoke.yaml` is intentionally small and tokenizer-free. It is for
+checking connectivity and output files, not for paper-quality measurements.
+
+5. Run a real single-node sweep:
+
+```bash
+CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh single
+```
+
+6. Plot the sweep:
+
+```bash
+python plot_results.py --index results/index.csv --out figs --format both
+```
+
+## Repository Layout
+
+```text
+bench/
+  config.py        experiment configuration and YAML loading
+  workload.py      synthetic token-length prompts and JSONL trace loading
+  client.py        one async streaming request with timing capture
+  monitors.py      background power sampler and vLLM metrics scraper
+  runner.py        closed-loop and open-loop load generation
+  metrics.py       percentile aggregation, throughput, goodput, energy
+  run_benchmark.py command line entry for one measurement point
+configs/
+  smoke.yaml       short connectivity test
+  experiment.yaml  default full benchmark settings
+scripts/
+  connectx_env.sh             shared ConnectX and container settings
+  verify_connectx.sh          route and latency sanity checks
+  start_ray.sh                start or stop the Ray container for dual-node runs
+  launch_server.sh            start vLLM in single, tp2, or pp2 mode
+  interconnect_microbench.sh  nccl-tests all-reduce check
+  run_all.sh                  sweep a concurrency list for one config
+plot_results.py               generate PDF/PNG figures from results/index.csv
+requirements.txt              Python client and plotting dependencies
+```
+
+## Prerequisites
+
+Client-side requirements:
+
+- Python 3.10 or newer. The validation checks in this workspace used Python
+  3.12, but the code is not tied to that exact version.
+- Python packages from `requirements.txt`.
+- Network access from the benchmark client to the vLLM server and its `/metrics`
+  endpoint.
+- A Hugging Face tokenizer matching the served model for exact input lengths.
+  Without a tokenizer, prompts fall back to repeated words and input lengths are
+  approximate.
+
+Server-side requirements for the included scripts:
+
+- Docker with NVIDIA GPU runtime support.
+- Permission to run `docker` as the current user.
+- A vLLM container image, defaulting to `nvcr.io/nvidia/vllm:26.04-py3`.
+- Hugging Face access for the selected model, usually through `HF_TOKEN`.
+- For dual-node runs: working name resolution or IP configuration for both
+  nodes, a ConnectX interface, and matching access to the vLLM image on both
+  nodes.
+- For `scripts/interconnect_microbench.sh`: `git`, `make`, MPI tooling
+  providing `mpirun`, and NCCL build dependencies.
+
+If Docker reports a socket permission error, add the user to the `docker` group
+and start a new shell:
+
+```bash
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
+
+## Configuration
+
+The main experiment configuration is `configs/experiment.yaml`. Important
+fields:
+
+- `base_url`: vLLM server URL, for example `http://127.0.0.1:8000`.
+- `endpoint`: default `/v1/completions`.
+- `model`: served model name. Leave empty to query `/v1/models`.
+- `tokenizer`: Hugging Face tokenizer id or local path. Set to `""` only for
+  quick approximate checks.
+- `use_token_ids`: when true, send exact token-id prompts built with the
+  tokenizer.
+- `buckets`: weighted synthetic workload buckets with `input_len`,
+  `output_len`, and `weight`.
+- `trace_path`: optional JSONL trace that replaces `buckets`.
+- `mode`: `closed` for fixed concurrency or `open` for Poisson arrivals.
+- `concurrency`: number of closed-loop workers.
+- `qps`: offered request rate for open-loop mode.
+- `warmup_s` and `measure_s`: warmup and logical measurement window durations.
+- `ttft_slo_s` and `itl_slo_s`: service-level objectives used for goodput.
+- `power_backend`: `none`, `nvidia_smi`, `sysfs`, or `tegrastats`.
+- `scrape_vllm_metrics`: whether to sample vLLM Prometheus metrics.
+- `config_label`: label written to outputs, such as `single`, `tp2`, or `pp2`.
+- `out_dir`: output directory, default `results`.
+
+Common script environment variables:
+
+```bash
+export MODEL=Qwen/Qwen3-8B
+export PORT=8000
+export VLLM_IMAGE=nvcr.io/nvidia/vllm:26.04-py3
+export HF_TOKEN=...
+export HF_CACHE=$HOME/.cache/huggingface
+export BASE_URL=http://127.0.0.1:8000
+export OUT_DIR=results
+export CONFIG_YAML=configs/experiment.yaml
+export CONCURRENCIES="1 2 4 8 16 32 64 128"
+export POWER_BACKEND=none
+```
+
+Dual-node network defaults live in `scripts/connectx_env.sh`. Override them
+before running the scripts if your node names, IPs, or interface differ:
+
+```bash
+export CX_IFACE=enp1s0f0np0
+export DIYA_HOST=Diya
+export HOEDUS_HOST=Hoedus
+export DIYA_IP=10.10.10.1
+export HOEDUS_IP=10.10.10.2
+export HEAD_IP=$DIYA_IP
+export RAY_PORT=6379
+```
+
+## Running Single-Node Benchmarks
+
+Start vLLM on the serving node:
+
+```bash
+MODEL=Qwen/Qwen3-8B scripts/launch_server.sh single
+```
+
+On Grace unified memory, stale page cache can cause false out-of-memory errors
+when loading large models. Set `DROP_CACHES=1` to flush it before launch. This
+requires sudo:
+
+```bash
+DROP_CACHES=1 MODEL=Qwen/Qwen3-8B scripts/launch_server.sh single
+```
+
+Run one measurement point:
+
+```bash
+python -m bench.run_benchmark \
+  --config configs/experiment.yaml \
+  --config-label single \
+  --mode closed \
+  --concurrency 16 \
+  --base-url http://127.0.0.1:8000
+```
+
+Run a full closed-loop sweep:
+
+```bash
+CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh single
+```
+
+Run against a remote or separately managed vLLM server:
+
+```bash
+BASE_URL=http://spark-node.example.com:8000 scripts/run_all.sh single
+```
+
+Run an open-loop Poisson point:
+
+```bash
+python -m bench.run_benchmark \
+  --config configs/experiment.yaml \
+  --config-label single-open \
+  --mode open \
+  --qps 4.0 \
+  --base-url http://127.0.0.1:8000
+```
+
+Command-line flags override the YAML for that run. Useful overrides include
+`--model`, `--tokenizer`, `--mode`, `--concurrency`, `--qps`, `--measure-s`,
+`--warmup-s`, `--base-url`, `--out-dir`, and `--power-backend`.
+
+## Running Dual-Node Benchmarks
+
+The dual-node scripts assume a head node and a worker node connected through the
+ConnectX interface configured in `scripts/connectx_env.sh`.
+
+1. Verify host resolution, routing, latency, and interface counters from the
+   head node:
+
+```bash
+scripts/verify_connectx.sh
+```
+
+2. Start Ray on the head node:
+
+```bash
+scripts/start_ray.sh head
+```
+
+3. Start Ray on the worker node:
+
+```bash
+scripts/start_ray.sh worker
+```
+
+4. Back on the head node, launch tensor parallel serving:
+
+```bash
+MODEL=Qwen/Qwen3-8B scripts/launch_server.sh tp2
+```
+
+5. Run the matching sweep from the benchmark client:
+
+```bash
+CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh tp2
+```
+
+6. For pipeline parallel serving, keep the Ray cluster running and launch:
+
+```bash
+MODEL=Qwen/Qwen3-8B scripts/launch_server.sh pp2
+CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh pp2
+```
+
+7. Stop the Ray container on each node when finished:
+
+```bash
+scripts/start_ray.sh stop
+```
+
+Run the interconnect microbenchmark from the head node and save the log beside
+the serving results:
+
+```bash
+HOST0=Diya HOST1=Hoedus scripts/interconnect_microbench.sh
+```
+
+If `nccl-tests` is not already built, the script clones
+`https://github.com/NVIDIA/nccl-tests` into `$HOME/nccl-tests` and builds it
+with `MPI=1`. Set `NCCL_TESTS_DIR` to use an existing checkout.
+
+## Workloads And Traces
+
+The default `configs/experiment.yaml` workload spans short prompts and
+long-context prompts:
+
+```yaml
+buckets:
+  - {input_len: 128,  output_len: 128, weight: 1.0}
+  - {input_len: 1024, output_len: 256, weight: 1.0}
+  - {input_len: 4096, output_len: 256, weight: 1.0}
+  - {input_len: 8192, output_len: 512, weight: 0.5}
+```
+
+With `use_token_ids: true` and a tokenizer configured, prompts are exact
+token-id lists. Synthetic prompts are randomized slices of a larger token buffer
+so repeated requests do not all share the same complete prefix. Record the vLLM
+prefix-cache setting you used, because it materially affects long-context TTFT
+and KV cache behavior.
+
+A JSONL trace can replace buckets by setting `trace_path` in the YAML. Each
+line can contain:
+
+```json
+{"input_len": 1024, "output_len": 128}
+{"input_len": 512, "max_tokens": 64, "prompt": "optional prompt text"}
+```
+
+When `use_token_ids` is true, the harness preserves requested lengths by
+building synthetic token-id prompts. When `use_token_ids` is false and a prompt
+is present, the prompt text is sent directly.
+
+## Outputs
+
+Every measurement point writes these files under `out_dir`:
+
+- `<run_tag>.raw.jsonl`: one JSON record per request, including TTFT, E2E,
+  token timestamps, inter-token gaps, success state, and error text.
+- `<run_tag>.summary.json`: aggregate metrics, capacity samples, optional
+  energy metrics, full resolved configuration, and `drain_s`.
+- `index.csv`: one row per measurement point for plotting sweeps.
+
+The run tag has this shape:
+
+```text
+<config_label>_<mode>_<concurrency-or-qps>_<YYYYmmdd-HHMMSS>
+```
+
+Plot all rows in an index:
+
+```bash
+python plot_results.py --index results/index.csv --out figs --format both
+```
+
+Available formats are `pdf`, `png`, and `both`. The plotting script writes
+throughput scaling, latency-throughput, tail latency, goodput, capacity,
+reliability, and energy figures when the needed columns are present.
 
 ## Metric Semantics
 
@@ -37,187 +378,12 @@ Aggregate metrics:
   divided by `measure_s`.
 - `goodput_rps`: successful completions per second whose TTFT is at or below
   `ttft_slo_s` and whose per-request mean ITL is at or below `itl_slo_s`.
-- Capacity: sampled from vLLM Prometheus metrics:
-  `vllm:gpu_cache_usage_perc`, `vllm:num_requests_running`, and
-  `vllm:num_requests_waiting`.
+- Capacity: sampled from vLLM Prometheus metrics. The index uses
+  `kv_cache_usage_*`, `requests_running_*`, and `requests_waiting_*` columns.
+  The scraper accepts both `vllm:kv_cache_usage_perc` and the older
+  `vllm:gpu_cache_usage_perc` metric name.
 - Energy: when enabled, power samples over the same logical window produce
   `mean_power_w`, `energy_per_token_j`, and `tokens_per_watt`.
-
-## Repository Layout
-
-```text
-bench/
-  config.py        experiment configuration and YAML loading
-  workload.py      synthetic token-length prompts and JSONL trace loading
-  client.py        one async streaming request with timing capture
-  monitors.py      background power sampler and vLLM metrics scraper
-  runner.py        closed-loop and open-loop load generation
-  metrics.py       percentile aggregation, throughput, goodput, energy
-  run_benchmark.py command line entry for a single measurement point
-scripts/
-  connectx_env.sh             shared ConnectX and container settings
-  verify_connectx.sh          route and latency sanity checks
-  start_ray.sh                start or stop the Ray container for dual node runs
-  launch_server.sh            start vLLM in single, tp2, or pp2 mode
-  interconnect_microbench.sh  nccl-tests all-reduce check
-  run_all.sh                  sweep a concurrency list for one config
-configs/
-  experiment.yaml             default experiment settings
-```
-
-## Prerequisites
-
-Install client-side dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-The scripts call `docker` directly, so the user running them must be in the
-`docker` group.  If you see a permission-denied error on the Docker socket, add
-yourself and start a new shell:
-
-```bash
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-vLLM runs separately on the serving node or nodes. The client needs network
-access to the vLLM server, access to `/metrics`, and a Hugging Face tokenizer
-matching the served model if you want exact input token lengths.
-
-Without a tokenizer, synthetic prompts fall back to repeated words and input
-lengths are approximate. Do not use tokenizer-free mode for paper numbers.
-
-## Running The Benchmark
-
-Run one serving configuration at a time. For each configuration, launch vLLM,
-run the sweep with the matching label, then tear it down before moving to the
-next configuration.
-
-On Grace unified memory, stale page cache can cause false out-of-memory errors
-when loading large models.  Set `DROP_CACHES=1` to flush it before launch
-(requires sudo; skipped by default):
-
-```bash
-DROP_CACHES=1 MODEL=Qwen/Qwen3-8B scripts/launch_server.sh single
-```
-
-Single node:
-
-```bash
-MODEL=Qwen/Qwen3-8B scripts/launch_server.sh single
-CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh single
-```
-
-Dual node tensor parallel:
-
-```bash
-# on the head node
-scripts/start_ray.sh head
-
-# on the worker node
-scripts/start_ray.sh worker
-
-# back on the head node
-MODEL=Qwen/Qwen3-8B scripts/launch_server.sh tp2
-CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh tp2
-```
-
-Dual node pipeline parallel:
-
-```bash
-# with the Ray cluster already running
-MODEL=Qwen/Qwen3-8B scripts/launch_server.sh pp2
-CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh pp2
-```
-
-Run one measurement point directly:
-
-```bash
-python -m bench.run_benchmark \
-  --config configs/experiment.yaml \
-  --config-label single \
-  --mode closed \
-  --concurrency 16 \
-  --base-url http://127.0.0.1:8000
-```
-
-`--model` and `--tokenizer` override the values in the YAML without editing the
-file.  Pass `--tokenizer ""` to skip the tokenizer download and fall back to
-approximate prompt lengths (useful for quick checks, not paper numbers):
-
-```bash
-python -m bench.run_benchmark \
-  --config configs/experiment.yaml \
-  --config-label single \
-  --mode closed \
-  --concurrency 16 \
-  --model Qwen/Qwen3-8B \
-  --tokenizer ""
-```
-
-Open-loop Poisson arrivals are also supported:
-
-```bash
-python -m bench.run_benchmark \
-  --config configs/experiment.yaml \
-  --config-label single \
-  --mode open \
-  --qps 4.0
-```
-
-## Outputs
-
-Every measurement point writes three files under `out_dir`:
-
-- `<run_tag>.raw.jsonl`: one JSON record per request, including TTFT, E2E,
-  token timestamps, inter-token gaps, success state, and error text.
-- `<run_tag>.summary.json`: aggregate metrics, capacity samples, optional
-  energy metrics, the full resolved configuration, and `drain_s`.
-- `index.csv`: one row per measurement point for plotting sweeps, including
-  throughput, latency percentiles, goodput, KV cache occupancy, waiting/running
-  requests, and optional energy columns.
-
-## Workload Configuration
-
-`configs/experiment.yaml` defines the default bucketed workload. Each bucket has
-an `input_len`, an `output_len`, and a sampling `weight`.
-
-With `use_token_ids: true` and a tokenizer configured, prompts are sent as exact
-token-id lists. Synthetic prompts are randomized slices of a larger token buffer
-so repeated requests do not all share the same complete prefix. Record the vLLM
-prefix-cache setting you used, because it materially affects long-context TTFT
-and KV cache behavior.
-
-A JSONL trace can replace buckets by setting `trace_path`. Each line may contain
-`input_len`, `output_len` or `max_tokens`, and optionally `prompt`. When
-`use_token_ids` is true, the harness preserves the requested lengths by building
-a synthetic token-id prompt.
-
-## Capacity Analysis
-
-Use `index.csv` for the sweep curve and the summary JSON files for the full
-vLLM metric blocks. As concurrency rises, the useful capacity limit is where
-token throughput stops scaling, `vllm:gpu_cache_usage_perc` approaches
-saturation, and `vllm:num_requests_waiting` begins to grow.
-
-Before dual-node runs, verify traffic is on the ConnectX path:
-
-```bash
-scripts/verify_connectx.sh
-HOST0=Diya HOST1=Hoedus scripts/interconnect_microbench.sh
-```
-
-If `interconnect_microbench.sh` has to build `nccl-tests`, it clones
-`https://github.com/NVIDIA/nccl-tests` into `$HOME/nccl-tests`. If the clone
-fails, install or fix `git` and network access, or set `NCCL_TESTS_DIR` to an
-existing nccl-tests checkout.
-
-If `scripts/start_ray.sh head` or `worker` exits because the container stopped,
-the script prints the last container logs. The most common causes are an
-unavailable `VLLM_IMAGE`, missing Docker GPU runtime support, or a vLLM image
-without Ray installed.
 
 ## Power Telemetry
 
@@ -240,6 +406,45 @@ Backends:
 Validate the backend on DGX Spark before using energy numbers. For dual-node
 energy, make sure the sampled rail covers both nodes or combine per-node energy
 offline; a local `nvidia_smi` sampler only sees the local GPU.
+
+## Troubleshooting
+
+- `ModuleNotFoundError` for `pandas`, `aiohttp`, or `yaml`: activate the virtual
+  environment and reinstall `requirements.txt`.
+- `Connection refused` or model resolution fails: confirm vLLM is running and
+  `curl http://127.0.0.1:8000/v1/models` works from the benchmark client.
+- Smoke test works but real runs are slow or fail: the real config uses much
+  longer prompts and outputs. Reduce buckets temporarily or increase
+  `request_timeout_s`.
+- Tokenizer download fails: set `HF_TOKEN`, log in with the Hugging Face CLI, or
+  set `tokenizer` to a local tokenizer path.
+- Docker cannot access the GPU: verify `docker run --gpus all ... nvidia-smi`
+  works with your container runtime.
+- Dual-node launch says Ray is not active: run `scripts/start_ray.sh head` on
+  the head node and `scripts/start_ray.sh worker` on the worker node, then check
+  `docker exec vllm-spark ray status`.
+- Dual-node performance looks like Wi-Fi or management-network traffic: rerun
+  `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
+  counters during a `tp2` run.
+- `interconnect_microbench.sh` build fails: install MPI/NCCL build
+  dependencies, verify network access to GitHub, or set `NCCL_TESTS_DIR` to an
+  existing MPI-enabled nccl-tests checkout.
+- No energy figure is generated: rerun with a non-`none` power backend. The
+  plotting script skips energy when the index has no power columns.
+
+## Development Checks
+
+Useful checks after editing the repository:
+
+```bash
+python -m compileall bench plot_results.py
+bash -n scripts/*.sh
+python -m pip check
+python plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png
+```
+
+`shellcheck` and `ruff` are not required by the repository, but they are good
+extra checks if installed locally.
 
 ## PMBS26 Mapping Checklist
 

@@ -35,6 +35,15 @@ async def _open_loop(cfg, workload, session, stop_at, records):
 
 
 async def run_phase(cfg, workload, duration_s):
+    if duration_s <= 0:
+        raise ValueError("phase duration must be positive")
+    if cfg.mode == "closed" and cfg.concurrency < 1:
+        raise ValueError("closed-loop concurrency must be at least 1")
+    if cfg.mode == "open":
+        if cfg.qps <= 0:
+            raise ValueError("open-loop qps must be positive")
+        if cfg.max_inflight < 1:
+            raise ValueError("open-loop max_inflight must be at least 1")
     records = []
     connector = aiohttp.TCPConnector(limit=0)   # server controls admission
     async with aiohttp.ClientSession(connector=connector) as session:

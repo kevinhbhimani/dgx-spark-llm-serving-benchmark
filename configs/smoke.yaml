@@ -1,0 +1,31 @@
+base_url: "http://127.0.0.1:8000"
+endpoint: "/v1/completions"
+model: ""
+tokenizer: ""
+use_token_ids: false
+
+# Lightweight plumbing check. Use configs/experiment.yaml for real measurements.
+buckets:
+  - {input_len: 32, output_len: 16, weight: 1.0}
+seed: 1234
+
+mode: "closed"
+concurrency: 1
+qps: 1.0
+max_inflight: 16
+warmup_s: 2.0
+measure_s: 10.0
+request_timeout_s: 120.0
+
+ttft_slo_s: 1.0
+itl_slo_s: 0.05
+
+power_backend: "none"
+power_sysfs_path: ""
+power_rails: []
+power_interval_ms: 100
+scrape_vllm_metrics: true
+
+config_label: "smoke"
+out_dir: "results"
+run_note: "short smoke test with approximate prompt lengths"
