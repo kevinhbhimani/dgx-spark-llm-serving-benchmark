@@ -253,16 +253,19 @@ ConnectX interface configured in `scripts/connectx_env.sh`.
 scripts/verify_connectx.sh
 ```
 
-2. Start Ray on the head node:
+2. Start Ray on the head node. As with `single` mode, `DROP_CACHES=1` flushes
+   stale page cache first to avoid a false OOM on Grace unified memory (see
+   below); it only affects the node it runs on, so set it on both head and
+   worker:
 
 ```bash
-scripts/start_ray.sh head
+DROP_CACHES=1 scripts/start_ray.sh head
 ```
 
 3. Start Ray on the worker node:
 
 ```bash
-scripts/start_ray.sh worker
+DROP_CACHES=1 scripts/start_ray.sh worker
 ```
 
 4. Back on the head node, launch tensor parallel serving:
@@ -438,6 +441,12 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
 - Dual-node launch says Ray is not active: run `scripts/start_ray.sh head` on
   the head node and `scripts/start_ray.sh worker` on the worker node, then check
   `docker exec vllm-spark ray status`.
+- `tp2`/`pp2` launch fails with `ray.exceptions.OutOfMemoryError: Task was
+  killed due to the node running low on memory` naming one node's IP: Ray's
+  node memory monitor killed a worker, almost always stale page cache on
+  Grace unified memory rather than a real leak (the reported "top memory
+  users" list won't account for most of the usage). Restart Ray on both nodes
+  with `DROP_CACHES=1` (see step 2 above) before relaunching.
 - Dual-node performance looks like Wi-Fi or management-network traffic: rerun
   `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
   counters during a `tp2` run.
