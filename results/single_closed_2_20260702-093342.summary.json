@@ -1,0 +1,115 @@
+{
+  "config_label": "single",
+  "mode": "closed",
+  "concurrency": 2,
+  "target_qps": null,
+  "measure_s": 60.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 8,
+  "requests_completed": 6,
+  "requests_failed": 0,
+  "total_output_tokens": 1536,
+  "request_throughput_rps": 0.1,
+  "output_token_throughput_tps": 25.6,
+  "goodput_rps": 0.0,
+  "slo": {
+    "ttft_s": 1.0,
+    "itl_s": 0.05
+  },
+  "ttft_s": {
+    "p50": 0.6752332109608687,
+    "p90": 2.0527387025067583,
+    "p95": 2.071541434735991,
+    "p99": 2.0865836205193773,
+    "mean": 0.9416546796370918
+  },
+  "itl_s": {
+    "p50": 0.0730056765023619,
+    "p90": 0.07552371779456735,
+    "p95": 0.07591186283971182,
+    "p99": 0.07674788557342253,
+    "mean": 0.07332597387904374
+  },
+  "mean_itl_s": {
+    "p50": 0.0715774405293404,
+    "p90": 0.0754723336609687,
+    "p95": 0.07565280022482886,
+    "p99": 0.07579717347591698,
+    "mean": 0.07234997577993886
+  },
+  "e2e_s": {
+    "p50": 19.11838912445819,
+    "p90": 30.74606092053,
+    "p95": 35.75602002377855,
+    "p99": 39.76398730637739,
+    "mean": 19.639816274808254
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 1.9166666666666667,
+      "max": 2.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.016666666666666666,
+      "max": 1.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.01325983994773804,
+      "max": 0.019990200881920606
+    }
+  },
+  "run_tag": "single_closed_2_20260702-093342",
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "Qwen/Qwen3-8B",
+    "api_key": "EMPTY",
+    "tokenizer": "Qwen/Qwen3-8B",
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 2,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 15.0,
+    "measure_s": 60.0,
+    "request_timeout_s": 600.0,
+    "ttft_slo_s": 1.0,
+    "itl_slo_s": 0.05,
+    "power_backend": "none",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "single",
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 18.658224364044145
+}

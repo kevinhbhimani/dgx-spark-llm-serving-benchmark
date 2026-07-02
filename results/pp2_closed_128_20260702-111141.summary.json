@@ -1,0 +1,121 @@
+{
+  "config_label": "pp2",
+  "mode": "closed",
+  "concurrency": 128,
+  "target_qps": null,
+  "measure_s": 60.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 128,
+  "requests_completed": 0,
+  "requests_failed": 0,
+  "total_output_tokens": 0,
+  "request_throughput_rps": 0.0,
+  "output_token_throughput_tps": 0.0,
+  "goodput_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1
+  },
+  "ttft_s": {
+    "p50": NaN,
+    "p90": NaN,
+    "p95": NaN,
+    "p99": NaN,
+    "mean": NaN
+  },
+  "itl_s": {
+    "p50": NaN,
+    "p90": NaN,
+    "p95": NaN,
+    "p99": NaN,
+    "mean": NaN
+  },
+  "mean_itl_s": {
+    "p50": NaN,
+    "p90": NaN,
+    "p95": NaN,
+    "p99": NaN,
+    "mean": NaN
+  },
+  "e2e_s": {
+    "p50": NaN,
+    "p90": NaN,
+    "p95": NaN,
+    "p99": NaN,
+    "mean": NaN
+  },
+  "energy": {
+    "mean_power_w": 66.98911519198666,
+    "energy_j": 4016.099022774878,
+    "energy_per_token_j": NaN,
+    "tokens_per_watt": 0.0
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 78.26666666666667,
+      "max": 128.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 47.6,
+      "max": 105.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.19232030318514734,
+      "max": 0.3039856923863056
+    }
+  },
+  "run_tag": "pp2_closed_128_20260702-111141",
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "Qwen/Qwen3-8B",
+    "api_key": "EMPTY",
+    "tokenizer": "Qwen/Qwen3-8B",
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 128,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 15.0,
+    "measure_s": 60.0,
+    "request_timeout_s": 600.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "pp2",
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 85.07830957195256
+}

@@ -176,8 +176,12 @@ def has(df: pd.DataFrame, cols: list[str]) -> bool:
     return all(c in df.columns and df[c].notna().any() for c in cols)
 
 
-def mark_low_n(ax, g, xcol: str, ycol: str) -> bool:
+def mark_low_n(ax, g, x, y) -> bool:
     """Circle points backed by fewer than MIN_SAMPLES completions.
+
+    x and y must be the same (already unit-converted) values passed to the
+    line's ax.plot() call -- e.g. ttft_p50 * 1e3, not the raw column -- or
+    the circle lands at the raw value on an axis plotted in different units.
 
     Returns whether any point was marked, so callers can add a legend entry.
     """
@@ -186,8 +190,10 @@ def mark_low_n(ax, g, xcol: str, ycol: str) -> bool:
     mask = g["requests_completed"] < MIN_SAMPLES
     if not mask.any():
         return False
-    ax.scatter(g.loc[mask, xcol], g.loc[mask, ycol], s=90, facecolors="none",
-               edgecolors="0.15", linewidths=1.3, zorder=6)
+    x = x if isinstance(x, pd.Series) else pd.Series(x, index=g.index)
+    y = y if isinstance(y, pd.Series) else pd.Series(y, index=g.index)
+    ax.scatter(x[mask], y[mask], s=90, facecolors="none",
+               edgecolors="0.15", linewidths=1.3, zorder=6, clip_on=False)
     return True
 
 
@@ -266,7 +272,7 @@ def fig_throughput_scaling(df, out, fmts):
         s = style_for(cfg, i)
         ax.plot(g[lc], g["tok_thru_tps"], marker=s["marker"], color=s["color"],
                 label=s["label"])
-        any_low_n |= mark_low_n(ax, g, lc, "tok_thru_tps")
+        any_low_n |= mark_low_n(ax, g, g[lc], g["tok_thru_tps"])
         all_loads += g[lc].tolist()
     set_load_axis(ax, all_loads, mode)
     ax.set_ylabel("Output token throughput (tok/s)")
@@ -284,23 +290,28 @@ def fig_latency_throughput(df, out, fmts):
     for i, cfg in enumerate(configs_present(df)):
         g, lc, _ = group(df, cfg)
         s = style_for(cfg, i)
-        axl.plot(g["tok_thru_tps"], g["ttft_p50"] * 1e3, marker=s["marker"],
+        ttft_ms = g["ttft_p50"] * 1e3
+        itl_ms = g["itl_p50"] * 1e3
+        axl.plot(g["tok_thru_tps"], ttft_ms, marker=s["marker"],
                  color=s["color"], label=s["label"])
-        axr.plot(g["tok_thru_tps"], g["itl_p50"] * 1e3, marker=s["marker"],
+        axr.plot(g["tok_thru_tps"], itl_ms, marker=s["marker"],
                  color=s["color"], label=s["label"])
-        any_low_n |= mark_low_n(axl, g, "tok_thru_tps", "ttft_p50")
-        any_low_n |= mark_low_n(axr, g, "tok_thru_tps", "itl_p50")
+        any_low_n |= mark_low_n(axl, g, g["tok_thru_tps"], ttft_ms)
+        any_low_n |= mark_low_n(axr, g, g["tok_thru_tps"], itl_ms)
         # annotate each point with its load so the swept parameter is visible
-        for x, y, c in zip(g["tok_thru_tps"], g["ttft_p50"] * 1e3, g[lc]):
+        for x, y, c in zip(g["tok_thru_tps"], ttft_ms, g[lc]):
             if pd.notna(x) and pd.notna(y):
                 axl.annotate(f"{int(c)}", (x, y), textcoords="offset points",
                              xytext=(3, 3), fontsize=6, color=s["color"])
+    # log scale: TTFT/ITL span >100x across loads, and a single saturated
+    # point (e.g. a queueing blow-up) would otherwise flatten the rest of
+    # the curve onto the axis on a linear scale.
     axl.set_xlabel("Output token throughput (tok/s)")
     axl.set_ylabel("Median TTFT (ms)")
-    axl.set_ylim(bottom=0)
+    axl.set_yscale("log")
     axr.set_xlabel("Output token throughput (tok/s)")
     axr.set_ylabel("Median inter token latency (ms)")
-    axr.set_ylim(bottom=0)
+    axr.set_yscale("log")
     axl.legend()
     add_low_n_legend(axl, any_low_n)
     save(fig, "latency_throughput", out, fmts)
@@ -315,18 +326,22 @@ def fig_tail_latency(df, out, fmts):
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
-        axl.plot(g[lc], g["ttft_p50"] * 1e3, marker=s["marker"],
+        ttft_p50_ms = g["ttft_p50"] * 1e3
+        ttft_p99_ms = g["ttft_p99"] * 1e3
+        itl_p50_ms = g["itl_p50"] * 1e3
+        itl_p99_ms = g["itl_p99"] * 1e3
+        axl.plot(g[lc], ttft_p50_ms, marker=s["marker"],
                  color=s["color"], label=f"{s['label']} p50")
-        axl.plot(g[lc], g["ttft_p99"] * 1e3, marker=s["marker"], linestyle="--",
+        axl.plot(g[lc], ttft_p99_ms, marker=s["marker"], linestyle="--",
                  color=s["color"], alpha=0.7, label=f"{s['label']} p99")
-        axr.plot(g[lc], g["itl_p50"] * 1e3, marker=s["marker"],
+        axr.plot(g[lc], itl_p50_ms, marker=s["marker"],
                  color=s["color"], label=f"{s['label']} p50")
-        axr.plot(g[lc], g["itl_p99"] * 1e3, marker=s["marker"], linestyle="--",
+        axr.plot(g[lc], itl_p99_ms, marker=s["marker"], linestyle="--",
                  color=s["color"], alpha=0.7, label=f"{s['label']} p99")
-        any_low_n |= mark_low_n(axl, g, lc, "ttft_p50")
-        any_low_n |= mark_low_n(axl, g, lc, "ttft_p99")
-        any_low_n |= mark_low_n(axr, g, lc, "itl_p50")
-        any_low_n |= mark_low_n(axr, g, lc, "itl_p99")
+        any_low_n |= mark_low_n(axl, g, g[lc], ttft_p50_ms)
+        any_low_n |= mark_low_n(axl, g, g[lc], ttft_p99_ms)
+        any_low_n |= mark_low_n(axr, g, g[lc], itl_p50_ms)
+        any_low_n |= mark_low_n(axr, g, g[lc], itl_p99_ms)
         all_loads += g[lc].tolist()
     for ax, title in ((axl, "TTFT (ms)"), (axr, "Inter token latency (ms)")):
         set_load_axis(ax, all_loads, mode)
@@ -354,7 +369,7 @@ def fig_goodput(df, out, fmts):
             ax.plot(g[lc], g["req_thru_rps"], marker=s["marker"], linestyle=":",
                     color=s["color"], alpha=0.5,
                     label=f"{s['label']} achieved")
-        any_low_n |= mark_low_n(ax, g, lc, "goodput_rps")
+        any_low_n |= mark_low_n(ax, g, g[lc], g["goodput_rps"])
         all_loads += g[lc].tolist()
     set_load_axis(ax, all_loads, mode)
     ax.set_ylabel("Goodput under SLO (req/s)")
@@ -451,7 +466,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Plot PMBS26 figures from index.csv")
     ap.add_argument("--index", default="results/index.csv")
     ap.add_argument("--out", default="figs")
-    ap.add_argument("--format", default="both", choices=["pdf", "png", "both"])
+    ap.add_argument("--format", default="pdf", choices=["pdf", "png", "both"])
     ap.add_argument("--dpi", type=int, default=200)
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES,
                     help="completions below this make a point's percentiles "
@@ -460,7 +475,6 @@ def main() -> None:
 
     MIN_SAMPLES = args.min_samples
     LOW_N_PROXY.set_label(f"n < {MIN_SAMPLES} (unreliable)")
-
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
     set_rc(args.dpi)
     df = load_index(args.index)

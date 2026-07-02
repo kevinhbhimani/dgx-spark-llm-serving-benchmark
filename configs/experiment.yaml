@@ -23,8 +23,8 @@ measure_s: 60.0
 request_timeout_s: 600.0
 
 # service level objective used for goodput
-ttft_slo_s: 1.0
-itl_slo_s: 0.05
+ttft_slo_s: 3.0
+itl_slo_s: 0.10
 
 power_backend: "none"     # none, nvidia_smi, sysfs, tegrastats
 power_sysfs_path: ""

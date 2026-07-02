@@ -1,0 +1,121 @@
+{
+  "config_label": "pp2",
+  "mode": "closed",
+  "concurrency": 2,
+  "target_qps": null,
+  "measure_s": 60.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 6,
+  "requests_completed": 4,
+  "requests_failed": 0,
+  "total_output_tokens": 768,
+  "request_throughput_rps": 0.06666666666666667,
+  "output_token_throughput_tps": 12.8,
+  "goodput_rps": 0.06666666666666667,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1
+  },
+  "ttft_s": {
+    "p50": 0.1324028680101037,
+    "p90": 1.023066451144405,
+    "p95": 1.2068950545857655,
+    "p99": 1.3539579373388548,
+    "mean": 0.4385931267461274
+  },
+  "itl_s": {
+    "p50": 0.07253582851262763,
+    "p90": 0.08296528795035556,
+    "p95": 0.08329324779333547,
+    "p99": 0.08411872011143715,
+    "mean": 0.07576133032464691
+  },
+  "mean_itl_s": {
+    "p50": 0.07230036913159933,
+    "p90": 0.07960924946622566,
+    "p95": 0.08117526737028938,
+    "p99": 0.08242808169354035,
+    "mean": 0.07487485549646936
+  },
+  "e2e_s": {
+    "p50": 13.93261178402463,
+    "p90": 21.303645455511287,
+    "p95": 21.89670921326615,
+    "p99": 22.37116021947004,
+    "mean": 14.909027210756904
+  },
+  "energy": {
+    "mean_power_w": 28.214941569282136,
+    "energy_j": 1690.0359334207876,
+    "energy_per_token_j": 2.2005676216416505,
+    "tokens_per_watt": 0.4536603405174327
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 1.95,
+      "max": 2.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.0,
+      "max": 0.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.006969851814001045,
+      "max": 0.010398569238630584
+    }
+  },
+  "run_tag": "pp2_closed_2_20260702-105606",
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "Qwen/Qwen3-8B",
+    "api_key": "EMPTY",
+    "tokenizer": "Qwen/Qwen3-8B",
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 2,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 15.0,
+    "measure_s": 60.0,
+    "request_timeout_s": 600.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "pp2",
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 1.7589932110859081
+}
