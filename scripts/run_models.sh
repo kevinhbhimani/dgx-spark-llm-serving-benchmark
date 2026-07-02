@@ -57,15 +57,20 @@ LAUNCH_PID=""
 
 server_ready() {
   # 200 from /v1/models AND the requested model id is being served
-  local name="$1"
-  curl -sf --max-time 5 "$BASE_URL/v1/models" 2>/dev/null \
-    | python -c \
-      'import json, sys
+  local name="$1" body
+  if ! body="$(curl -sf --max-time 5 "$BASE_URL/v1/models" 2>/dev/null)"; then
+    return 1
+  fi
+  python -c \
+    'import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
 want = sys.argv[1]
-doc = json.load(sys.stdin)
 models = doc.get("data") or []
 raise SystemExit(0 if any(m.get("id") == want for m in models) else 1)' \
-      "$name"
+    "$name" <<<"$body"
 }
 
 wait_ready() {
