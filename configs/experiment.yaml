@@ -26,7 +26,7 @@ request_timeout_s: 600.0
 ttft_slo_s: 3.0
 itl_slo_s: 0.10
 
-power_backend: "none"     # none, nvidia_smi, sysfs, tegrastats
+power_backend: "nvidia_smi"     # none, nvidia_smi, sysfs, tegrastats
 power_sysfs_path: ""
 power_rails: []
 power_interval_ms: 100
