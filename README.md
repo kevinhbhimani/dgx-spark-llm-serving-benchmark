@@ -155,6 +155,10 @@ fields:
 
 Common script environment variables:
 
+The scripts load a repo-local `.env` file automatically if it exists, so these
+can be saved there instead of exported in every shell session. `.env` is ignored
+by git because it may contain `HF_TOKEN`.
+
 ```bash
 export MODEL=Qwen/Qwen3-8B
 export PORT=8000

@@ -3,6 +3,8 @@
 # Launch the server with scripts/launch_server.sh CONFIG first, then run this
 # with the matching label so the results are tagged correctly.
 set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/load_env.sh"
 
 LABEL="${1:-single}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"

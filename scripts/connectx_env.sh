@@ -5,6 +5,10 @@
 # The names Diya and Hoedus resolve to these ConnectX addresses on both nodes
 # via /etc/hosts, including self references, so prefer the names everywhere.
 
+_CONNECTX_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_CONNECTX_HERE/load_env.sh"
+unset _CONNECTX_HERE
+
 export CX_IFACE="${CX_IFACE:-enp1s0f0np0}"
 
 export DIYA_HOST="${DIYA_HOST:-Diya}"
