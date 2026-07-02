@@ -363,7 +363,39 @@ python plot_results.py --index results/index.csv --out figs --format both
 
 Available formats are `pdf`, `png`, and `both`. The plotting script writes
 throughput scaling, latency-throughput, tail latency, goodput, capacity,
-reliability, and energy figures when the needed columns are present.
+reliability, and energy figures when the needed columns are present. Series use
+the colorblind-safe Okabe-Ito palette and are also distinguished by marker and
+line style, so identity never rests on hue alone. Add `--serif` for a Times-like
+body font matching an IEEE paper, and `--table` to also emit a paper-ready
+per-point summary as `figs/summary_table.tex` (booktabs) and
+`figs/summary_table.md`:
+
+```bash
+python plot_results.py --index results/index.csv --out figs --format both \
+  --serif --table
+```
+
+Two figures need a word on what they do and do not show:
+
+- The reliability figure is two panels. The left panel is the real reliability
+  signal: the share of *finished* requests that returned an error (this is zero
+  across the reference sweep). The right panel is the share of requests that both
+  started and completed inside the measurement window; at high concurrency with a
+  short window it falls toward zero simply because long requests do not finish
+  before the window closes. That is a windowing/backlog effect, not the server
+  dropping requests, and the panels are separated so the two are never conflated.
+- The energy figure daggers the dual-node (`tp2`, `pp2`) series and prints a
+  footnote, because `nvidia_smi` samples only the head node's GB10. Dual-node
+  per-token energy is therefore a lower bound and tokens/W an upper bound; do not
+  compare a one-node dual number against a true single-node number without
+  summing both nodes' power offline.
+
+Before drawing anything, the script prints a short data-quality report: per
+configuration it lists the number of points, the measurement window(s) used,
+peak observed throughput, and any point with zero completions in the window
+(where throughput is "no data", not a real zero). Mixed measurement windows
+within one series are called out, since windowed rates stay comparable but the
+per-point sample sizes behind the percentiles do not.
 
 If a sweep was rerun so the same `config_label` and load (concurrency or
 `qps`) appear twice in `index.csv`, `plot_results.py` keeps only the run with
@@ -411,6 +443,40 @@ Aggregate metrics:
   `vllm:gpu_cache_usage_perc` metric name.
 - Energy: when enabled, power samples over the same logical window produce
   `mean_power_w`, `energy_per_token_j`, and `tokens_per_watt`.
+
+## Choosing The Measurement Window
+
+Because only requests that *complete* inside the window count, the window must be
+long enough to collect a trustable number of completions at the load you care
+about, or the aggregate rates understate the server and the percentiles are
+small-sample noise. This workload is long-context: a single request can take
+tens of seconds end to end at low load and well over a minute once the server is
+saturated, so a short window collects very few completions per point.
+
+A 60 s window is far too short here. At high concurrency it can report zero
+completions while the server is healthy and busy (`requests_failed` is 0, KV
+cache is not full, and `requests_running` is high) — the requests simply have
+not finished yet. That reads as a throughput *collapse* that is not real: on a
+longer window the same point keeps climbing. For example, `tp2` at concurrency 64
+measured 0 tok/s over 60 s (0 completions) but 141 tok/s over 240 s (138
+completions), and `pp2` at concurrency 128 measured 0 tok/s over 60 s but 135
+tok/s over 360 s. Treat any windowed throughput backed by a handful of
+completions as a lower bound, not a capacity reading.
+
+Guidance:
+
+- Set `measure_s` to at least several times the E2E p50 you expect at the
+  highest load in the sweep. For the default workload that means `measure_s`
+  around `300`-`600`; the shipped `configs/experiment.yaml` default is `600`.
+- Aim for at least `MIN_SAMPLES` (20, the plotting threshold) completions per
+  point, and preferably many more at the loads you will quote in the paper.
+- Keep the window consistent across a sweep and across configs you compare.
+  `plot_results.py` still plots mixed-window sweeps but flags them, because the
+  per-point sample sizes behind the percentiles differ even though the windowed
+  rates remain comparable.
+- Points below `MIN_SAMPLES` completions are circled in the figures, daggered in
+  the summary table, and listed in the data-quality report; rerun them with a
+  longer `--measure-s` before quoting their numbers.
 
 ## Power Telemetry
 
@@ -494,7 +560,7 @@ Useful checks after editing the repository:
 python -m compileall bench plot_results.py
 bash -n scripts/*.sh
 python -m pip check
-python plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png
+python plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png --table
 ```
 
 `shellcheck` and `ruff` are not required by the repository, but they are good
@@ -511,12 +577,16 @@ extra checks if installed locally.
   block for the same window as throughput.
 - Interconnect model validation: record the `all_reduce_perf` log from
   `scripts/interconnect_microbench.sh` alongside the serving sweep.
-- `tp2`/`pp2` capacity ceiling: on a ConnectX Ethernet link (not NVLink), a
-  `tp2` sweep can peak at a much lower concurrency than `single` and then
-  collapse (completions per window fall toward zero, KV cache occupancy
-  stays low throughout, ruling out KV cache exhaustion as the cause). This
-  points at cross-node all-reduce overhead as the bottleneck rather than a
-  benchmark defect; confirm with the `interconnect_microbench.sh` log, and
-  rerun the collapsed points with a longer `--measure-s` before reporting
-  their percentiles, since few completions per window means those numbers
-  are noise (see `plot_results.py`'s low-sample circles).
+- `tp2`/`pp2` apparent capacity ceiling: on a ConnectX Ethernet link (not
+  NVLink), cross-node all-reduce (`tp2`) or activation passing (`pp2`) does add
+  per-token overhead, so dual-node ITL is higher than `single` at matched load.
+  But an apparent *collapse* — completions per window falling toward zero at high
+  concurrency while KV cache occupancy stays low — is usually a measurement
+  artifact of too short a window, not the interconnect. Confirm before reporting
+  it: rerun the point with a longer `--measure-s` (see "Choosing The Measurement
+  Window"). In the reference sweep the collapse did not survive a longer window
+  (`tp2` c=64 went 0 -> 141 tok/s from 60 s to 240 s; `pp2` c=128 went 0 -> 135
+  tok/s from 60 s to 360 s), so the interconnect cost shows up as higher latency,
+  not as a throughput cliff. Record the `all_reduce_perf` log from
+  `scripts/interconnect_microbench.sh` alongside the sweep to attribute the
+  latency component.

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v -E '\\\\.\\(jsonl|json|csv|png|pdf\\)$')",
+      "Bash(python3 -m json.tool results/single_closed_16_20260702-095756.summary.json)",
+      "Bash(python3 -m json.tool results/tp2_closed_64_20260702-120241.summary.json)",
+      "Bash(curl -s --max-time 3 http://127.0.0.1:8000/v1/models)",
+      "Bash(nvidia-smi --query-gpu=name,power.draw,memory.used,memory.total --format=csv)",
+      "Skill(dataviz)",
+      "Skill(dataviz:*)",
+      "Bash(node scripts/validate_palette.js \"#0072B2,#D55E00,#009E73\" --mode light)",
+      "Bash(.venv/bin/python -m compileall -q plot_results.py)",
+      "Bash(.venv/bin/python plot_results.py --index results/index.csv --out /tmp/claude-1005/-home-kbhimani-dgx-spark-llm-serving-benchmark/4a7bffaa-abbd-4e08-93af-50d74030a96b/scratchpad/figs --format png --table)",
+      "Bash(.venv/bin/python plot_results.py --index results/index.csv --out /tmp/claude-1005/-home-kbhimani-dgx-spark-llm-serving-benchmark/4a7bffaa-abbd-4e08-93af-50d74030a96b/scratchpad/figs --format png)",
+      "Bash(.venv/bin/python plot_results.py --index results/index.csv --out figs --format both --table)",
+      "Bash(curl -s --max-time 5 http://127.0.0.1:8000/metrics)"
+    ]
+  }
+}

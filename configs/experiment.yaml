@@ -19,7 +19,7 @@ concurrency: 16
 qps: 4.0
 max_inflight: 512
 warmup_s: 15.0
-measure_s: 60.0
+measure_s: 600.0
 request_timeout_s: 600.0
 
 # service level objective used for goodput
