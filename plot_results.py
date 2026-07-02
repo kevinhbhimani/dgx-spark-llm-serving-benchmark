@@ -783,22 +783,37 @@ def write_summary_table(df, out) -> None:
                 })
 
     # ---- Markdown ----
-    mhead = "| Model " if multi_model else "|"
-    msep = "|---" if multi_model else "|"
-    md = [mhead + "| Config | Load | Win (s) | n | Tok/s | Req/s | TTFT p50/p99 (ms) | "
-          "ITL p50 (ms) | E2E p50 (s) | Goodput (r/s) |"
-          + (" Energy (J/tok) |" if energy_present else ""),
-          msep + "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|" + ("--:|" if energy_present else "")]
+    headers = []
+    aligns = []
+    if multi_model:
+        headers.append("Model")
+        aligns.append("---")
+    headers += ["Config", "Load", "Win (s)", "n", "Tok/s", "Req/s",
+                "TTFT p50/p99 (ms)", "ITL p50 (ms)", "E2E p50 (s)",
+                "Goodput (r/s)"]
+    aligns += ["---", "--:", "--:", "--:", "--:", "--:", "--:", "--:", "--:",
+               "--:"]
+    if energy_present:
+        headers.append("Energy (J/tok)")
+        aligns.append("--:")
+    md = ["| " + " | ".join(headers) + " |",
+          "|" + "|".join(aligns) + "|"]
     for r in rows:
         dag = " †" if r["low"] else ""
-        mcell = f"| {r['model']} " if multi_model else "|"
-        ept = f" {_fmt(r['ept'], '.3f')}{'*' if r['dual'] else ''} |" if energy_present else ""
-        md.append(
-            f"{mcell}| {r['cfg']} | {_fmt(r['load'], '.0f')} | {_fmt(r['win'], '.0f')} | "
-            f"{_fmt(r['n'], '.0f')}{dag} | {_fmt(r['tps'], '.0f')} | "
-            f"{_fmt(r['rps'], '.2f')} | {_fmt(r['ttft50'], '.0f')}/{_fmt(r['ttft99'], '.0f')} | "
-            f"{_fmt(r['itl50'], '.0f')} | {_fmt(r['e2e50'], '.1f')} | "
-            f"{_fmt(r['good'], '.2f')} |{ept}")
+        cells = []
+        if multi_model:
+            cells.append(r["model"])
+        cells += [
+            r["cfg"], _fmt(r["load"], ".0f"), _fmt(r["win"], ".0f"),
+            f"{_fmt(r['n'], '.0f')}{dag}", _fmt(r["tps"], ".0f"),
+            _fmt(r["rps"], ".2f"),
+            f"{_fmt(r['ttft50'], '.0f')}/{_fmt(r['ttft99'], '.0f')}",
+            _fmt(r["itl50"], ".0f"), _fmt(r["e2e50"], ".1f"),
+            _fmt(r["good"], ".2f"),
+        ]
+        if energy_present:
+            cells.append(f"{_fmt(r['ept'], '.3f')}{'*' if r['dual'] else ''}")
+        md.append("| " + " | ".join(cells) + " |")
     md.append("")
     md.append(f"† fewer than {MIN_SAMPLES} completions in the window; "
               "percentiles are small-sample noise.")

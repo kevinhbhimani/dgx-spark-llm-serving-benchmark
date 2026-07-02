@@ -7,6 +7,7 @@
 # Optional env vars:
 #   DROP_CACHES=1   flush the page cache before launch (requires sudo); recommended
 #                   before large model loads on Grace unified memory to avoid false OOM.
+#   TOKENIZER       override vLLM --tokenizer (defaults to the model tokenizer).
 #   GPU_UTIL        override --gpu-memory-utilization (default 0.90 single, 0.80 tp2/pp2).
 #                   On Grace unified memory, GPU util shares the same pool as host
 #                   memory, so tp2/pp2 default lower to leave headroom for Ray's
@@ -20,6 +21,7 @@ MODEL="${MODEL:-Qwen/Qwen3-8B}"
 PORT="${PORT:-8000}"
 DTYPE="${DTYPE:-auto}"
 QUANT="${QUANT:-}"             # for example fp8; empty means none
+TOKENIZER="${TOKENIZER:-}"     # optional tokenizer id/path; empty means model default
 # vLLM max model length is prompt + generated tokens. The default experiment's
 # largest bucket is 8192 input + 512 output, so use at least 8704 by default.
 MAXLEN="${MAXLEN:-8704}"
@@ -33,6 +35,7 @@ common=( --host 0.0.0.0 --port "$PORT" --dtype "$DTYPE"
          --max-model-len "$MAXLEN" --gpu-memory-utilization "$GPU_UTIL"
          --no-enable-log-requests )
 if [[ -n "$QUANT" ]]; then common+=( --quantization "$QUANT" ); fi
+if [[ -n "$TOKENIZER" ]]; then common+=( --tokenizer "$TOKENIZER" ); fi
 
 echo "[launch] $CONFIG  model=$MODEL  image=$VLLM_IMAGE  iface=$CX_IFACE  head=$HEAD_IP"
 

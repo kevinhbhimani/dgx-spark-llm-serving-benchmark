@@ -19,6 +19,8 @@
 #
 # Env: MODELS_YAML BASE_URL OUT_DIR POWER_BACKEND CONCURRENCIES CONFIG_YAML
 #      READY_TIMEOUT (seconds to wait for a model to come up, default 1200).
+# Per-model tokenizer defaults to the model name unless configs/models.yaml
+# supplies an explicit tokenizer.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_CONTAINER, HEAD_IP, and .env
@@ -39,7 +41,12 @@ READY_TIMEOUT="${READY_TIMEOUT:-1200}"
 mkdir -p "$OUT_DIR"
 
 # Select the models that request this serving config.
-mapfile -t ENTRIES < <(python "$HERE/models_for_config.py" "$MODELS_YAML" "$CONFIG")
+entries_text="$(python "$HERE/models_for_config.py" "$MODELS_YAML" "$CONFIG")" \
+  || { status=$?; exit "$status"; }
+ENTRIES=()
+if [[ -n "$entries_text" ]]; then
+  mapfile -t ENTRIES <<<"$entries_text"
+fi
 if [[ "${#ENTRIES[@]}" -eq 0 ]]; then
   echo "[models] no models request config '$CONFIG' in $MODELS_YAML" >&2
   exit 1
@@ -52,7 +59,13 @@ server_ready() {
   # 200 from /v1/models AND the requested model id is being served
   local name="$1"
   curl -sf --max-time 5 "$BASE_URL/v1/models" 2>/dev/null \
-    | grep -qF "\"id\":\"$name\""
+    | python -c \
+      'import json, sys
+want = sys.argv[1]
+doc = json.load(sys.stdin)
+models = doc.get("data") or []
+raise SystemExit(0 if any(m.get("id") == want for m in models) else 1)' \
+      "$name"
 }
 
 wait_ready() {
@@ -91,15 +104,22 @@ teardown() {
 run_one() {
   local label="$1" name="$2" maxlen="$3" gpu_util="$4" quant="$5" tok="$6"
   local log="$OUT_DIR/server_${label}_${CONFIG}.log"
+  local tokenizer="${tok:-$name}"
+  local launch_env=(MODEL="$name")
+  local sweep_env=(MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log"
+                   TOKENIZER="$tokenizer" BASE_URL="$BASE_URL" OUT_DIR="$OUT_DIR"
+                   POWER_BACKEND="$POWER_BACKEND" CONFIG_YAML="$CONFIG_YAML"
+                   CONCURRENCIES="$CONCURRENCIES")
   echo "[models] === $label ($name) config=$CONFIG ==="
 
+  [[ -n "$maxlen" ]] && launch_env+=(MAXLEN="$maxlen")
+  [[ -n "$gpu_util" ]] && launch_env+=(GPU_UTIL="$gpu_util")
+  [[ -n "$quant" ]] && launch_env+=(QUANT="$quant")
+  [[ -n "$tok" ]] && launch_env+=(TOKENIZER="$tok")
+
   # Launch the server in the background, teeing its log. launch_server.sh reads
-  # MODEL/MAXLEN/GPU_UTIL/QUANT from the environment.
-  MODEL="$name" \
-  ${maxlen:+MAXLEN="$maxlen"} \
-  ${gpu_util:+GPU_UTIL="$gpu_util"} \
-  ${quant:+QUANT="$quant"} \
-    "$HERE/launch_server.sh" "$CONFIG" >"$log" 2>&1 &
+  # MODEL/MAXLEN/GPU_UTIL/QUANT/TOKENIZER from the environment.
+  env "${launch_env[@]}" "$HERE/launch_server.sh" "$CONFIG" >"$log" 2>&1 &
   LAUNCH_PID=$!
 
   if ! wait_ready "$name"; then
@@ -110,11 +130,8 @@ run_one() {
 
   # Sweep this model. run_all.sh passes the model, label, and server log through
   # to the benchmark so rows are tagged and capacity figures captured.
-  MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log" \
-  ${tok:+TOKENIZER="$tok"} \
-  BASE_URL="$BASE_URL" OUT_DIR="$OUT_DIR" POWER_BACKEND="$POWER_BACKEND" \
-  CONFIG_YAML="$CONFIG_YAML" CONCURRENCIES="$CONCURRENCIES" \
-    "$HERE/run_all.sh" "$CONFIG" || echo "[models] sweep for $label returned an error"
+  env "${sweep_env[@]}" "$HERE/run_all.sh" "$CONFIG" \
+    || echo "[models] sweep for $label returned an error"
 
   teardown
   echo "[models] done $label"

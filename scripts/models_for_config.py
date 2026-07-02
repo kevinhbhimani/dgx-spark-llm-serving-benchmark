@@ -30,7 +30,15 @@ def main() -> int:
     seen_labels = set()
     n = 0
     for m in models:
+        if not isinstance(m, dict):
+            sys.stderr.write(f"{path}: each model entry must be a mapping "
+                             f"(offending entry: {m!r})\n")
+            return 2
         configs = m.get("configs", [])
+        if not isinstance(configs, list):
+            sys.stderr.write(f"{path}: 'configs' must be a list for model "
+                             f"{m.get('label') or m.get('name') or m!r}\n")
+            return 2
         if want not in configs:
             continue
         label = str(m.get("label") or "").strip()
