@@ -64,7 +64,11 @@ case "$CONFIG" in
     run_env=( -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
               -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" )
     if [[ -n "${HF_TOKEN:-}" ]]; then run_env+=( -e HF_TOKEN="$HF_TOKEN" ); fi
-    docker run --rm --gpus all --network host --ipc=host \
+    # Name the container so a sweep orchestrator can tear it down between models
+    # (scripts/run_models.sh). Single mode does not use the Ray container, so
+    # reusing $VLLM_CONTAINER here is safe; clear any stale one first.
+    docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
+    docker run --rm --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host \
       "${run_env[@]}" -v "$HF_CACHE":/root/.cache/huggingface \
       "$VLLM_IMAGE" \
       vllm serve "$MODEL" "${common[@]}" \

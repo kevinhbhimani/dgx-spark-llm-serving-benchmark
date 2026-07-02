@@ -78,12 +78,14 @@ bench/
   workload.py      synthetic token-length prompts and JSONL trace loading
   client.py        one async streaming request with timing capture
   monitors.py      background power sampler and vLLM metrics scraper
+  server_info.py   served-model capacity and launch configuration capture
   runner.py        closed-loop and open-loop load generation
   metrics.py       percentile aggregation, throughput, goodput, energy
   run_benchmark.py command line entry for one measurement point
 configs/
   smoke.yaml       short connectivity test
   experiment.yaml  default full benchmark settings
+  models.yaml      model matrix for the multi-model sweep
 scripts/
   connectx_env.sh             shared ConnectX and container settings
   verify_connectx.sh          route and latency sanity checks
@@ -91,6 +93,8 @@ scripts/
   launch_server.sh            start vLLM in single, tp2, or pp2 mode
   interconnect_microbench.sh  nccl-tests all-reduce check
   run_all.sh                  sweep a concurrency list for one config
+  run_models.sh               sweep several models for one config, one at a time
+  models_for_config.py        select models.yaml entries for a serving config
 plot_results.py               generate PDF/PNG figures from results/index.csv
 requirements.txt              Python client and plotting dependencies
 ```
@@ -308,6 +312,48 @@ If `nccl-tests` is not already built, the script clones
 `https://github.com/NVIDIA/nccl-tests` into `$HOME/nccl-tests` and builds it
 with `MPI=1`. Set `NCCL_TESTS_DIR` to use an existing checkout.
 
+## Benchmarking Multiple Models
+
+To characterize several models, list them in `configs/models.yaml` and drive them
+with `scripts/run_models.sh`. Each entry names a Hugging Face model, a short
+`label` used to tag results and plots, the serving configs to run it under
+(`single`, `tp2`, `pp2`), and optional `max_model_len`, `gpu_util`, `quant`, and
+`tokenizer`. A model whose weights plus KV cache do not fit on one GB10 must omit
+`single` and use the dual-node configs, which pool two nodes over ConnectX for
+roughly twice the memory (a 70B model in bf16 is dual-only).
+
+`run_models.sh` takes one serving config at a time. It selects the models that
+request that config, and for each one launches a server, waits until
+`/v1/models` reports it, runs the concurrency sweep tagged with the model label,
+then tears the server down before the next model. Server stdout is teed to
+`OUT_DIR/server_<label>_<config>.log` and passed to the benchmark so exact
+capacity figures are captured.
+
+```bash
+# Single-node models (no Ray). Launches and removes a container per model.
+CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh single
+
+# Dual-node models. Start Ray on both nodes first; run_models.sh then cycles
+# only the vLLM serve process between models and leaves the Ray cluster up.
+DROP_CACHES=1 scripts/start_ray.sh head        # on Diya
+DROP_CACHES=1 scripts/start_ray.sh worker      # on Hoedus
+scripts/run_models.sh tp2
+scripts/run_models.sh pp2
+scripts/start_ray.sh stop                      # on each node when finished
+```
+
+All runs append to one `OUT_DIR/index.csv` tagged by `model_label`, so a single
+plotting invocation compares across models (see Outputs). Use a fresh `OUT_DIR`
+the first time on an upgraded checkout: the index gained columns, and the
+benchmark refuses to append rows to an index whose header does not match, to
+avoid silently misaligning columns.
+
+Key environment variables: `MODELS_YAML` (default `configs/models.yaml`),
+`OUT_DIR`, `BASE_URL`, `POWER_BACKEND`, `CONCURRENCIES`, `CONFIG_YAML`, and
+`READY_TIMEOUT` (seconds to wait for a model to load, default 1200). Trim
+`configs/models.yaml` to your target models before running; the shipped file is
+an example matrix.
+
 ## Workloads And Traces
 
 The default `configs/experiment.yaml` workload spans short prompts and
@@ -345,9 +391,18 @@ Every measurement point writes these files under `out_dir`:
 
 - `<run_tag>.raw.jsonl`: one JSON record per request, including TTFT, E2E,
   token timestamps, inter-token gaps, success state, and error text.
-- `<run_tag>.summary.json`: aggregate metrics, capacity samples, optional
-  energy metrics, full resolved configuration, and `drain_s`.
-- `index.csv`: one row per measurement point for plotting sweeps.
+- `<run_tag>.summary.json`: aggregate metrics, capacity samples, server-side
+  token counters, the served model and label, a `server_info` block (capacity
+  and launch configuration), optional energy metrics, the full resolved
+  configuration, and `drain_s`.
+- `index.csv`: one row per measurement point for plotting sweeps. Each row is
+  tagged with `model` and `model_label` and carries the server-side counters and
+  capacity columns below alongside the client-side latency/throughput metrics.
+
+When several models were run into one `index.csv` (see Benchmarking Multiple
+Models), `plot_results.py` writes a cross-model `model_comparison` figure and a
+`capacity_table`, then a full per-model figure set under `figs/<model_label>/`.
+Restrict to one model with `--model <label>`.
 
 The run tag has this shape:
 
@@ -444,6 +499,36 @@ Aggregate metrics:
 - Energy: when enabled, power samples over the same logical window produce
   `mean_power_w`, `energy_per_token_j`, and `tokens_per_watt`.
 
+Server-side counters (from vLLM `/metrics`, differenced over the logical window):
+
+- `server_prompt_tokens`, `server_generation_tokens`,
+  `server_prompt_tokens_cached`: prefill, decode, and prefix-cache-hit token
+  counts the server actually processed during the window.
+- `server_gen_tps`: `server_generation_tokens / measure_s`. Because it counts
+  tokens the server produced, not requests that finished on the client, it is a
+  throughput reading that stays honest when the measurement window is short
+  relative to request duration. The `server_vs_client_throughput` figure plots
+  it against the client rate; a gap between them means the window was too short
+  (see Choosing The Measurement Window).
+- `num_preemptions`: requests vLLM preempted during the window, a capacity
+  pressure signal.
+
+Served-model capacity and launch configuration (constant per server, captured
+once from `/v1/models`, vLLM `cache_config_info`, and the model config):
+
+- `max_model_len`, `kv_cache_dtype`, `gpu_memory_utilization`, `block_size`,
+  `gpu_blocks`: the launch-time KV cache configuration.
+- `total_kv_tokens`: `gpu_blocks * block_size`, the KV cache capacity in tokens.
+- `weight_gb`, `kv_cache_gb`: full-model weight and KV cache footprints. These
+  are aggregates across shards; for `tp2`/`pp2` the per-GPU footprint is roughly
+  the value divided by the parallel size. `weight_gb` is the checkpoint size and
+  approximates the served size unless a different dtype or quantization is used.
+  Pass `--server-log` (the multi-model orchestrator does this automatically) to
+  also capture the exact `max_concurrency` vLLM logged at load.
+
+These per-model capacity numbers are collected into `capacity_table.tex`/`.md` by
+`plot_results.py --table`.
+
 ## Choosing The Measurement Window
 
 Because only requests that *complete* inside the window count, the window must be
@@ -518,6 +603,18 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
 - `PyTorch was not found` from Transformers on the benchmark client is harmless
   for this harness because it only loads tokenizers locally. vLLM and PyTorch
   run inside the serving container.
+- `index schema mismatch` on a run or `Expected N fields` in plotting: the index
+  columns changed between versions and a new run tried to append to an old
+  `index.csv`. Write to a fresh `OUT_DIR` (or move the old index aside) and plot
+  the old and new indexes separately.
+- `run_models.sh` skips a model with a timeout or "launcher exited": that model
+  failed to come up (often OOM). Check `OUT_DIR/server_<label>_<config>.log`;
+  lower its `gpu_util` in `configs/models.yaml`, add a `quant`, or move it to the
+  dual-node configs if it does not fit on one GB10. The orchestrator continues
+  to the next model rather than aborting the whole sweep.
+- `weight_gb`/`kv_cache_gb` blank in the index: the model config or Hub metadata
+  could not be fetched (offline or gated without `HF_TOKEN`). The HTTP-derived
+  fields (`gpu_blocks`, `total_kv_tokens`, `block_size`, etc.) still populate.
 - Tokenizer download fails: set `HF_TOKEN`, log in with the Hugging Face CLI, or
   set `tokenizer` to a local tokenizer path.
 - Docker cannot access the GPU: verify `docker run --gpus all ... nvidia-smi`
@@ -557,9 +654,10 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
 Useful checks after editing the repository:
 
 ```bash
-python -m compileall bench plot_results.py
+python -m compileall bench plot_results.py scripts/models_for_config.py
 bash -n scripts/*.sh
 python -m pip check
+python scripts/models_for_config.py configs/models.yaml single
 python plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png --table
 ```
 
@@ -571,8 +669,16 @@ extra checks if installed locally.
 - Section 5.1 single Spark: run the `single` closed-loop concurrency sweep.
 - Sections 5.2 and 5.3 dual Spark: run `tp2` and `pp2` sweeps with the same
   model, tokenizer, workload, SLO, and measurement window.
+- Multiple models: list them in `configs/models.yaml` and drive them with
+  `scripts/run_models.sh <config>` (see Benchmarking Multiple Models). Report the
+  cross-model `model_comparison` figure and `capacity_table` from
+  `plot_results.py --table`.
 - Capacity: use `kv_cache_usage_*` and `requests_waiting_*` columns plus the
-  per-run `vllm_metrics` summaries.
+  per-run `vllm_metrics` summaries. The `server_gen_tps` column gives a
+  window-robust server-side throughput, and the `weight_gb`, `kv_cache_gb`,
+  `total_kv_tokens`, `gpu_blocks`, `block_size`, `kv_cache_dtype`,
+  `gpu_memory_utilization`, and `max_model_len` columns give the served-model
+  capacity and launch configuration for the platform/model table.
 - Energy: enable a validated power backend and report the summary `energy`
   block for the same window as throughput.
 - Interconnect model validation: record the `all_reduce_perf` log from

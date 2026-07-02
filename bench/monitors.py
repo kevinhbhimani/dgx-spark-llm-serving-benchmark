@@ -110,11 +110,24 @@ class PowerSampler:
 
 
 class VLLMMetricsScraper:
-    KEYS = [
+    # Gauges: instantaneous occupancy/queue state, summarized as min/mean/max.
+    GAUGE_KEYS = [
         "vllm:num_requests_running",
         "vllm:num_requests_waiting",
         "vllm:kv_cache_usage_perc",
     ]
+    # Counters: monotonic totals of server-side work. Summarized as the delta
+    # over the measurement window, which -- unlike the client's completed-in-
+    # window aggregates -- counts tokens the server actually processed during the
+    # window even when few requests finish inside it. This makes server-side
+    # throughput robust to a measurement window shorter than request duration.
+    COUNTER_KEYS = [
+        "vllm:prompt_tokens_total",
+        "vllm:generation_tokens_total",
+        "vllm:prompt_tokens_cached_total",
+        "vllm:num_preemptions_total",
+    ]
+    KEYS = GAUGE_KEYS + COUNTER_KEYS
     METRIC_ALIASES = {
         # Older vLLM builds exposed this as gpu_cache_usage_perc. Keep summaries
         # stable by normalizing it to the current index/summary field.
@@ -163,8 +176,38 @@ class VLLMMetricsScraper:
 
     def summary(self, t0, t1):
         out = {}
-        for k, pts in self._series.items():
-            vals = [v for (t, v) in pts if t0 <= t <= t1]
+        for k in self.GAUGE_KEYS:
+            vals = [v for (t, v) in self._series[k] if t0 <= t <= t1]
             out[k] = ({"min": min(vals), "mean": sum(vals) / len(vals), "max": max(vals)}
                       if vals else {"min": None, "mean": None, "max": None})
+        for k in self.COUNTER_KEYS:
+            out[k] = self._counter_delta(self._series[k], t0, t1)
         return out
+
+    @staticmethod
+    def _counter_delta(pts, t0, t1):
+        """Work a monotonic counter accumulated across the [t0, t1] window.
+
+        Baselines on the last sample at or before the window start (so the full
+        window is covered, not just the gap between the first and last in-window
+        scrapes) and ends on the last sample at or before the window end.
+        """
+        base = None
+        for t, v in pts:
+            if t <= t0:
+                base = (t, v)
+            else:
+                break
+        end = None
+        for t, v in pts:
+            if t <= t1:
+                end = (t, v)
+            else:
+                break
+        if base is None:
+            base = next(((t, v) for t, v in pts if t0 <= t <= t1), None)
+        if base is None or end is None or end[0] <= base[0]:
+            return {"delta": None, "rate_per_s": None}
+        delta = end[1] - base[1]
+        span = end[0] - base[0]
+        return {"delta": delta, "rate_per_s": (delta / span) if span > 0 else None}

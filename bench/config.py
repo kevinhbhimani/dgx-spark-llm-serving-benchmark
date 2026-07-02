@@ -55,6 +55,8 @@ class ExperimentConfig:
 
     # labeling and output
     config_label: str = "single"
+    model_label: str = ""         # short model slug for tags/plots; defaults from model
+    server_log: str = ""          # optional vLLM stdout log for exact capacity figures
     out_dir: str = "results"
     run_note: str = ""
 

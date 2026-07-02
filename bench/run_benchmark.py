@@ -13,11 +13,14 @@ from .workload import Workload
 from .runner import run_phase
 from .monitors import PowerSampler, VLLMMetricsScraper
 from .metrics import aggregate
+from . import server_info
 
 
 INDEX_FIELDS = [
     "run_tag",
     "config_label",
+    "model_label",
+    "model",
     "mode",
     "concurrency",
     "target_qps",
@@ -42,6 +45,22 @@ INDEX_FIELDS = [
     "requests_running_max",
     "requests_waiting_mean",
     "requests_waiting_max",
+    # server-side counters over the window (robust to a short measurement window)
+    "server_prompt_tokens",
+    "server_generation_tokens",
+    "server_prompt_tokens_cached",
+    "server_gen_tps",
+    "num_preemptions",
+    # served-model capacity and launch configuration (constant per server)
+    "max_model_len",
+    "kv_cache_dtype",
+    "gpu_memory_utilization",
+    "block_size",
+    "gpu_blocks",
+    "total_kv_tokens",
+    "weight_gb",
+    "kv_cache_gb",
+    # energy
     "mean_power_w",
     "energy_per_token_j",
     "tokens_per_watt",
@@ -64,21 +83,42 @@ def _resolve_model(cfg):
         return json.loads(r.read().decode())["data"][0]["id"]
 
 
+def _model_slug(model: str) -> str:
+    """Short filesystem/plot-friendly slug from a served model name.
+
+    e.g. "Qwen/Qwen3-8B" -> "qwen3-8b", "meta-llama/Llama-3.1-70B-Instruct"
+    -> "llama-3.1-70b-instruct".
+    """
+    base = (model or "").rsplit("/", 1)[-1].lower()
+    slug = "".join(c if (c.isalnum() or c in "-.") else "-" for c in base)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "model"
+
+
 def _append_index(out_dir, s):
     idx = os.path.join(out_dir, "index.csv")
     vllm = s.get("vllm_metrics", {})
     energy = s.get("energy", {})
+    info = s.get("server_info", {})
 
     def vmetric(name, stat):
         return vllm.get(name, {}).get(stat)
 
+    def vcounter(name, stat="delta"):
+        return vllm.get(name, {}).get(stat)
+
+    gen_delta = vcounter("vllm:generation_tokens_total")
+    measure_s = s["measure_s"]
     row = {
         "run_tag": s["run_tag"],
         "config_label": s["config_label"],
+        "model_label": s.get("model_label", ""),
+        "model": s.get("model", ""),
         "mode": s["mode"],
         "concurrency": s["concurrency"],
         "target_qps": s["target_qps"],
-        "measure_s": s["measure_s"],
+        "measure_s": measure_s,
         "requests_started": s["requests_started"],
         "requests_completed": s["requests_completed"],
         "requests_failed": s["requests_failed"],
@@ -99,12 +139,36 @@ def _append_index(out_dir, s):
         "requests_running_max": vmetric("vllm:num_requests_running", "max"),
         "requests_waiting_mean": vmetric("vllm:num_requests_waiting", "mean"),
         "requests_waiting_max": vmetric("vllm:num_requests_waiting", "max"),
+        "server_prompt_tokens": vcounter("vllm:prompt_tokens_total"),
+        "server_generation_tokens": gen_delta,
+        "server_prompt_tokens_cached": vcounter("vllm:prompt_tokens_cached_total"),
+        "server_gen_tps": (gen_delta / measure_s)
+        if (gen_delta is not None and measure_s) else None,
+        "num_preemptions": vcounter("vllm:num_preemptions_total"),
+        "max_model_len": info.get("max_model_len"),
+        "kv_cache_dtype": info.get("kv_cache_dtype"),
+        "gpu_memory_utilization": info.get("gpu_memory_utilization"),
+        "block_size": info.get("block_size"),
+        "gpu_blocks": info.get("gpu_blocks"),
+        "total_kv_tokens": info.get("total_kv_tokens"),
+        "weight_gb": info.get("weight_gb"),
+        "kv_cache_gb": info.get("kv_cache_gb"),
         "mean_power_w": energy.get("mean_power_w"),
         "energy_per_token_j": energy.get("energy_per_token_j"),
         "tokens_per_watt": energy.get("tokens_per_watt"),
     }
     new = not os.path.exists(idx)
     if not new and os.path.getsize(idx) > 0:
+        with open(idx, "r", newline="") as f:
+            header = f.readline().rstrip("\r\n")
+        if header != ",".join(INDEX_FIELDS):
+            raise SystemExit(
+                f"index schema mismatch in {idx}: its header does not match this "
+                "build's INDEX_FIELDS (the columns changed between versions). "
+                "Appending would misalign columns. Write to a fresh OUT_DIR, or "
+                "move the old index aside, and re-plot the old and new indexes "
+                "separately."
+            )
         with open(idx, "rb+") as f:
             f.seek(-1, os.SEEK_END)
             if f.read(1) != b"\n":
@@ -120,6 +184,10 @@ def main():
     ap = argparse.ArgumentParser(description="LLM serving benchmark for DGX Spark")
     ap.add_argument("--config", help="YAML config path")
     ap.add_argument("--config-label")
+    ap.add_argument("--model-label", help="short model slug for tags/plots; "
+                    "defaults to a slug of the served model name")
+    ap.add_argument("--server-log", help="path to a captured vLLM stdout log for "
+                    "exact capacity figures (max concurrency, gpu blocks)")
     ap.add_argument("--model", help="served model name; overrides config and auto-resolve")
     ap.add_argument("--tokenizer", help="HF tokenizer id or path; empty string disables")
     ap.add_argument("--mode", choices=["closed", "open"])
@@ -156,13 +224,23 @@ def main():
         cfg.out_dir = args.out_dir
     if args.power_backend:
         cfg.power_backend = args.power_backend
+    if args.model_label is not None:
+        cfg.model_label = args.model_label
+    if args.server_log is not None:
+        cfg.server_log = args.server_log
 
     cfg.model = _resolve_model(cfg)
+    # A model slug feeds the index/plots. Only an explicit label prefixes the run
+    # tag (multi-model sweeps set one); the single-model workflow keeps its tags.
+    explicit_label = bool(cfg.model_label)
+    if not cfg.model_label:
+        cfg.model_label = _model_slug(cfg.model)
     workload = Workload(cfg, _load_tokenizer(cfg))
 
     os.makedirs(cfg.out_dir, exist_ok=True)
     point = cfg.concurrency if cfg.mode == "closed" else cfg.qps
-    tag = f"{cfg.config_label}_{cfg.mode}_{point}_{time.strftime('%Y%m%d-%H%M%S')}"
+    prefix = f"{cfg.model_label}_" if explicit_label else ""
+    tag = f"{prefix}{cfg.config_label}_{cfg.mode}_{point}_{time.strftime('%Y%m%d-%H%M%S')}"
     print(f"[bench] model={cfg.model} config={cfg.config_label} "
           f"mode={cfg.mode} point={point}")
 
@@ -187,9 +265,16 @@ def main():
     if vmet:
         vmet.stop()
 
+    # Snapshot the served model's capacity/launch configuration. Best effort:
+    # any field that cannot be resolved is left out rather than failing the run.
+    info = server_info.collect(cfg.base_url, cfg.model, cfg.server_log)
+
     summary = aggregate(records, cfg, window_start, logical_window_end,
                         power if cfg.power_backend != "none" else None, vmet)
     summary["run_tag"] = tag
+    summary["model"] = cfg.model
+    summary["model_label"] = cfg.model_label
+    summary["server_info"] = info
     summary["config"] = cfg.to_dict()
     summary["drain_s"] = max(0.0, actual_end - logical_window_end)
 

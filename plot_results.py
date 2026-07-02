@@ -103,6 +103,10 @@ NUMERIC_COLS = [
     "kv_cache_usage_mean", "kv_cache_usage_max",
     "requests_running_mean", "requests_running_max",
     "requests_waiting_mean", "requests_waiting_max",
+    "server_prompt_tokens", "server_generation_tokens",
+    "server_prompt_tokens_cached", "server_gen_tps", "num_preemptions",
+    "max_model_len", "gpu_memory_utilization", "block_size", "gpu_blocks",
+    "total_kv_tokens", "weight_gb", "kv_cache_gb",
     "mean_power_w", "energy_per_token_j", "tokens_per_watt",
 ]
 
@@ -143,6 +147,50 @@ def style_for(cfg: str, i: int) -> dict:
                 marker=_FALLBACK_MARKERS[i % len(_FALLBACK_MARKERS)])
 
 
+def models_present(df: pd.DataFrame) -> list[str]:
+    """Distinct model labels in the index, in first-seen order.
+
+    Falls back to the full model id when only that column exists, and to an empty
+    list when neither is present (an old single-model index), which keeps the
+    plots in their original per-config comparison mode.
+    """
+    for col in ("model_label", "model"):
+        if col in df.columns and df[col].notna().any():
+            return list(dict.fromkeys(df[col].dropna().astype(str).tolist()))
+    return []
+
+
+def _slug(name: str) -> str:
+    """Filesystem-safe slug for a per-model output subdirectory."""
+    s = "".join(c if (c.isalnum() or c in "-.") else "-" for c in str(name).lower())
+    while "--" in s:
+        s = s.replace("--", "-")
+    return s.strip("-") or "model"
+
+
+def _model_col(df: pd.DataFrame) -> str | None:
+    for col in ("model_label", "model"):
+        if col in df.columns and df[col].notna().any():
+            return col
+    return None
+
+
+def iter_model_frames(df: pd.DataFrame):
+    """Yield (model_label_or_None, sub_df) for each model in the index.
+
+    Config-level grouping/deduping must happen within a model, or two models
+    measured at the same config and load look like duplicate points. A
+    single-model or old index yields one (None, df) pair, preserving the
+    original behavior.
+    """
+    col = _model_col(df)
+    if col is None:
+        yield None, df
+        return
+    for model in models_present(df):
+        yield model, df[df[col].astype(str) == model]
+
+
 def load_col_for(g: pd.DataFrame, mode: str) -> str:
     load_col = "concurrency" if mode == "closed" else "target_qps"
     if load_col not in g.columns:
@@ -172,29 +220,31 @@ def dedupe_index(df: pd.DataFrame) -> pd.DataFrame:
     discrepancy can be investigated in index.csv.
     """
     parts = []
-    for cfg in configs_present(df):
-        g = df[df["config_label"] == cfg].copy()   # preserves file/chronological order
-        mode = str(g["mode"].iloc[0]) if "mode" in g.columns and len(g) else "closed"
-        load_col = load_col_for(g, mode)
-        if "requests_completed" in g.columns:
-            # stable sort: ties keep chronological order, so keep="last" below
-            # then prefers the later run among equally-supported duplicates
-            g = g.sort_values("requests_completed", kind="stable", na_position="first")
-        dup_mask = g.duplicated(subset=[load_col], keep="last")
-        if dup_mask.any():
-            kept = g[~dup_mask]
-            for _, row in g[dup_mask].iterrows():
-                match = kept[kept[load_col] == row[load_col]]
-                winner = match.iloc[0] if len(match) else None
-                winner_tag = winner.get("run_tag", "?") if winner is not None else "?"
-                n_dropped = row.get("requests_completed", "?")
-                n_winner = winner.get("requests_completed", "?") if winner is not None else "?"
-                print(f"  note: {cfg} {load_col}={row[load_col]:g}: run "
-                      f"{row.get('run_tag', '?')} (n={n_dropped}) superseded by "
-                      f"{winner_tag} (n={n_winner}); dropped from the figures "
-                      f"(compare both in index.csv)")
-            g = kept
-        parts.append(g)
+    for model, msub in iter_model_frames(df):
+        pfx = f"{model} " if model else ""
+        for cfg in configs_present(msub):
+            g = msub[msub["config_label"] == cfg].copy()   # chronological order
+            mode = str(g["mode"].iloc[0]) if "mode" in g.columns and len(g) else "closed"
+            load_col = load_col_for(g, mode)
+            if "requests_completed" in g.columns:
+                # stable sort: ties keep chronological order, so keep="last" below
+                # then prefers the later run among equally-supported duplicates
+                g = g.sort_values("requests_completed", kind="stable", na_position="first")
+            dup_mask = g.duplicated(subset=[load_col], keep="last")
+            if dup_mask.any():
+                kept = g[~dup_mask]
+                for _, row in g[dup_mask].iterrows():
+                    match = kept[kept[load_col] == row[load_col]]
+                    winner = match.iloc[0] if len(match) else None
+                    winner_tag = winner.get("run_tag", "?") if winner is not None else "?"
+                    n_dropped = row.get("requests_completed", "?")
+                    n_winner = winner.get("requests_completed", "?") if winner is not None else "?"
+                    print(f"  note: {pfx}{cfg} {load_col}={row[load_col]:g}: run "
+                          f"{row.get('run_tag', '?')} (n={n_dropped}) superseded by "
+                          f"{winner_tag} (n={n_winner}); dropped from the figures "
+                          f"(compare both in index.csv)")
+                g = kept
+            parts.append(g)
     return pd.concat(parts) if parts else df
 
 
@@ -245,15 +295,17 @@ def warn_low_n(df: pd.DataFrame) -> None:
     if "requests_completed" not in df.columns:
         return
     any_bad = False
-    for cfg in configs_present(df):
-        g, lc, _ = group(df, cfg)
-        bad = g[g["requests_completed"] < MIN_SAMPLES]
-        if len(bad):
-            any_bad = True
-            pts = ", ".join(f"{lc}={v:g} (n={int(n)})"
-                            for v, n in zip(bad[lc], bad["requests_completed"]))
-            print(f"  warning: {cfg} has {len(bad)} point(s) with fewer than "
-                  f"{MIN_SAMPLES} completed requests in the window: {pts}")
+    for model, msub in iter_model_frames(df):
+        pfx = f"{model}/" if model else ""
+        for cfg in configs_present(msub):
+            g, lc, _ = group(msub, cfg)
+            bad = g[g["requests_completed"] < MIN_SAMPLES]
+            if len(bad):
+                any_bad = True
+                pts = ", ".join(f"{lc}={v:g} (n={int(n)})"
+                                for v, n in zip(bad[lc], bad["requests_completed"]))
+                print(f"  warning: {pfx}{cfg} has {len(bad)} point(s) with fewer "
+                      f"than {MIN_SAMPLES} completed requests in the window: {pts}")
     if any_bad:
         print(f"           percentiles at those loads are small-sample noise, not "
               f"a capacity reading; circled (o) in the figures. A longer "
@@ -271,30 +323,36 @@ def report_quality(df: pd.DataFrame) -> None:
     """
     print("data-quality report")
     have_ms = "measure_s" in df.columns
-    for cfg in configs_present(df):
-        g, lc, _ = group(df, cfg)
-        n_pts = len(g)
-        windows = sorted({float(v) for v in g["measure_s"]}) if have_ms else []
-        win_str = ("/".join(f"{w:g}" for w in windows) + "s") if windows else "?"
-        peak = "?"
-        if "tok_thru_tps" in g.columns and g["tok_thru_tps"].notna().any():
-            imax = g["tok_thru_tps"].idxmax()
-            peak = (f"{g.loc[imax, 'tok_thru_tps']:.0f} tok/s @ "
-                    f"{lc}={g.loc[imax, lc]:g}")
-        tag = " [head-node power only]" if cfg in DUAL_NODE_CONFIGS else ""
-        print(f"  {cfg:8s} {n_pts} pts, window(s)={win_str}, peak={peak}{tag}")
-        if have_ms and len(windows) > 1:
-            print(f"           mixed measurement windows in this series; windowed "
-                  f"rates stay comparable but per-point sample sizes differ a lot")
-        # a completed==0 point is not a measurement of zero throughput; it means
-        # nothing finished inside the window. Call it out explicitly.
-        if "requests_completed" in g.columns:
-            empties = g[g["requests_completed"] == 0]
-            if len(empties):
-                pts = ", ".join(f"{lc}={v:g}" for v in empties[lc])
-                print(f"           {len(empties)} point(s) with 0 completions "
-                      f"in-window ({pts}): throughput there is 'no data', not 0; "
-                      f"rerun with a longer --measure-s before trusting the curve")
+    for model, msub in iter_model_frames(df):
+        pfx = f"{model}/" if model else ""
+        for cfg in configs_present(msub):
+            _report_series(msub, cfg, pfx, have_ms)
+
+
+def _report_series(msub, cfg, pfx, have_ms):
+    g, lc, _ = group(msub, cfg)
+    n_pts = len(g)
+    windows = sorted({float(v) for v in g["measure_s"]}) if have_ms else []
+    win_str = ("/".join(f"{w:g}" for w in windows) + "s") if windows else "?"
+    peak = "?"
+    if "tok_thru_tps" in g.columns and g["tok_thru_tps"].notna().any():
+        imax = g["tok_thru_tps"].idxmax()
+        peak = (f"{g.loc[imax, 'tok_thru_tps']:.0f} tok/s @ "
+                f"{lc}={g.loc[imax, lc]:g}")
+    tag = " [head-node power only]" if cfg in DUAL_NODE_CONFIGS else ""
+    print(f"  {pfx + cfg:16s} {n_pts} pts, window(s)={win_str}, peak={peak}{tag}")
+    if have_ms and len(windows) > 1:
+        print(f"           mixed measurement windows in this series; windowed "
+              f"rates stay comparable but per-point sample sizes differ a lot")
+    # a completed==0 point is not a measurement of zero throughput; it means
+    # nothing finished inside the window. Call it out explicitly.
+    if "requests_completed" in g.columns:
+        empties = g[g["requests_completed"] == 0]
+        if len(empties):
+            pts = ", ".join(f"{lc}={v:g}" for v in empties[lc])
+            print(f"           {len(empties)} point(s) with 0 completions "
+                  f"in-window ({pts}): throughput there is 'no data', not 0; "
+                  f"rerun with a longer --measure-s before trusting the curve")
 
 
 def set_load_axis(ax, loads, mode: str) -> None:
@@ -577,6 +635,102 @@ def fig_energy(df, out, fmts):
     save(fig, "energy", out, fmts, tight=dual_present)
 
 
+def _throughput_col(df: pd.DataFrame) -> str:
+    """Prefer the server-side generation rate over the client windowed rate.
+
+    server_gen_tps counts tokens the server produced during the window and does
+    not depend on how many client requests finished inside it, so it is the
+    honest throughput at high concurrency. Falls back to the client rate when the
+    server counter is absent (older indexes).
+    """
+    if "server_gen_tps" in df.columns and df["server_gen_tps"].notna().any():
+        return "server_gen_tps"
+    return "tok_thru_tps"
+
+
+def fig_server_vs_client(df, out, fmts):
+    """Client windowed throughput vs server-side counter throughput per config.
+
+    A methodology diagnostic: where the client curve falls below the server
+    curve, the measurement window was too short to let enough requests finish,
+    so the client rate understates the server. They converge once the window is
+    long relative to request duration.
+    """
+    if not (has(df, ["tok_thru_tps"]) and "server_gen_tps" in df.columns
+            and df["server_gen_tps"].notna().any()):
+        return
+    fig, ax = plt.subplots(figsize=(COL_W, PANEL_H))
+    all_loads = []
+    mode = "closed"
+    for i, cfg in enumerate(configs_present(df)):
+        g, lc, mode = group(df, cfg)
+        s = style_for(cfg, i)
+        ax.plot(g[lc], g["tok_thru_tps"], marker=s["marker"], color=s["color"],
+                label=f"{s['label']} client")
+        ax.plot(g[lc], g["server_gen_tps"], marker=s["marker"], linestyle="--",
+                color=s["color"], alpha=0.7, label=f"{s['label']} server")
+        all_loads += g[lc].tolist()
+    set_load_axis(ax, all_loads, mode)
+    ax.set_ylabel("Output token throughput (tok/s)")
+    ax.set_ylim(bottom=0)
+    ax.legend(fontsize=7)
+    save(fig, "server_vs_client_throughput", out, fmts)
+
+
+# ---- cross-model comparison --------------------------------------------------
+def _series_rows(df, model, cfg):
+    m = df["model_label"] if "model_label" in df.columns else df.get("model")
+    sub = df[(m == model) & (df["config_label"] == cfg)]
+    return sub
+
+
+def _peak_row(sub, tcol):
+    if not len(sub) or tcol not in sub.columns or not sub[tcol].notna().any():
+        return None
+    return sub.loc[sub[tcol].idxmax()]
+
+
+def fig_model_comparison(df, out, fmts):
+    """Grouped bars comparing models: peak throughput and TTFT at that peak.
+
+    One group per model, one bar per serving config (colored by config, <=3
+    hues). Throughput is the peak over the concurrency sweep using the honest
+    server-side rate when available; TTFT is the median at that same peak point.
+    """
+    models = models_present(df)
+    if len(models) < 2:
+        return
+    configs = configs_present(df)
+    tcol = _throughput_col(df)
+    fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H + 0.5))
+    x = np.arange(len(models))
+    width = min(0.8 / max(len(configs), 1), 0.28)
+    for j, cfg in enumerate(configs):
+        s = style_for(cfg, j)
+        peaks, ttfts = [], []
+        for model in models:
+            row = _peak_row(_series_rows(df, model, cfg), tcol)
+            peaks.append(float(row[tcol]) if row is not None else np.nan)
+            ttfts.append(float(row["ttft_p50"]) * 1e3
+                         if (row is not None and pd.notna(row.get("ttft_p50")))
+                         else np.nan)
+        off = (j - (len(configs) - 1) / 2) * width
+        axl.bar(x + off, peaks, width, color=s["color"], label=s["label"])
+        axr.bar(x + off, ttfts, width, color=s["color"], label=s["label"])
+    srv = " (server-side)" if tcol == "server_gen_tps" else ""
+    axl.set_ylabel(f"Peak output throughput{srv} (tok/s)")
+    axl.set_ylim(bottom=0)
+    axr.set_ylabel("Median TTFT at peak (ms)")
+    axr.set_yscale("log")
+    for ax in (axl, axr):
+        ax.set_xticks(x)
+        ax.set_xticklabels(models, rotation=30, ha="right", fontsize=7)
+        ax.grid(axis="x", visible=False)
+    axl.legend(fontsize=7, ncol=len(configs), loc="upper center",
+               bbox_to_anchor=(0.5, 1.18))
+    save(fig, "model_comparison", out, fmts, tight=True)
+
+
 # ---- summary table -----------------------------------------------------------
 def _fmt(v, spec, low_n=False):
     if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -597,39 +751,50 @@ def write_summary_table(df, out) -> None:
     os.makedirs(out, exist_ok=True)
     rows = []
     energy_present = has(df, ["energy_per_token_j"])
-    for cfg in configs_present(df):
-        g, lc, _ = group(df, cfg)
-        s = style_for(cfg, 0)
-        for _, r in g.iterrows():
-            n = r.get("requests_completed", float("nan"))
-            low = pd.notna(n) and n < MIN_SAMPLES
-            rows.append({
-                "cfg": s["label"],
-                "load": r.get(lc, float("nan")),
-                "win": r.get("measure_s", float("nan")),
-                "n": n,
-                "low": low,
-                "dual": cfg in DUAL_NODE_CONFIGS,
-                "tps": r.get("tok_thru_tps", float("nan")),
-                "rps": r.get("req_thru_rps", float("nan")),
-                "ttft50": (r.get("ttft_p50", float("nan")) * 1e3),
-                "ttft99": (r.get("ttft_p99", float("nan")) * 1e3),
-                "itl50": (r.get("itl_p50", float("nan")) * 1e3),
-                "e2e50": r.get("e2e_p50", float("nan")),
-                "good": r.get("goodput_rps", float("nan")),
-                "ept": r.get("energy_per_token_j", float("nan")),
-            })
+    models = models_present(df)
+    multi_model = len(models) > 1
+    # iterate per (model, config) so multiple models are never merged into one
+    # config series; single-model indexes collapse to the original behavior
+    mcol = "model_label" if "model_label" in df.columns else "model"
+    for model in (models or [None]):
+        msub = df if model is None else df[df[mcol].astype(str) == model]
+        for cfg in configs_present(msub):
+            g, lc, _ = group(msub, cfg)
+            s = style_for(cfg, 0)
+            for _, r in g.iterrows():
+                n = r.get("requests_completed", float("nan"))
+                low = pd.notna(n) and n < MIN_SAMPLES
+                rows.append({
+                    "model": model or "",
+                    "cfg": s["label"],
+                    "load": r.get(lc, float("nan")),
+                    "win": r.get("measure_s", float("nan")),
+                    "n": n,
+                    "low": low,
+                    "dual": cfg in DUAL_NODE_CONFIGS,
+                    "tps": r.get("tok_thru_tps", float("nan")),
+                    "rps": r.get("req_thru_rps", float("nan")),
+                    "ttft50": (r.get("ttft_p50", float("nan")) * 1e3),
+                    "ttft99": (r.get("ttft_p99", float("nan")) * 1e3),
+                    "itl50": (r.get("itl_p50", float("nan")) * 1e3),
+                    "e2e50": r.get("e2e_p50", float("nan")),
+                    "good": r.get("goodput_rps", float("nan")),
+                    "ept": r.get("energy_per_token_j", float("nan")),
+                })
 
     # ---- Markdown ----
-    md = ["| Config | Load | Win (s) | n | Tok/s | Req/s | TTFT p50/p99 (ms) | "
+    mhead = "| Model " if multi_model else "|"
+    msep = "|---" if multi_model else "|"
+    md = [mhead + "| Config | Load | Win (s) | n | Tok/s | Req/s | TTFT p50/p99 (ms) | "
           "ITL p50 (ms) | E2E p50 (s) | Goodput (r/s) |"
           + (" Energy (J/tok) |" if energy_present else ""),
-          "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|" + ("--:|" if energy_present else "")]
+          msep + "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|" + ("--:|" if energy_present else "")]
     for r in rows:
         dag = " †" if r["low"] else ""
+        mcell = f"| {r['model']} " if multi_model else "|"
         ept = f" {_fmt(r['ept'], '.3f')}{'*' if r['dual'] else ''} |" if energy_present else ""
         md.append(
-            f"| {r['cfg']} | {_fmt(r['load'], '.0f')} | {_fmt(r['win'], '.0f')} | "
+            f"{mcell}| {r['cfg']} | {_fmt(r['load'], '.0f')} | {_fmt(r['win'], '.0f')} | "
             f"{_fmt(r['n'], '.0f')}{dag} | {_fmt(r['tps'], '.0f')} | "
             f"{_fmt(r['rps'], '.2f')} | {_fmt(r['ttft50'], '.0f')}/{_fmt(r['ttft99'], '.0f')} | "
             f"{_fmt(r['itl50'], '.0f')} | {_fmt(r['e2e50'], '.1f')} | "
@@ -652,27 +817,31 @@ def write_summary_table(df, out) -> None:
     # into the gutter. Only \usepackage{booktabs} is required.
     ecol = "r" if energy_present else ""
     ehead = " & J/tok" if energy_present else ""
+    mcolspec = "l " if multi_model else ""
+    mhead_tex = "Model & " if multi_model else ""
     lines = [
         r"% Requires \usepackage{booktabs}.",
-        r"\begin{tabular}{l r r r r r r r r r " + ecol + "}",
+        r"\begin{tabular}{" + mcolspec + r"l r r r r r r r r r " + ecol + "}",
         r"\toprule",
-        r"Config & Load & Win (s) & $n$ & Tok/s & Req/s & "
+        mhead_tex + r"Config & Load & Win (s) & $n$ & Tok/s & Req/s & "
         r"TTFT$_{50}$ (ms) & ITL$_{50}$ (ms) & E2E$_{50}$ (s) & "
         r"Goodput" + ehead + r" \\",
         r"\midrule",
     ]
-    last_cfg = None
+    last_key = None
     for r in rows:
-        if last_cfg is not None and r["cfg"] != last_cfg:
+        key = (r["model"], r["cfg"])
+        if last_key is not None and key != last_key:
             lines.append(r"\addlinespace")
-        last_cfg = r["cfg"]
+        last_key = key
         dag = r"\rlap{$^\dagger$}" if r["low"] else ""
+        mcell = f"{r['model']} & " if multi_model else ""
         eic = ""
         if energy_present:
             star = r"\rlap{$^*$}" if r["dual"] else ""
             eic = f" & {_fmt(r['ept'], '.3f')}{star}"
         lines.append(
-            f"{r['cfg']} & {_fmt(r['load'], '.0f')} & {_fmt(r['win'], '.0f')} & "
+            f"{mcell}{r['cfg']} & {_fmt(r['load'], '.0f')} & {_fmt(r['win'], '.0f')} & "
             f"{_fmt(r['n'], '.0f')}{dag} & {_fmt(r['tps'], '.0f')} & "
             f"{_fmt(r['rps'], '.2f')} & {_fmt(r['ttft50'], '.0f')} & "
             f"{_fmt(r['itl50'], '.0f')} & {_fmt(r['e2e50'], '.1f')} & "
@@ -692,6 +861,89 @@ def write_summary_table(df, out) -> None:
     print(f"  wrote {tex_path}")
 
 
+_CAP_COLS = ["weight_gb", "kv_cache_gb", "total_kv_tokens", "gpu_blocks",
+             "block_size", "kv_cache_dtype", "gpu_memory_utilization",
+             "max_model_len"]
+
+
+def write_capacity_table(df, out) -> None:
+    """Write the per-(model, config) capacity/launch table as Markdown + LaTeX.
+
+    These fields are constant for a given server, so one row per (model, config)
+    is taken from the first matching run. Weight and KV cache footprints are
+    full-model aggregates (per GPU is roughly the value divided by the parallel
+    size for tp2/pp2). Skips silently if no capacity columns are present.
+    """
+    if not any(c in df.columns and df[c].notna().any() for c in _CAP_COLS):
+        return
+    os.makedirs(out, exist_ok=True)
+    models = models_present(df) or [None]
+    mcol = "model_label" if "model_label" in df.columns else "model"
+    multi_model = len([m for m in models if m is not None]) > 1
+    rows = []
+    for model in models:
+        msub = df if model is None else df[df[mcol].astype(str) == model]
+        for cfg in configs_present(msub):
+            g, _, _ = group(msub, cfg)
+            r = g.iloc[0]
+            rows.append((model or "", style_for(cfg, 0)["label"],
+                         {c: r.get(c) for c in _CAP_COLS}))
+
+    hdr = (["Model"] if multi_model else []) + [
+        "Config", "Weight (GiB)", "KV cache (GiB)", "KV tokens", "GPU blocks",
+        "Block", "KV dtype", "GPU mem util", "max_model_len"]
+
+    def cells(model, cfg, cap):
+        vals = [
+            _fmt(cap["weight_gb"], ".1f"), _fmt(cap["kv_cache_gb"], ".1f"),
+            _fmt(cap["total_kv_tokens"], ",.0f"), _fmt(cap["gpu_blocks"], ",.0f"),
+            _fmt(cap["block_size"], ".0f"),
+            str(cap["kv_cache_dtype"]) if pd.notna(cap["kv_cache_dtype"]) else "--",
+            _fmt(cap["gpu_memory_utilization"], ".2f"),
+            _fmt(cap["max_model_len"], ",.0f")]
+        return ([model] if multi_model else []) + [cfg] + vals
+
+    md = ["| " + " | ".join(hdr) + " |",
+          "|" + "|".join(["---"] + ["--:"] * (len(hdr) - 1)) + "|"]
+    for model, cfg, cap in rows:
+        md.append("| " + " | ".join(cells(model, cfg, cap)) + " |")
+    md += ["", "Weight/KV cache are full-model aggregates; per GPU is roughly "
+           "these divided by the parallel size for TP=2 / PP=2."]
+    md_path = os.path.join(out, "capacity_table.md")
+    with open(md_path, "w") as f:
+        f.write("\n".join(md) + "\n")
+    print(f"  wrote {md_path}")
+
+    ncol = len(hdr)
+    tex = [r"% Requires \usepackage{booktabs}.",
+           r"\begin{tabular}{l " + "r " * (ncol - 1) + "}",
+           r"\toprule",
+           " & ".join(hdr).replace("_", r"\_") + r" \\",
+           r"\midrule"]
+    for model, cfg, cap in rows:
+        tex.append(" & ".join(c.replace("_", r"\_") for c in cells(model, cfg, cap))
+                   + r" \\")
+    tex += [r"\bottomrule", r"\end{tabular}",
+            r"% Weight/KV cache are full-model aggregates; per GPU is roughly "
+            r"these / parallel size for TP=2 / PP=2."]
+    tex_path = os.path.join(out, "capacity_table.tex")
+    with open(tex_path, "w") as f:
+        f.write("\n".join(tex) + "\n")
+    print(f"  wrote {tex_path}")
+
+
+def make_config_figures(df, out, fmts) -> None:
+    """The per-configuration figure set for a single model's slice of the index."""
+    fig_throughput_scaling(df, out, fmts)
+    fig_latency_throughput(df, out, fmts)
+    fig_tail_latency(df, out, fmts)
+    fig_goodput(df, out, fmts)
+    fig_capacity(df, out, fmts)
+    fig_reliability(df, out, fmts)
+    fig_energy(df, out, fmts)
+    fig_server_vs_client(df, out, fmts)
+
+
 # ---- main --------------------------------------------------------------------
 def main() -> None:
     global MIN_SAMPLES
@@ -703,7 +955,11 @@ def main() -> None:
     ap.add_argument("--serif", action="store_true",
                     help="use a Times-like serif font to match an IEEE paper body")
     ap.add_argument("--table", action="store_true",
-                    help="also write summary_table.tex and summary_table.md")
+                    help="also write summary_table and capacity_table (.tex/.md)")
+    ap.add_argument("--model", default=None,
+                    help="restrict to one model label (or id); with several "
+                         "models the default is a cross-model comparison plus a "
+                         "per-model figure set under out/<model>/")
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES,
                     help="completions below this make a point's percentiles "
                          "unreliable; such points are circled (default: %(default)s)")
@@ -715,19 +971,35 @@ def main() -> None:
     set_rc(args.dpi, args.serif)
     df = load_index(args.index)
 
-    print(f"loaded {len(df)} rows, configs: {', '.join(configs_present(df))}")
+    if args.model is not None:
+        col = _model_col(df)
+        if col is None:
+            sys.exit("--model given but the index has no model column")
+        df = df[df[col].astype(str) == args.model]
+        if not len(df):
+            sys.exit(f"no rows for model '{args.model}' in {args.index}")
+
+    models = models_present(df)
+    print(f"loaded {len(df)} rows, "
+          + (f"models: {', '.join(models)}, " if models else "")
+          + f"configs: {', '.join(configs_present(df))}")
     df = dedupe_index(df)
     report_quality(df)
     warn_low_n(df)
-    fig_throughput_scaling(df, args.out, fmts)
-    fig_latency_throughput(df, args.out, fmts)
-    fig_tail_latency(df, args.out, fmts)
-    fig_goodput(df, args.out, fmts)
-    fig_capacity(df, args.out, fmts)
-    fig_reliability(df, args.out, fmts)
-    fig_energy(df, args.out, fmts)
+
+    if len(models) > 1:
+        # cross-model summary at the top level, then a full figure set per model
+        fig_model_comparison(df, args.out, fmts)
+        col = _model_col(df)
+        for model in models:
+            sub = df[df[col].astype(str) == model]
+            make_config_figures(sub, os.path.join(args.out, _slug(model)), fmts)
+    else:
+        make_config_figures(df, args.out, fmts)
+
     if args.table:
         write_summary_table(df, args.out)
+        write_capacity_table(df, args.out)
     print("done")
 
 
