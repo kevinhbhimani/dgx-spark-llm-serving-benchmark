@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.DS_Store
 
 # C extensions
 *.so
@@ -219,5 +220,10 @@ __marimo__/
 
 figs/
 results/
+
+# BenchmarkSurvey: data is local; plot PNGs are committed so SURVEY.md renders on GitHub.
+BenchmarkSurvey/.mplconfig/
+BenchmarkSurvey/.venv/
+BenchmarkSurvey/data/
 
 .claude/
