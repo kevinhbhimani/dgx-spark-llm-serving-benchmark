@@ -1,6 +1,6 @@
 # BenchmarkSurvey
 
-Phase 1 model selection for the UD on prem chatbot project.
+Model selection for the UD on prem chatbot that is compatible with Spark.
 
 We score 190 open models on 8 UD relevant benchmarks, rank them, and check which top models can be served on one DGX Spark node.
 
@@ -30,4 +30,4 @@ python scripts/survey_analysis.py
 
 ## How this connects to the rest of the repo
 
-`configs/models.yaml` lists models for Phase 2 hardware serving tests. This survey suggests additional models from the top 10 that score higher and look practical on Spark. See `SURVEY.md` for the list.
+`configs/models.yaml` lists models for hardware serving tests. This survey suggests additional models from the top 10 that score higher and look practical on Spark. See `SURVEY.md` for the list.
