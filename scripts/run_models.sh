@@ -107,7 +107,7 @@ teardown() {
 }
 
 run_one() {
-  local label="$1" name="$2" maxlen="$3" gpu_util="$4" quant="$5" tok="$6"
+  local label="$1" name="$2" maxlen="$3" gpu_util="$4" quant="$5" tok="$6" trust="$7"
   local log="$OUT_DIR/server_${label}_${CONFIG}.log"
   local tokenizer="${tok:-$name}"
   local launch_env=(MODEL="$name")
@@ -121,6 +121,7 @@ run_one() {
   [[ -n "$gpu_util" ]] && launch_env+=(GPU_UTIL="$gpu_util")
   [[ -n "$quant" ]] && launch_env+=(QUANT="$quant")
   [[ -n "$tok" ]] && launch_env+=(TOKENIZER="$tok")
+  [[ -n "$trust" ]] && launch_env+=(TRUST_REMOTE_CODE="$trust")
 
   # Launch the server in the background, teeing its log. launch_server.sh reads
   # MODEL/MAXLEN/GPU_UTIL/QUANT/TOKENIZER from the environment.
@@ -146,8 +147,8 @@ run_one() {
 trap 'teardown' EXIT
 
 for entry in "${ENTRIES[@]}"; do
-  IFS='|' read -r label name maxlen gpu_util quant tok <<<"$entry"
-  run_one "$label" "$name" "$maxlen" "$gpu_util" "$quant" "$tok" \
+  IFS='|' read -r label name maxlen gpu_util quant tok trust <<<"$entry"
+  run_one "$label" "$name" "$maxlen" "$gpu_util" "$quant" "$tok" "$trust" \
     || echo "[models] $label did not complete; continuing"
 done
 

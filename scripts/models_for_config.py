@@ -4,7 +4,9 @@
 Used by scripts/run_models.sh to iterate models in the shell. Prints one
 pipe-delimited line per selected model:
 
-    label|name|max_model_len|gpu_util|quant|tokenizer
+    label|name|max_model_len|gpu_util|quant|tokenizer|trust_remote_code
+
+The trust_remote_code field is emitted as "1" when truthy, else empty.
 
 Empty fields are printed as empty strings, so the caller can decide defaults.
 
@@ -56,7 +58,8 @@ def main() -> int:
                   str(m.get("max_model_len", "") or ""),
                   str(m.get("gpu_util", "") or ""),
                   str(m.get("quant", "") or ""),
-                  str(m.get("tokenizer", "") or "")]
+                  str(m.get("tokenizer", "") or ""),
+                  "1" if m.get("trust_remote_code") else ""]
         if any("|" in f for f in fields):
             sys.stderr.write(f"{path}: '|' is not allowed in model fields\n")
             return 2
