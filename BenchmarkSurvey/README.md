@@ -21,10 +21,12 @@ python scripts/survey_analysis.py
 | File | What it is |
 |------|------------|
 | `SURVEY.md` | Main report with findings and plots |
-| `data/top_performers.csv` | Top 10 models by UD benchmark score |
-| `data/spark_recommendations.csv` | Top models that fit Spark and are not already in `configs/models.yaml` |
-| `data/serving_model_overlap.csv` | How the team's 7 models rank in this survey |
-| `plots/*.png` | Figures referenced by `SURVEY.md` |
+| `plots/params_bar.png` | MoE parameter chart (committed) |
+| `plots/top10_heatmap.png` | Top 10 benchmark heatmap (committed) |
+| `plots/top3_per_benchmark.png` | Top 3 per benchmark chart (committed) |
+| `data/top_performers.csv` | Top 10 models by UD benchmark score (local, gitignored) |
+| `data/spark_recommendations.csv` | Spark practical models not in `configs/models.yaml` (local) |
+| `data/serving_model_overlap.csv` | How the team's 7 models rank in this survey (local) |
 
 ## How this connects to the rest of the repo
 

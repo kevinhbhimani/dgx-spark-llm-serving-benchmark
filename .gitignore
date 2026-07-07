@@ -221,6 +221,7 @@ __marimo__/
 figs/
 results/
 
+# BenchmarkSurvey: data is local; plot PNGs are committed so SURVEY.md renders on GitHub.
 BenchmarkSurvey/.mplconfig/
 BenchmarkSurvey/.venv/
 BenchmarkSurvey/data/

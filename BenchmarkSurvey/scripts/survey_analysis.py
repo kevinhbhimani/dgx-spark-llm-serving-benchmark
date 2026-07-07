@@ -13,6 +13,9 @@ Outputs:
   - ../plots/top10_heatmap.png
   - ../plots/top3_per_benchmark.png
   - ../SURVEY.md
+
+Plot PNGs under plots/ are committed so SURVEY.md renders on GitHub. Re-run this
+script to refresh them after changing the analysis or input CSV.
 """
 
 from __future__ import annotations
