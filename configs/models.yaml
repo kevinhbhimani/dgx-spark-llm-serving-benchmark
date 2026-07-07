@@ -28,47 +28,66 @@
 # workload's largest bucket is 8192 input + 512 output => max_model_len 8704.
 
 models:
-  # Small neutral baseline: shows one-Spark serving behavior for a common Llama.
-  - name: meta-llama/Llama-3.1-8B-Instruct
-    label: llama3.1-8b
+  # Baseline dense 8B.
+  - name: Qwen/Qwen3-8B
+    label: qwen3-8b
     configs: [single, tp2]
     max_model_len: 8704
 
-  # NVIDIA-tuned 8B counterpart to the Llama baseline.
-  - name: nvidia/Llama-3.1-Nemotron-Nano-8B-v1
-    label: nemotron-nano-8b
-    configs: [single, tp2]
-    max_model_len: 8704
-
-  # Strong non-Llama mid-size baseline with long-context capability.
-  - name: google/gemma-3-27b-it
-    label: gemma3-27b
-    configs: [single, tp2]
-    max_model_len: 8704
-
-  # Strong dense open model that stresses one Spark while still fitting.
+  # Dense 32B reference.
   - name: Qwen/Qwen3-32B
     label: qwen3-32b
     configs: [single, tp2, pp2]
     max_model_len: 8704
     gpu_util: 0.85
 
-  # NVIDIA FP8 MoE model: important for the "optimized for NVIDIA" local path.
-  - name: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8
-    label: nemotron3-nano-30b-a3b-fp8
+  # BF16 MoE counterpart to Qwen3-32B.
+  - name: Qwen/Qwen3-30B-A3B
+    label: qwen3-30b-a3b
     configs: [single, tp2]
     max_model_len: 8704
-    quant: fp8
+    gpu_util: 0.85
 
-  # NVIDIA NAS-optimized 49B model derived from Llama 3.3 70B.
-  - name: nvidia/Llama-3_3-Nemotron-Super-49B-v1_5-FP8
-    label: nemotron-super-49b-fp8
-    configs: [single, tp2, pp2]
-    max_model_len: 8704
-    quant: fp8
-
-  # Too big for one GB10 (bf16 ~140 GB > 128 GB): dual-node only.
+  # Large dense model.
+  # BF16 exceeds a single GB10 (~140 GB weights), so benchmark only on two nodes.
   - name: meta-llama/Llama-3.3-70B-Instruct
     label: llama3.3-70b
     configs: [tp2, pp2]
     max_model_len: 8704
+
+  # Same model in FP8 (fits on one GB10).
+  - name: meta-llama/Llama-3.3-70B-Instruct
+    label: llama3.3-70b-fp8
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    quant: fp8
+    gpu_util: 0.85
+
+  # Same model in NVFP4 (comfortably fits on one GB10).
+  - name: meta-llama/Llama-3.3-70B-Instruct
+    label: llama3.3-70b-nvfp4
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    quant: nvfp4
+    gpu_util: 0.90
+
+  # NVIDIA-optimized sparse model.
+  - name: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+    label: nemotron3-nano-30b-a3b-nvfp4
+    configs: [single, tp2]
+    max_model_len: 8704
+    quant: nvfp4
+
+  # Multimodal baseline.
+  - name: Qwen/Qwen3-VL-8B-Instruct
+    label: qwen3-vl-8b
+    configs: [single, tp2]
+    max_model_len: 8704
+
+  # NVIDIA flagship LatentMoE.
+  - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+    label: nemotron3-super-120b-a12b-nvfp4
+    configs: [single, tp2]
+    max_model_len: 8704
+    quant: nvfp4
+    gpu_util: 0.80
