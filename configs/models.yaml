@@ -95,3 +95,30 @@ models:
     quant: nvfp4
     gpu_util: 0.80
     trust_remote_code: true
+
+  # ------------------------------------------------------------------
+  # Large open multimodal models, dual node only.
+  # Added to evaluate on-prem VLM options for UD researchers. Both exceed a
+  # single 128 GB GB10 at BF16, so they run only across two nodes.
+  # NOTE: the default workload is text only. These entries measure the text
+  # generation serving path at scale. To exercise the vision encoder, drive them
+  # with an image workload through the OpenAI content format.
+  # ------------------------------------------------------------------
+
+  # Dense multimodal workhorse. Image and video input, mature vLLM support.
+  # BF16 ~144 GB weights exceeds one node; comfortable on two with KV headroom.
+  - name: Qwen/Qwen2.5-VL-72B-Instruct
+    label: qwen2.5-vl-72b
+    configs: [tp2, pp2]
+    max_model_len: 8704
+    gpu_util: 0.85
+
+  # Flagship open multimodal MoE, native image input, very long context.
+  # 109B total, 17B active; BF16 ~218 GB needs two nodes and is tight in the
+  # 256 GB pool, so utilization is raised and KV room is limited. For one node
+  # production use, an FP8 checkpoint fits a single GB10.
+  - name: meta-llama/Llama-4-Scout-17B-16E-Instruct
+    label: llama4-scout-17b-16e
+    configs: [tp2, pp2]
+    max_model_len: 8704
+    gpu_util: 0.92
