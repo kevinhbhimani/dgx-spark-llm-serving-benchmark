@@ -58,6 +58,7 @@ class ExperimentConfig:
     config_label: str = "single"
     model_label: str = ""         # short model slug for tags/plots; defaults from model
     server_log: str = ""          # optional vLLM stdout log for exact capacity figures
+    collect_hf_metadata: bool = False  # optional HF Hub lookups for weight/KV fallback
     out_dir: str = "results"
     run_note: str = ""
 

@@ -113,6 +113,7 @@ run_one() {
   local label="$1" name="$2" maxlen="$3" gpu_util="$4" quant="$5" tok="$6" trust="$7"
   local log="$OUT_DIR/server_${label}_${CONFIG}.log"
   local tokenizer="${tok:-$name}"
+  local status=0
   local launch_env=(MODEL="$name")
   local sweep_env=(MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log"
                    TOKENIZER="$tokenizer" TRUST_REMOTE_CODE="$trust"
@@ -141,19 +142,28 @@ run_one() {
   # Sweep this model. run_all.sh passes the model, label, and server log through
   # to the benchmark so rows are tagged and capacity figures captured.
   env "${sweep_env[@]}" "$HERE/run_all.sh" "$CONFIG" \
-    || echo "[models] sweep for $label returned an error"
+    || { echo "[models] sweep for $label returned an error" >&2; status=1; }
 
   teardown
   echo "[models] done $label"
   sleep 5
+  return "$status"
 }
 
 trap 'teardown' EXIT
 
+FAILURES=0
 for entry in "${ENTRIES[@]}"; do
   IFS='|' read -r label name maxlen gpu_util quant tok trust <<<"$entry"
-  run_one "$label" "$name" "$maxlen" "$gpu_util" "$quant" "$tok" "$trust" \
-    || echo "[models] $label did not complete; continuing"
+  if ! run_one "$label" "$name" "$maxlen" "$gpu_util" "$quant" "$tok" "$trust"; then
+    echo "[models] $label did not complete; continuing" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
 done
+
+if (( FAILURES > 0 )); then
+  echo "[models] $FAILURES model(s) failed for $CONFIG; see logs in $OUT_DIR" >&2
+  exit 1
+fi
 
 echo "[models] all $CONFIG models done, see $OUT_DIR/index.csv"

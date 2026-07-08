@@ -1,6 +1,7 @@
 """Workload generation: token length controlled prompts and trace loading."""
 from __future__ import annotations
 import json
+import math
 import random
 from dataclasses import dataclass
 
@@ -29,6 +30,8 @@ class Workload:
             raise ValueError("at least one workload bucket is required")
         if any(b.input_len <= 0 or b.output_len <= 0 for b in self.cfg.buckets):
             raise ValueError("bucket input_len and output_len must be positive")
+        if any(b.weight < 0 or not math.isfinite(b.weight) for b in self.cfg.buckets):
+            raise ValueError("bucket weights must be finite and non-negative")
         if sum(b.weight for b in self.cfg.buckets) <= 0:
             raise ValueError("at least one workload bucket weight must be positive")
 

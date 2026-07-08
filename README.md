@@ -30,6 +30,7 @@ python -m pip install -r requirements.txt
 ```bash
 python -m bench.run_benchmark --help
 python plot_results.py --help
+python -m unittest discover -s tests -v
 ```
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
@@ -97,6 +98,7 @@ scripts/
   run_models.sh               sweep several models for one config, one at a time
   models_for_config.py        select models.yaml entries for a serving config
 plot_results.py               generate PDF/PNG figures from results/index.csv
+tests/                        standard-library regression tests for release paths
 requirements.txt              Python client and plotting dependencies
 ```
 
@@ -169,7 +171,11 @@ fields:
 - `model_label`: short model slug used in indexes, plots, and explicit
   multi-model run tags. If empty, it is derived from the served model name.
 - `server_log`: optional captured vLLM stdout log. When present, the benchmark
-  parses extra capacity facts such as vLLM's logged maximum concurrency.
+  parses deployment facts such as per-worker weight/KV memory and vLLM's logged
+  maximum concurrency.
+- `collect_hf_metadata`: when true, query Hugging Face after the measurement for
+  optional full-checkpoint weight/KV estimates. It is false by default so smoke
+  and release runs do not depend on post-measurement network metadata lookups.
 - `out_dir`: output directory, default `results`.
 - `run_note`: free-form note preserved in the resolved configuration block.
 
@@ -301,7 +307,8 @@ python -m bench.run_benchmark \
 Command-line flags override the YAML for that run. Useful overrides include
 `--model`, `--model-label`, `--server-log`, `--tokenizer`,
 `--trust-remote-code`, `--mode`, `--concurrency`, `--qps`, `--measure-s`,
-`--warmup-s`, `--base-url`, `--out-dir`, and `--power-backend`.
+`--warmup-s`, `--base-url`, `--out-dir`, `--power-backend`,
+`--collect-hf-metadata`, and `--no-hf-metadata`.
 
 The benchmark log prints `point=<value>` for the x-axis load value being
 measured. In `closed` mode, `point` is the fixed concurrency. In `open` mode,
@@ -388,7 +395,7 @@ request that config, and for each one launches a server, waits until
 `/v1/models` reports it, runs the concurrency sweep tagged with the model label,
 then tears the server down before the next model. Server stdout is teed to
 `OUT_DIR/server_<label>_<config>.log` and passed to the benchmark so exact
-capacity figures are captured.
+per-worker memory, max-concurrency, and other capacity figures are captured.
 
 ```bash
 # Single-node models (no Ray). Launches and removes a container per model.
@@ -587,18 +594,20 @@ Server-side counters (from vLLM `/metrics`, differenced over the logical window)
   pressure signal.
 
 Served-model capacity and launch configuration (constant per server, captured
-once from `/v1/models`, vLLM `cache_config_info`, and the model config):
+once from `/v1/models`, vLLM `cache_config_info`, the optional server log, and
+optionally the Hugging Face model config):
 
 - `max_model_len`, `kv_cache_dtype`, `gpu_memory_utilization`, `block_size`,
   `gpu_blocks`: the launch-time KV cache configuration.
 - `total_kv_tokens`: `gpu_blocks * block_size`, the KV cache capacity in tokens.
-- `weight_gb`, `kv_cache_gb`: full-model weight and KV cache footprints. These
-  are aggregates across shards; for `tp2`/`pp2` the per-GPU footprint is roughly
-  the value divided by the parallel size. `weight_gb` is the checkpoint size and
-  approximates the served size unless a different dtype or quantization is used.
-  Pass `--server-log` (the multi-model orchestrator does this automatically) to
-  also store the exact `max_concurrency` vLLM logged at load in the per-run
-  summary's `server_info` block.
+- `worker_weight_gb`, `worker_kv_cache_gb`, `max_concurrency`: exact per-worker
+  vLLM startup-log facts when `--server-log` is provided. The multi-model
+  orchestrator captures and passes this log automatically.
+- `weight_gb`, `kv_cache_gb`: optional full-checkpoint/full-KV estimates from
+  Hugging Face metadata when `collect_hf_metadata: true` or
+  `--collect-hf-metadata` is used. These are useful as model descriptors, but
+  for quantized or repartitioned serving runs the log-derived worker fields are
+  the safer deployment facts.
 
 The index-backed capacity numbers are collected into `capacity_table.tex`/`.md`
 by `plot_results.py --table`.

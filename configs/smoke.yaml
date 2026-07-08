@@ -27,5 +27,6 @@ power_interval_ms: 100
 scrape_vllm_metrics: true
 
 config_label: "smoke"
+collect_hf_metadata: false
 out_dir: "results"
 run_note: "short smoke test with approximate prompt lengths"

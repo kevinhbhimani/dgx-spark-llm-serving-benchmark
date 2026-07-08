@@ -136,7 +136,11 @@ class VLLMMetricsScraper:
         # stable by normalizing it to the current index/summary field.
         "vllm:gpu_cache_usage_perc": "vllm:kv_cache_usage_perc",
     }
-    SCRAPE_KEYS = KEYS + list(METRIC_ALIASES)
+    SCRAPE_KEYS = set(KEYS + list(METRIC_ALIASES))
+    _SAMPLE_RE = re.compile(
+        r"^([^\s{]+)(?:\{[^}]*\})?\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+)"
+        r"(?:[eE][-+]?\d+)?|[-+]?Inf|NaN)\s*$"
+    )
 
     def __init__(self, base_url, interval_s=1.0):
         self.url = base_url.rstrip("/") + "/metrics"
@@ -156,26 +160,40 @@ class VLLMMetricsScraper:
 
     def _run(self):
         while not self._stop.is_set():
-            try:
-                with urllib.request.urlopen(self.url, timeout=2.0) as r:
-                    text = r.read().decode("utf-8", "ignore")
-                now = time.perf_counter()
-                self._parse(text, now)
-            except Exception:
-                pass
+            self.scrape_once()
             time.sleep(self.interval)
+
+    def scrape_once(self):
+        try:
+            with urllib.request.urlopen(self.url, timeout=2.0) as r:
+                text = r.read().decode("utf-8", "ignore")
+            now = time.perf_counter()
+            self._parse(text, now)
+        except Exception:
+            pass
 
     def _parse(self, text, now):
         for line in text.splitlines():
             if line.startswith("#"):
                 continue
-            for raw_key in self.SCRAPE_KEYS:
-                if line.startswith(raw_key):
-                    key = self.METRIC_ALIASES.get(raw_key, raw_key)
-                    try:
-                        self._series[key].append((now, float(line.rsplit(" ", 1)[1])))
-                    except (ValueError, IndexError):
-                        pass
+            sample = self._parse_sample(line)
+            if sample is None:
+                continue
+            raw_key, value = sample
+            if raw_key not in self.SCRAPE_KEYS:
+                continue
+            key = self.METRIC_ALIASES.get(raw_key, raw_key)
+            self._series[key].append((now, value))
+
+    @classmethod
+    def _parse_sample(cls, line):
+        m = cls._SAMPLE_RE.match(line.strip())
+        if not m:
+            return None
+        try:
+            return m.group(1), float(m.group(2))
+        except ValueError:
+            return None
 
     def summary(self, t0, t1):
         out = {}
@@ -212,5 +230,7 @@ class VLLMMetricsScraper:
         if base is None or end is None or end[0] <= base[0]:
             return {"delta": None, "rate_per_s": None}
         delta = end[1] - base[1]
+        if delta < 0:
+            return {"delta": None, "rate_per_s": None}
         span = end[0] - base[0]
         return {"delta": delta, "rate_per_s": (delta / span) if span > 0 else None}

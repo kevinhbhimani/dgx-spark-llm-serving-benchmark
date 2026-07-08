@@ -100,23 +100,28 @@ async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
                 rec.error = f"http {resp.status}: {(await resp.text())[:200]}"
                 rec.t_end = time.perf_counter()
                 return rec
+            done = False
             async for raw in resp.content:
-                line = raw.decode("utf-8", "ignore").strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[len("data:"):].strip()
-                if data == "[DONE]":
+                for line in raw.decode("utf-8", "ignore").splitlines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:"):].strip()
+                    if data == "[DONE]":
+                        done = True
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if _extract_text(chunk):
+                        now = time.perf_counter()
+                        if rec.output_tokens == 0:
+                            rec.t_first_token = now
+                        rec.output_tokens += 1
+                        rec.token_times.append(now)
+                if done:
                     break
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                if _extract_text(chunk):
-                    now = time.perf_counter()
-                    if rec.output_tokens == 0:
-                        rec.t_first_token = now
-                    rec.output_tokens += 1
-                    rec.token_times.append(now)
         rec.t_end = time.perf_counter()
         rec.success = rec.output_tokens > 0
         if not rec.success and not rec.error:

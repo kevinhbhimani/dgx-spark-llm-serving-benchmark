@@ -36,5 +36,6 @@ power_interval_ms: 100
 scrape_vllm_metrics: true
 
 config_label: "single"
+collect_hf_metadata: false
 out_dir: "results"
 run_note: ""

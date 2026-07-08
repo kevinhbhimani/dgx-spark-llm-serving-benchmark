@@ -61,6 +61,9 @@ INDEX_FIELDS = [
     "total_kv_tokens",
     "weight_gb",
     "kv_cache_gb",
+    "worker_weight_gb",
+    "worker_kv_cache_gb",
+    "max_concurrency",
     # energy
     "mean_power_w",
     "energy_per_token_j",
@@ -198,6 +201,9 @@ def _append_index(out_dir, s):
         "total_kv_tokens": info.get("total_kv_tokens"),
         "weight_gb": info.get("weight_gb"),
         "kv_cache_gb": info.get("kv_cache_gb"),
+        "worker_weight_gb": info.get("worker_weight_gb"),
+        "worker_kv_cache_gb": info.get("worker_kv_cache_gb"),
+        "max_concurrency": info.get("max_concurrency"),
         "mean_power_w": energy.get("mean_power_w"),
         "energy_per_token_j": energy.get("energy_per_token_j"),
         "tokens_per_watt": energy.get("tokens_per_watt"),
@@ -235,6 +241,12 @@ def main():
                     "defaults to a slug of the served model name")
     ap.add_argument("--server-log", help="path to a captured vLLM stdout log for "
                     "exact capacity figures (max concurrency, gpu blocks)")
+    ap.add_argument("--collect-hf-metadata", action="store_true", default=None,
+                    help="query Hugging Face for model config/checkpoint metadata "
+                    "when server logs do not provide capacity facts")
+    ap.add_argument("--no-hf-metadata", action="store_false",
+                    dest="collect_hf_metadata",
+                    help="skip Hugging Face metadata lookups after measurement")
     ap.add_argument("--model", help="served model name; overrides config and auto-resolve")
     ap.add_argument("--tokenizer", help="HF tokenizer id or path; empty string disables")
     ap.add_argument("--trust-remote-code", action="store_true", default=None,
@@ -280,9 +292,9 @@ def main():
         cfg.model_label = args.model_label
     if args.server_log is not None:
         cfg.server_log = args.server_log
+    if args.collect_hf_metadata is not None:
+        cfg.collect_hf_metadata = args.collect_hf_metadata
 
-    # Before the first transformers/huggingface_hub import reads the HF env.
-    _ensure_writable_hf_cache()
     cfg.model = _resolve_model(cfg)
     if cfg.tokenizer and cfg.use_token_ids and cfg.tokenizer != cfg.model:
         print(f"[bench] WARNING: tokenizer '{cfg.tokenizer}' differs from the "
@@ -296,6 +308,9 @@ def main():
     explicit_label = bool(cfg.model_label)
     if not cfg.model_label:
         cfg.model_label = _model_slug(cfg.model)
+    # Before the first transformers/huggingface_hub import reads the HF env.
+    if cfg.tokenizer or cfg.collect_hf_metadata:
+        _ensure_writable_hf_cache()
     workload = Workload(cfg, _load_tokenizer(cfg))
 
     os.makedirs(cfg.out_dir, exist_ok=True)
@@ -315,6 +330,9 @@ def main():
     power.start()
     if vmet:
         vmet.start()
+        # Seed a baseline before window_start; the background thread interval is
+        # one second, which is longer than some smoke-test windows.
+        vmet.scrape_once()
 
     print(f"[bench] measure {cfg.measure_s}s")
     window_start = time.perf_counter()
@@ -329,6 +347,7 @@ def main():
     # Snapshot the served model's capacity/launch configuration. Best effort:
     # any field that cannot be resolved is left out rather than failing the run.
     info = server_info.collect(cfg.base_url, cfg.model, cfg.server_log,
+                               compute_from_hf=cfg.collect_hf_metadata,
                                trust_remote_code=cfg.trust_remote_code)
 
     summary = aggregate(records, cfg, window_start, logical_window_end,

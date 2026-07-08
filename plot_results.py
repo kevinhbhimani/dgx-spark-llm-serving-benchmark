@@ -106,7 +106,8 @@ NUMERIC_COLS = [
     "server_prompt_tokens", "server_generation_tokens",
     "server_prompt_tokens_cached", "server_gen_tps", "num_preemptions",
     "max_model_len", "gpu_memory_utilization", "block_size", "gpu_blocks",
-    "total_kv_tokens", "weight_gb", "kv_cache_gb",
+    "total_kv_tokens", "weight_gb", "kv_cache_gb", "worker_weight_gb",
+    "worker_kv_cache_gb", "max_concurrency",
     "mean_power_w", "energy_per_token_j", "tokens_per_watt",
 ]
 
@@ -679,9 +680,10 @@ def fig_server_vs_client(df, out, fmts):
 
 # ---- cross-model comparison --------------------------------------------------
 def _series_rows(df, model, cfg):
-    m = df["model_label"] if "model_label" in df.columns else df.get("model")
-    sub = df[(m == model) & (df["config_label"] == cfg)]
-    return sub
+    col = _model_col(df)
+    if col is None:
+        return df[df["config_label"] == cfg]
+    return df[(df[col].astype(str) == str(model)) & (df["config_label"] == cfg)]
 
 
 def _peak_row(sub, tcol):
@@ -733,10 +735,17 @@ def fig_model_comparison(df, out, fmts):
 
 # ---- summary table -----------------------------------------------------------
 def _fmt(v, spec, low_n=False):
-    if v is None or (isinstance(v, float) and np.isnan(v)):
+    try:
+        if pd.isna(v):
+            return "--"
+    except (TypeError, ValueError):
+        pass
+    if v is None:
         return "--"
-    s = format(v, spec)
-    return s
+    try:
+        return format(v, spec)
+    except (TypeError, ValueError):
+        return str(v)
 
 
 def write_summary_table(df, out) -> None:
@@ -755,9 +764,9 @@ def write_summary_table(df, out) -> None:
     multi_model = len(models) > 1
     # iterate per (model, config) so multiple models are never merged into one
     # config series; single-model indexes collapse to the original behavior
-    mcol = "model_label" if "model_label" in df.columns else "model"
+    mcol = _model_col(df)
     for model in (models or [None]):
-        msub = df if model is None else df[df[mcol].astype(str) == model]
+        msub = df if model is None or mcol is None else df[df[mcol].astype(str) == model]
         for cfg in configs_present(msub):
             g, lc, _ = group(msub, cfg)
             s = style_for(cfg, 0)
@@ -876,9 +885,10 @@ def write_summary_table(df, out) -> None:
     print(f"  wrote {tex_path}")
 
 
-_CAP_COLS = ["weight_gb", "kv_cache_gb", "total_kv_tokens", "gpu_blocks",
+_CAP_COLS = ["weight_gb", "kv_cache_gb", "worker_weight_gb",
+             "worker_kv_cache_gb", "total_kv_tokens", "gpu_blocks",
              "block_size", "kv_cache_dtype", "gpu_memory_utilization",
-             "max_model_len"]
+             "max_model_len", "max_concurrency"]
 
 
 def write_capacity_table(df, out) -> None:
@@ -893,11 +903,11 @@ def write_capacity_table(df, out) -> None:
         return
     os.makedirs(out, exist_ok=True)
     models = models_present(df) or [None]
-    mcol = "model_label" if "model_label" in df.columns else "model"
+    mcol = _model_col(df)
     multi_model = len([m for m in models if m is not None]) > 1
     rows = []
     for model in models:
-        msub = df if model is None else df[df[mcol].astype(str) == model]
+        msub = df if model is None or mcol is None else df[df[mcol].astype(str) == model]
         for cfg in configs_present(msub):
             g, _, _ = group(msub, cfg)
             r = g.iloc[0]
@@ -905,25 +915,30 @@ def write_capacity_table(df, out) -> None:
                          {c: r.get(c) for c in _CAP_COLS}))
 
     hdr = (["Model"] if multi_model else []) + [
-        "Config", "Weight (GiB)", "KV cache (GiB)", "KV tokens", "GPU blocks",
-        "Block", "KV dtype", "GPU mem util", "max_model_len"]
+        "Config", "HF weight (GiB)", "HF KV (GiB)", "Worker weight (GiB)",
+        "Worker KV (GiB)", "KV tokens", "GPU blocks", "Block", "KV dtype",
+        "GPU mem util", "max_model_len", "max conc."]
 
     def cells(model, cfg, cap):
         vals = [
             _fmt(cap["weight_gb"], ".1f"), _fmt(cap["kv_cache_gb"], ".1f"),
+            _fmt(cap["worker_weight_gb"], ".1f"),
+            _fmt(cap["worker_kv_cache_gb"], ".1f"),
             _fmt(cap["total_kv_tokens"], ",.0f"), _fmt(cap["gpu_blocks"], ",.0f"),
             _fmt(cap["block_size"], ".0f"),
             str(cap["kv_cache_dtype"]) if pd.notna(cap["kv_cache_dtype"]) else "--",
             _fmt(cap["gpu_memory_utilization"], ".2f"),
-            _fmt(cap["max_model_len"], ",.0f")]
+            _fmt(cap["max_model_len"], ",.0f"),
+            _fmt(cap["max_concurrency"], ".1f")]
         return ([model] if multi_model else []) + [cfg] + vals
 
     md = ["| " + " | ".join(hdr) + " |",
           "|" + "|".join(["---"] + ["--:"] * (len(hdr) - 1)) + "|"]
     for model, cfg, cap in rows:
         md.append("| " + " | ".join(cells(model, cfg, cap)) + " |")
-    md += ["", "Weight/KV cache are full-model aggregates; per GPU is roughly "
-           "these divided by the parallel size for TP=2 / PP=2."]
+    md += ["", "HF weight/KV cache columns are optional full-model estimates. "
+           "Worker weight/KV columns come from the vLLM startup log and describe "
+           "the actual per-worker serving process when a server log was captured."]
     md_path = os.path.join(out, "capacity_table.md")
     with open(md_path, "w") as f:
         f.write("\n".join(md) + "\n")
@@ -939,8 +954,8 @@ def write_capacity_table(df, out) -> None:
         tex.append(" & ".join(c.replace("_", r"\_") for c in cells(model, cfg, cap))
                    + r" \\")
     tex += [r"\bottomrule", r"\end{tabular}",
-            r"% Weight/KV cache are full-model aggregates; per GPU is roughly "
-            r"these / parallel size for TP=2 / PP=2."]
+            r"% HF weight/KV columns are optional full-model estimates. Worker "
+            r"columns come from the vLLM startup log and are per serving worker."]
     tex_path = os.path.join(out, "capacity_table.tex")
     with open(tex_path, "w") as f:
         f.write("\n".join(tex) + "\n")

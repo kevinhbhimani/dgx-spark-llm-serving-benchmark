@@ -14,13 +14,13 @@ measurement window:
 From those, ``total_kv_tokens = num_gpu_blocks * block_size`` is the server's KV
 capacity in tokens. Two memory footprints a reader also wants -- model weights
 in GiB and KV cache in GiB -- are not always in ``/metrics`` (this vLLM build
-reports ``kv_cache_memory_bytes="None"``), so they come from two fallbacks:
+reports ``kv_cache_memory_bytes="None"``), so this module records two sources:
 
-1. the vLLM startup log, which prints the exact figures vLLM computed
-   (``parse_server_log``), used when the launcher tees the server output; and
-2. a portable computation from the Hugging Face model config plus the KV cache
-   configuration above (``compute_kv_cache_gb`` / ``compute_weight_gb``), used
-   when no log is available.
+1. the vLLM startup log, which prints the exact per-worker figures vLLM computed
+   (``worker_weight_gb``, ``worker_kv_cache_gb``, ``max_concurrency``), used
+   when the launcher tees the server output; and
+2. optional portable estimates from the Hugging Face model config plus the KV
+   cache configuration above (``compute_kv_cache_gb`` / ``compute_weight_gb``).
 
 All network/config lookups are best effort: any field that cannot be resolved is
 left as ``None`` rather than failing the benchmark.
@@ -29,6 +29,8 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+
+HF_METADATA_TIMEOUT_S = 10.0
 
 
 # ---- HTTP: served model length and KV cache configuration --------------------
@@ -160,7 +162,8 @@ def compute_kv_cache_gb(model_id, gpu_blocks, block_size, kv_cache_dtype,
     return gpu_blocks * block_size * bytes_per_token / 1024 ** 3
 
 
-def compute_weight_gb(model_id: str) -> float | None:
+def compute_weight_gb(model_id: str,
+                      timeout_s: float = HF_METADATA_TIMEOUT_S) -> float | None:
     """Full-model weight footprint in GiB from the checkpoint's safetensors sizes.
 
     Uses the ``total_size`` recorded in a sharded safetensors index when
@@ -172,7 +175,8 @@ def compute_weight_gb(model_id: str) -> float | None:
     """
     try:
         from huggingface_hub import hf_hub_download
-        path = hf_hub_download(model_id, "model.safetensors.index.json")
+        path = hf_hub_download(model_id, "model.safetensors.index.json",
+                               etag_timeout=timeout_s)
         with open(path) as f:
             total = json.load(f).get("metadata", {}).get("total_size")
         if total:
@@ -181,7 +185,8 @@ def compute_weight_gb(model_id: str) -> float | None:
         pass
     try:
         from huggingface_hub import HfApi
-        info = HfApi().model_info(model_id, files_metadata=True)
+        info = HfApi().model_info(model_id, files_metadata=True,
+                                  timeout=timeout_s)
         total = sum(getattr(s, "size", 0) or 0 for s in info.siblings
                     if s.rfilename.endswith(".safetensors"))
         return total / 1024 ** 3 if total else None
@@ -230,8 +235,22 @@ def collect(base_url: str, model: str | None = None, server_log: str = "",
     (exact, what vLLM computed) wins; otherwise they are computed from the HF
     config and the live KV cache configuration. Every field is optional.
     """
+    logged = parse_server_log(server_log) if server_log else {}
     info: dict = {"model": model, "max_model_len": _max_model_len(base_url, model)}
     info.update(_cache_config(base_url))
+
+    if "weight_gb" in logged:
+        info["worker_weight_gb"] = logged["weight_gb"]
+    if "kv_cache_gb" in logged:
+        info["worker_kv_cache_gb"] = logged["kv_cache_gb"]
+    if "max_concurrency" in logged:
+        info["max_concurrency"] = logged["max_concurrency"]
+    if logged.get("gpu_blocks") and not info.get("gpu_blocks"):
+        info["gpu_blocks"] = logged["gpu_blocks"]
+        if info.get("block_size") and info.get("total_kv_tokens") is None:
+            info["total_kv_tokens"] = logged["gpu_blocks"] * info["block_size"]
+    if logged.get("kv_cache_tokens") and info.get("total_kv_tokens") is None:
+        info["total_kv_tokens"] = logged["kv_cache_tokens"]
 
     if compute_from_hf and model:
         if info.get("kv_cache_gb") is None:
@@ -239,17 +258,4 @@ def collect(base_url: str, model: str | None = None, server_log: str = "",
                 model, info.get("gpu_blocks"), info.get("block_size"),
                 info.get("kv_cache_dtype"), trust_remote_code)
         info["weight_gb"] = compute_weight_gb(model)
-
-    if server_log:
-        logged = parse_server_log(server_log)
-        # The computed weight_gb/kv_cache_gb above are full-model aggregates,
-        # whereas vLLM logs per-worker figures; do not conflate them by
-        # overwriting. Take only the cluster-level extras the log adds, plus
-        # gpu_blocks if the metrics endpoint did not provide it.
-        if logged.get("gpu_blocks") and not info.get("gpu_blocks"):
-            info["gpu_blocks"] = logged["gpu_blocks"]
-            if info.get("block_size") and info.get("total_kv_tokens") is None:
-                info["total_kv_tokens"] = logged["gpu_blocks"] * info["block_size"]
-        if "max_concurrency" in logged:
-            info["max_concurrency"] = logged["max_concurrency"]
     return info
