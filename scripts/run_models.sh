@@ -18,7 +18,8 @@
 # mismatched header).
 #
 # Env: MODELS_YAML BASE_URL OUT_DIR POWER_BACKEND CONCURRENCIES CONFIG_YAML
-#      READY_TIMEOUT (seconds to wait for a model to come up, default 1200).
+#      READY_TIMEOUT (seconds to wait for a model to come up, default 1200)
+#      PYTHON (interpreter for the benchmark and helpers, default python3).
 # Per-model tokenizer defaults to the model name unless configs/models.yaml
 # supplies an explicit tokenizer.
 set -euo pipefail
@@ -33,15 +34,17 @@ esac
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
 OUT_DIR="${OUT_DIR:-results}"
-POWER_BACKEND="${POWER_BACKEND:-none}"
+# Unset defers to the experiment YAML's power_backend; set it to override.
+POWER_BACKEND="${POWER_BACKEND:-}"
 CONFIG_YAML="${CONFIG_YAML:-configs/experiment.yaml}"
 CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
 READY_TIMEOUT="${READY_TIMEOUT:-1200}"
+PYTHON="${PYTHON:-python3}"
 
 mkdir -p "$OUT_DIR"
 
 # Select the models that request this serving config.
-entries_text="$(python "$HERE/models_for_config.py" "$MODELS_YAML" "$CONFIG")" \
+entries_text="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$CONFIG")" \
   || { status=$?; exit "$status"; }
 ENTRIES=()
 if [[ -n "$entries_text" ]]; then
@@ -61,7 +64,7 @@ server_ready() {
   if ! body="$(curl -sf --max-time 5 "$BASE_URL/v1/models" 2>/dev/null)"; then
     return 1
   fi
-  python -c \
+  "$PYTHON" -c \
     'import json, sys
 try:
     doc = json.load(sys.stdin)
@@ -112,9 +115,10 @@ run_one() {
   local tokenizer="${tok:-$name}"
   local launch_env=(MODEL="$name")
   local sweep_env=(MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log"
-                   TOKENIZER="$tokenizer" BASE_URL="$BASE_URL" OUT_DIR="$OUT_DIR"
+                   TOKENIZER="$tokenizer" TRUST_REMOTE_CODE="$trust"
+                   BASE_URL="$BASE_URL" OUT_DIR="$OUT_DIR"
                    POWER_BACKEND="$POWER_BACKEND" CONFIG_YAML="$CONFIG_YAML"
-                   CONCURRENCIES="$CONCURRENCIES")
+                   CONCURRENCIES="$CONCURRENCIES" PYTHON="$PYTHON")
   echo "[models] === $label ($name) config=$CONFIG ==="
 
   [[ -n "$maxlen" ]] && launch_env+=(MAXLEN="$maxlen")

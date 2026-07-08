@@ -112,10 +112,11 @@ _DTYPE_BYTES = {
 }
 
 
-def _load_hf_config(model_id: str):
+def _load_hf_config(model_id: str, trust_remote_code: bool = False):
     try:
         from transformers import AutoConfig
-        return AutoConfig.from_pretrained(model_id)
+        return AutoConfig.from_pretrained(model_id,
+                                          trust_remote_code=trust_remote_code)
     except Exception:
         return None
 
@@ -130,7 +131,8 @@ def _kv_dtype_bytes(kv_cache_dtype: str | None, cfg) -> int | None:
     return _DTYPE_BYTES.get(td, 2)   # default to 2 bytes (bf16/fp16) if unknown
 
 
-def compute_kv_cache_gb(model_id, gpu_blocks, block_size, kv_cache_dtype) -> float | None:
+def compute_kv_cache_gb(model_id, gpu_blocks, block_size, kv_cache_dtype,
+                        trust_remote_code: bool = False) -> float | None:
     """Full-model KV cache footprint in GiB for the allocated blocks.
 
     KV bytes/token = 2 (K and V) * layers * kv_heads * head_dim * dtype_bytes,
@@ -142,7 +144,7 @@ def compute_kv_cache_gb(model_id, gpu_blocks, block_size, kv_cache_dtype) -> flo
     """
     if not gpu_blocks or not block_size:
         return None
-    cfg = _load_hf_config(model_id)
+    cfg = _load_hf_config(model_id, trust_remote_code)
     if cfg is None:
         return None
     n_layers = getattr(cfg, "num_hidden_layers", None)
@@ -221,7 +223,7 @@ def parse_server_log(path: str) -> dict:
 
 # ---- top level ---------------------------------------------------------------
 def collect(base_url: str, model: str | None = None, server_log: str = "",
-            compute_from_hf: bool = True) -> dict:
+            compute_from_hf: bool = True, trust_remote_code: bool = False) -> dict:
     """Best-effort snapshot of the served model's capacity and configuration.
 
     Order of precedence for the two memory footprints: an explicit server log
@@ -235,7 +237,7 @@ def collect(base_url: str, model: str | None = None, server_log: str = "",
         if info.get("kv_cache_gb") is None:
             info["kv_cache_gb"] = compute_kv_cache_gb(
                 model, info.get("gpu_blocks"), info.get("block_size"),
-                info.get("kv_cache_dtype"))
+                info.get("kv_cache_dtype"), trust_remote_code)
         info["weight_gb"] = compute_weight_gb(model)
 
     if server_log:

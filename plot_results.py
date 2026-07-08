@@ -427,7 +427,7 @@ def fig_latency_throughput(df, out, fmts):
         # annotate each point with its load so the swept parameter is visible
         for x, y, c in zip(g["tok_thru_tps"], ttft_ms, g[lc]):
             if pd.notna(x) and pd.notna(y):
-                axl.annotate(f"{int(c)}", (x, y), textcoords="offset points",
+                axl.annotate(f"{c:g}", (x, y), textcoords="offset points",
                              xytext=(3, 3), fontsize=6, color=s["color"])
     # log scale: TTFT/ITL span >100x across loads, and a single saturated
     # point (e.g. a queueing blow-up) would otherwise flatten the rest of

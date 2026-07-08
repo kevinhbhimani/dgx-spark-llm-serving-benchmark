@@ -20,7 +20,10 @@ qps: 4.0
 max_inflight: 512
 warmup_s: 15.0
 measure_s: 600.0
-request_timeout_s: 600.0
+# Must comfortably exceed the worst-case e2e (queueing + full stream) at the
+# highest concurrency in the sweep, or slow-but-successful requests are
+# recorded as timeout failures. Keep it well above measure_s.
+request_timeout_s: 1800.0
 
 # service level objective used for goodput
 ttft_slo_s: 3.0

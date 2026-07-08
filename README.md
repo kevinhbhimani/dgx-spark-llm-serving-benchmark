@@ -157,7 +157,9 @@ fields:
 - `max_inflight`: open-loop cap on concurrently in-flight requests.
 - `warmup_s` and `measure_s`: warmup and logical measurement window durations.
 - `request_timeout_s`: per-request HTTP timeout, including queueing and stream
-  drain.
+  drain. Keep it well above the worst-case E2E at the highest load in the
+  sweep, or slow-but-successful requests are counted as failures; the shipped
+  default is `1800`.
 - `ttft_slo_s` and `itl_slo_s`: service-level objectives used for goodput.
 - `power_backend`: `none`, `nvidia_smi`, `sysfs`, or `tegrastats`.
 - `power_sysfs_path`, `power_rails`, and `power_interval_ms`: backend-specific
@@ -212,10 +214,14 @@ export BASE_URL=http://127.0.0.1:8000
 export OUT_DIR=results
 export CONFIG_YAML=configs/experiment.yaml
 export CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
-export POWER_BACKEND=none
+# unset defers to the YAML's power_backend; set to override (e.g. none)
+# export POWER_BACKEND=nvidia_smi
 export MODELS_YAML=configs/models.yaml
 export READY_TIMEOUT=1200
 export RAY_VERSION=2.53.0
+# interpreter used by the sweep scripts; default python3 (a venv's python3
+# when the venv is active)
+# export PYTHON=python3
 ```
 
 Dual-node network defaults live in `scripts/connectx_env.sh`. Override them
@@ -276,9 +282,10 @@ BASE_URL=http://spark-node.example.com:8000 scripts/run_all.sh single
 ```
 
 When you already know the served model or want stable plot labels, pass
-`MODEL`, `MODEL_LABEL`, `TOKENIZER`, and optionally `SERVER_LOG` through the
-environment. `run_all.sh` forwards those to `bench.run_benchmark`; if `MODEL` is
-unset, the benchmark resolves the served name from `/v1/models`.
+`MODEL`, `MODEL_LABEL`, `TOKENIZER`, `TRUST_REMOTE_CODE` (for models that ship
+custom code), and optionally `SERVER_LOG` through the environment. `run_all.sh`
+forwards those to `bench.run_benchmark`; if `MODEL` is unset, the benchmark
+resolves the served name from `/v1/models`.
 
 Run an open-loop Poisson point:
 
@@ -292,9 +299,9 @@ python -m bench.run_benchmark \
 ```
 
 Command-line flags override the YAML for that run. Useful overrides include
-`--model`, `--model-label`, `--server-log`, `--tokenizer`, `--mode`,
-`--concurrency`, `--qps`, `--measure-s`, `--warmup-s`, `--base-url`,
-`--out-dir`, and `--power-backend`.
+`--model`, `--model-label`, `--server-log`, `--tokenizer`,
+`--trust-remote-code`, `--mode`, `--concurrency`, `--qps`, `--measure-s`,
+`--warmup-s`, `--base-url`, `--out-dir`, and `--power-backend`.
 
 The benchmark log prints `point=<value>` for the x-axis load value being
 measured. In `closed` mode, `point` is the fixed concurrency. In `open` mode,
@@ -352,8 +359,8 @@ CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh pp2
 scripts/start_ray.sh stop
 ```
 
-Run the interconnect microbenchmark from the head node and save the log beside
-the serving results:
+Run the interconnect microbenchmark from the head node; the log is written to
+`OUT_DIR` (default `results/`) beside the serving results:
 
 ```bash
 HOST0=Diya HOST1=Hoedus scripts/interconnect_microbench.sh
@@ -440,7 +447,9 @@ line can contain:
 
 When `use_token_ids` is true, the harness preserves requested lengths by
 building synthetic token-id prompts. When `use_token_ids` is false and a prompt
-is present, the prompt text is sent directly.
+is present, the prompt text is sent directly. Trace lines define the request
+*mix*, not a schedule: the load generator samples them randomly with
+replacement, so they are not replayed in file order or with trace timestamps.
 
 ## Outputs
 
@@ -630,11 +639,12 @@ Guidance:
 
 ## Power Telemetry
 
-The lightweight smoke config and script wrappers default to `POWER_BACKEND=none`.
-The full `configs/experiment.yaml` enables `nvidia_smi`, so a direct
-`python -m bench.run_benchmark --config configs/experiment.yaml` run will try to
-sample GPU power unless you override it. Enable or disable power with
-`POWER_BACKEND` for sweeps or `--power-backend` for a single run:
+The lightweight smoke config sets `power_backend: none`; the full
+`configs/experiment.yaml` enables `nvidia_smi`. The script wrappers defer to
+whichever YAML they run (they only pass `--power-backend` when the
+`POWER_BACKEND` environment variable is set), so sweeps sample power by default
+with `configs/experiment.yaml`. Override per run with `POWER_BACKEND` for
+sweeps or `--power-backend` for a single point:
 
 ```bash
 POWER_BACKEND=nvidia_smi scripts/run_all.sh single
@@ -669,9 +679,10 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
 - `goodput=0.00` with successful requests: the run completed, but the measured
   TTFT or mean ITL did not meet `ttft_slo_s`/`itl_slo_s`. Loosen the SLOs if you
   want a capacity curve for a less strict service target.
-- `PyTorch was not found` from Transformers on the benchmark client is harmless
-  for this harness because it only loads tokenizers locally. vLLM and PyTorch
-  run inside the serving container.
+- `PyTorch was not found` from Transformers on the benchmark client is expected
+  and harmless: `requirements.txt` intentionally does not install PyTorch
+  because the harness only loads tokenizers and model configs locally. vLLM and
+  PyTorch run inside the serving container.
 - `index schema mismatch` on a run or `Expected N fields` in plotting: the index
   columns changed between versions and a new run tried to append to an old
   `index.csv`. Write to a fresh `OUT_DIR` (or move the old index aside) and plot
@@ -686,6 +697,13 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
   fields (`gpu_blocks`, `total_kv_tokens`, `block_size`, etc.) still populate.
 - Tokenizer download fails: set `HF_TOKEN`, log in with the Hugging Face CLI, or
   set `tokenizer` to a local tokenizer path.
+- Tokenizer or config download fails with `PermissionError` under
+  `~/.cache/huggingface`: the serving container downloads models into the
+  mounted cache as root, which leaves it root-owned on the host. The benchmark
+  detects this and automatically switches its own small downloads to
+  `~/.cache/huggingface-client` (printing a `[bench]` note). To share one cache
+  again, `sudo chown -R "$USER" ~/.cache/huggingface` — but expect the container
+  to re-create root-owned directories for newly downloaded models.
 - Docker cannot access the GPU: verify `docker run --gpus all ... nvidia-smi`
   works with your container runtime.
 - Dual-node launch says Ray is not active: run `scripts/start_ray.sh head` on

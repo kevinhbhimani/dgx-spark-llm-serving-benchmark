@@ -1,9 +1,10 @@
+# Client-side harness and plotting dependencies. PyTorch is intentionally not
+# required: transformers is used only for tokenizers and model configs, and
+# vLLM/PyTorch run inside the serving container.
 aiohttp>=3.9
 numpy>=1.24
 transformers>=4.44
+huggingface_hub>=0.23
 pyyaml>=6.0
-pandas
-matplotlib
-torch==2.6.0
-torchvision==0.21.0
-torchaudio==2.6.0
+pandas>=2.0
+matplotlib>=3.7

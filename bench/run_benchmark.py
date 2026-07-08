@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import csv
 import json
+import math
 import os
 import time
 import urllib.request
@@ -67,12 +68,40 @@ INDEX_FIELDS = [
 ]
 
 
+def _ensure_writable_hf_cache():
+    """Fall back to a client-local HF cache when the shared one is unwritable.
+
+    The serving container downloads models into the mounted HF cache as root,
+    leaving ~/.cache/huggingface root-owned on the host; the client's own
+    tokenizer/config downloads then die with PermissionError mid-sweep. When
+    the default hub cache is not writable (and the user has not pointed HF
+    elsewhere), redirect this process to a separate user-owned cache. It only
+    ever holds tokenizers and configs, a few MB per model.
+    """
+    if any(os.environ.get(v) for v in
+           ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME")):
+        return
+    hub = os.path.expanduser("~/.cache/huggingface/hub")
+    probe = hub
+    while probe != os.path.dirname(probe) and not os.path.exists(probe):
+        probe = os.path.dirname(probe)
+    if os.access(probe, os.W_OK):
+        return
+    alt = os.path.expanduser("~/.cache/huggingface-client/hub")
+    os.makedirs(alt, exist_ok=True)
+    os.environ["HF_HUB_CACHE"] = alt
+    print(f"[bench] shared HF cache {hub} is not writable (owned by the "
+          f"serving container's root user); using {alt} for client-side "
+          "tokenizer/config downloads")
+
+
 def _load_tokenizer(cfg):
     if not cfg.tokenizer:
         return None
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     from transformers import AutoTokenizer
-    return AutoTokenizer.from_pretrained(cfg.tokenizer)
+    return AutoTokenizer.from_pretrained(cfg.tokenizer,
+                                         trust_remote_code=cfg.trust_remote_code)
 
 
 def _resolve_model(cfg):
@@ -94,6 +123,22 @@ def _model_slug(model: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug.strip("-") or "model"
+
+
+def _json_safe(obj):
+    """Replace NaN/Inf with None so the output files are strict JSON.
+
+    json.dump writes bare ``NaN``, which Python reads back but jq, JavaScript,
+    and most non-Python parsers reject; empty percentile sets and failed
+    requests would otherwise poison every consumer of the release artifacts.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def _append_index(out_dir, s):
@@ -157,8 +202,10 @@ def _append_index(out_dir, s):
         "energy_per_token_j": energy.get("energy_per_token_j"),
         "tokens_per_watt": energy.get("tokens_per_watt"),
     }
-    new = not os.path.exists(idx)
-    if not new and os.path.getsize(idx) > 0:
+    # An existing but zero-byte index (touch, or a crash before the first write)
+    # still needs its header, or every subsequent append is misaligned.
+    new = not os.path.exists(idx) or os.path.getsize(idx) == 0
+    if not new:
         with open(idx, "r", newline="") as f:
             header = f.readline().rstrip("\r\n")
         if header != ",".join(INDEX_FIELDS):
@@ -190,6 +237,9 @@ def main():
                     "exact capacity figures (max concurrency, gpu blocks)")
     ap.add_argument("--model", help="served model name; overrides config and auto-resolve")
     ap.add_argument("--tokenizer", help="HF tokenizer id or path; empty string disables")
+    ap.add_argument("--trust-remote-code", action="store_true", default=None,
+                    help="pass trust_remote_code=True to the tokenizer and HF "
+                    "config loads (models that ship custom code, e.g. Nemotron)")
     ap.add_argument("--mode", choices=["closed", "open"])
     ap.add_argument("--concurrency", type=int)
     ap.add_argument("--qps", type=float)
@@ -208,6 +258,8 @@ def main():
         cfg.model = args.model
     if args.tokenizer is not None:
         cfg.tokenizer = args.tokenizer
+    if args.trust_remote_code:
+        cfg.trust_remote_code = True
     if args.mode:
         cfg.mode = args.mode
     if args.concurrency is not None:
@@ -229,7 +281,16 @@ def main():
     if args.server_log is not None:
         cfg.server_log = args.server_log
 
+    # Before the first transformers/huggingface_hub import reads the HF env.
+    _ensure_writable_hf_cache()
     cfg.model = _resolve_model(cfg)
+    if cfg.tokenizer and cfg.use_token_ids and cfg.tokenizer != cfg.model:
+        print(f"[bench] WARNING: tokenizer '{cfg.tokenizer}' differs from the "
+              f"served model '{cfg.model}'. Token-id prompts are only exact "
+              "with the served model's own tokenizer; a mismatched vocabulary "
+              "gives wrong input lengths or request errors. Pass --tokenizer "
+              "matching the model unless this is intentional (e.g. a local "
+              "copy of the same tokenizer).")
     # A model slug feeds the index/plots. Only an explicit label prefixes the run
     # tag (multi-model sweeps set one); the single-model workflow keeps its tags.
     explicit_label = bool(cfg.model_label)
@@ -267,7 +328,8 @@ def main():
 
     # Snapshot the served model's capacity/launch configuration. Best effort:
     # any field that cannot be resolved is left out rather than failing the run.
-    info = server_info.collect(cfg.base_url, cfg.model, cfg.server_log)
+    info = server_info.collect(cfg.base_url, cfg.model, cfg.server_log,
+                               trust_remote_code=cfg.trust_remote_code)
 
     summary = aggregate(records, cfg, window_start, logical_window_end,
                         power if cfg.power_backend != "none" else None, vmet)
@@ -277,13 +339,15 @@ def main():
     summary["server_info"] = info
     summary["config"] = cfg.to_dict()
     summary["drain_s"] = max(0.0, actual_end - logical_window_end)
+    # NaN -> null for the files; the console print below keeps the raw values.
+    safe_summary = _json_safe(summary)
 
     with open(os.path.join(cfg.out_dir, f"{tag}.raw.jsonl"), "w") as f:
         for r in records:
-            f.write(json.dumps(r.to_json()) + "\n")
+            f.write(json.dumps(_json_safe(r.to_json())) + "\n")
     with open(os.path.join(cfg.out_dir, f"{tag}.summary.json"), "w") as f:
-        json.dump(summary, f, indent=2)
-    _append_index(cfg.out_dir, summary)
+        json.dump(safe_summary, f, indent=2)
+    _append_index(cfg.out_dir, safe_summary)
 
     print(f"[bench] tok_thru={summary['output_token_throughput_tps']:.1f} tok/s  "
           f"ttft_p50={summary['ttft_s']['p50'] * 1000:.0f}ms  "

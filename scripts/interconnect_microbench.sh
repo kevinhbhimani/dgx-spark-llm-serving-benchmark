@@ -9,6 +9,8 @@ HOST0="${HOST0:-$DIYA_HOST}"
 HOST1="${HOST1:-$HOEDUS_HOST}"
 NCCL_TESTS_DIR="${NCCL_TESTS_DIR:-$HOME/nccl-tests}"
 IFACE="${NCCL_SOCKET_IFNAME:-$CX_IFACE}"
+# Log beside the serving results so the paper artifacts stay in one place.
+OUT_DIR="${OUT_DIR:-results}"
 
 if [[ ! -x "$NCCL_TESTS_DIR/build/all_reduce_perf" ]]; then
   echo "[microbench] building nccl-tests in $NCCL_TESTS_DIR"
@@ -27,9 +29,12 @@ export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 
 # two ranks, one GPU per node, sizes from 8 bytes to 1 GiB doubling
+mkdir -p "$OUT_DIR"
+LOG="$OUT_DIR/allreduce_$(date +%Y%m%d-%H%M%S).log"
 mpirun --allow-run-as-root -np 2 -H "${HOST0}:1,${HOST1}:1" \
   -x NCCL_SOCKET_IFNAME -x NCCL_IB_DISABLE -x NCCL_DEBUG \
   "$NCCL_TESTS_DIR/build/all_reduce_perf" -b 8 -e 1G -f 2 -g 1 \
-  | tee "allreduce_$(date +%Y%m%d-%H%M%S).log"
+  | tee "$LOG"
 
+echo "[microbench] wrote $LOG"
 echo "[microbench] the busbw column is the effective interconnect bandwidth; record the peak and the latency at 8 bytes"

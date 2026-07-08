@@ -15,7 +15,11 @@
 #                 must be >= the largest input_len + output_len in the workload.
 #   gpu_util      optional --gpu-memory-utilization override (else the launcher
 #                 default: 0.90 single, 0.80 tp2/pp2 on Grace unified memory).
-#   quant         optional --quantization (e.g. fp8); empty means none.
+#   quant         optional --quantization for on-the-fly quantization of an
+#                 unquantized checkpoint (e.g. fp8). Leave unset for checkpoints
+#                 that are already quantized (NVFP4/ModelOpt): vLLM auto-detects
+#                 the method from the model config, and passing --quantization
+#                 can conflict with the config's own naming and abort the launch.
 #   tokenizer     optional tokenizer id/path (defaults to name).
 #   trust_remote_code  set true for models that ship custom modeling code
 #                 (e.g. NVIDIA Nemotron); passes vLLM --trust-remote-code.
@@ -65,20 +69,23 @@ models:
     quant: fp8
     gpu_util: 0.85
 
-  # Same model in NVFP4 (comfortably fits on one GB10).
-  - name: meta-llama/Llama-3.3-70B-Instruct
+  # Same model in NVFP4 (comfortably fits on one GB10). Uses NVIDIA's
+  # pre-quantized ModelOpt checkpoint (ungated): vLLM cannot quantize to NVFP4
+  # on the fly from the BF16 meta-llama weights, and it auto-detects the
+  # quantization method from this checkpoint's config, so no quant field.
+  - name: nvidia/Llama-3.3-70B-Instruct-NVFP4
     label: llama3.3-70b-nvfp4
     configs: [single, tp2, pp2]
     max_model_len: 8704
-    quant: nvfp4
     gpu_util: 0.90
 
-  # NVIDIA-optimized sparse model.
+  # NVIDIA-optimized sparse model. Pre-quantized NVFP4 checkpoint: the config
+  # declares its method as modelopt_fp4, so passing --quantization nvfp4 aborts
+  # the launch with a method mismatch; let vLLM auto-detect instead.
   - name: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
     label: nemotron3-nano-30b-a3b-nvfp4
     configs: [single, tp2]
     max_model_len: 8704
-    quant: nvfp4
     trust_remote_code: true
 
   # Multimodal baseline.
@@ -87,12 +94,12 @@ models:
     configs: [single, tp2]
     max_model_len: 8704
 
-  # NVIDIA flagship LatentMoE.
+  # NVIDIA flagship LatentMoE. Pre-quantized NVFP4 checkpoint; no quant field
+  # (auto-detected, see the nano entry above).
   - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
     label: nemotron3-super-120b-a12b-nvfp4
     configs: [single, tp2]
     max_model_len: 8704
-    quant: nvfp4
     gpu_util: 0.80
     trust_remote_code: true
 
@@ -115,10 +122,14 @@ models:
 
   # Flagship open multimodal MoE, native image input, very long context.
   # 109B total, 17B active; BF16 ~218 GB needs two nodes and is tight in the
-  # 256 GB pool, so utilization is raised and KV room is limited. For one node
-  # production use, an FP8 checkpoint fits a single GB10.
+  # 256 GB pool. gpu_util 0.88 is as high as Grace unified memory allows while
+  # keeping per-node headroom under Ray's 95% node-memory monitor (see README
+  # troubleshooting; 0.92 trips it once weights and KV are resident). KV room
+  # is limited at this setting: if the launch fails with too little KV cache
+  # for max_model_len, lower max_model_len or serve an FP8 checkpoint. For one
+  # node production use, an FP8 checkpoint fits a single GB10.
   - name: meta-llama/Llama-4-Scout-17B-16E-Instruct
     label: llama4-scout-17b-16e
     configs: [tp2, pp2]
     max_model_len: 8704
-    gpu_util: 0.92
+    gpu_util: 0.88

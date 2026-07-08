@@ -21,6 +21,7 @@ class ExperimentConfig:
 
     # prompt construction
     tokenizer: str = ""           # HF id or local path
+    trust_remote_code: bool = False  # for tokenizer/config loads of custom-code models
     use_token_ids: bool = True    # send token ids for exact input length
 
     # workload

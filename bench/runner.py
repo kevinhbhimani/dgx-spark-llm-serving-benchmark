@@ -6,14 +6,42 @@ import time
 import aiohttp
 from .client import send_request
 
+# A dead server fails requests in microseconds; without a pause between retries
+# the closed loop hammers it at thousands of requests per second (one real run
+# logged 1.16M connection-refused records in a 600s window).
+FAILURE_BACKOFF_S = 0.5
+# Abort the phase after this many failures with no success in between, rather
+# than spending the whole window measuring a server that stopped answering and
+# then writing a summary row for it.
+CONSECUTIVE_FAILURE_LIMIT = 50
+
 
 async def _closed_loop(cfg, workload, session, stop_at, records):
+    consecutive_failures = 0
+
     async def worker():
+        nonlocal consecutive_failures
         while time.perf_counter() < stop_at:
             spec = workload.sample()
-            records.append(await send_request(session, cfg, spec))
-    await asyncio.gather(*[asyncio.create_task(worker())
-                           for _ in range(cfg.concurrency)])
+            rec = await send_request(session, cfg, spec)
+            records.append(rec)
+            if rec.success:
+                consecutive_failures = 0
+                continue
+            consecutive_failures += 1
+            if consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
+                raise RuntimeError(
+                    f"aborting phase: {consecutive_failures} consecutive "
+                    f"request failures, last error: {rec.error}")
+            await asyncio.sleep(FAILURE_BACKOFF_S)
+
+    tasks = [asyncio.create_task(worker()) for _ in range(cfg.concurrency)]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _open_loop(cfg, workload, session, stop_at, records):
@@ -21,15 +49,27 @@ async def _open_loop(cfg, workload, session, stop_at, records):
     sem = asyncio.Semaphore(cfg.max_inflight)
     inflight = set()
 
-    async def launch(spec):
+    async def launch(spec, arrival):
         async with sem:
-            records.append(await send_request(session, cfg, spec))
+            # t_start is the intended arrival time, so time a request spends
+            # queued at the client (max_inflight) counts toward its latency
+            # rather than being silently dropped (coordinated omission).
+            records.append(await send_request(session, cfg, spec,
+                                              t_start=arrival))
 
-    while time.perf_counter() < stop_at:
-        t = asyncio.create_task(launch(workload.sample()))
+    # Schedule arrivals against absolute times: sleeping one interarrival gap at
+    # a time accumulates event-loop overhead and drops the achieved rate below
+    # the target qps. If the loop falls behind, arrivals catch up in a burst,
+    # preserving the average rate.
+    next_arrival = time.perf_counter() + rng.expovariate(cfg.qps)
+    while next_arrival < stop_at:
+        delay = next_arrival - time.perf_counter()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        t = asyncio.create_task(launch(workload.sample(), next_arrival))
         inflight.add(t)
         t.add_done_callback(inflight.discard)
-        await asyncio.sleep(rng.expovariate(cfg.qps))
+        next_arrival += rng.expovariate(cfg.qps)
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
 

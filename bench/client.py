@@ -75,7 +75,10 @@ def _extract_text(chunk):
     return (c0.get("delta", {}) or {}).get("content", "") or ""   # chat endpoint
 
 
-async def send_request(session, cfg, spec) -> RequestRecord:
+async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
+    """Send one streaming request. t_start, when given, backdates the record to
+    the request's intended arrival time so client-side queueing (the open
+    loop's max_inflight gate) counts toward TTFT and e2e latency."""
     rec = RequestRecord(cfg.config_label, spec.input_len, spec.output_len)
     url = cfg.base_url.rstrip("/") + cfg.endpoint
     body = {
@@ -90,7 +93,7 @@ async def send_request(session, cfg, spec) -> RequestRecord:
     headers = {"Authorization": f"Bearer {cfg.api_key}",
                "Content-Type": "application/json"}
     timeout = aiohttp.ClientTimeout(total=cfg.request_timeout_s)
-    rec.t_start = time.perf_counter()
+    rec.t_start = t_start if t_start is not None else time.perf_counter()
     try:
         async with session.post(url, json=body, headers=headers, timeout=timeout) as resp:
             if resp.status != 200:

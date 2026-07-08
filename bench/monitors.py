@@ -51,6 +51,9 @@ class PowerSampler:
         self._samples.append((time.perf_counter(), watts))
 
     def _run_nvidia_smi(self):
+        # One output line becomes one sample. On a multi-GPU node nvidia-smi
+        # emits one line per GPU per tick, which this would average rather than
+        # sum; correct on DGX Spark, where each node has a single GB10.
         ms = int(self.interval * 1000)
         cmd = ["nvidia-smi", "--query-gpu=power.draw",
                "--format=csv,noheader,nounits", "-lms", str(ms)]
