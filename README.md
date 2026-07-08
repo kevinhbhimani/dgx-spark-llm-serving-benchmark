@@ -87,7 +87,8 @@ configs/
   experiment.yaml  default full benchmark settings
   models.yaml      model matrix for the multi-model sweep
 scripts/
-  connectx_env.sh             shared ConnectX and container settings
+  load_env.sh                 source a repo-local .env for script entrypoints
+  connectx_env.sh             shared ConnectX and container settings; loads .env
   verify_connectx.sh          route and latency sanity checks
   start_ray.sh                start or stop the Ray container for dual-node runs
   launch_server.sh            start vLLM in single, tp2, or pp2 mode
@@ -140,6 +141,8 @@ fields:
 - `base_url`: vLLM server URL, for example `http://127.0.0.1:8000`.
 - `endpoint`: default `/v1/completions`.
 - `model`: served model name. Leave empty to query `/v1/models`.
+- `api_key`: bearer token sent in the `Authorization` header. The vLLM default
+  is usually `EMPTY`.
 - `tokenizer`: Hugging Face tokenizer id or local path. Set to `""` only for
   quick approximate checks.
 - `use_token_ids`: when true, send exact token-id prompts built with the
@@ -147,34 +150,72 @@ fields:
 - `buckets`: weighted synthetic workload buckets with `input_len`,
   `output_len`, and `weight`.
 - `trace_path`: optional JSONL trace that replaces `buckets`.
+- `seed`: random seed for bucket/trace sampling and synthetic prompt slices.
 - `mode`: `closed` for fixed concurrency or `open` for Poisson arrivals.
 - `concurrency`: number of closed-loop workers.
 - `qps`: offered request rate for open-loop mode.
+- `max_inflight`: open-loop cap on concurrently in-flight requests.
 - `warmup_s` and `measure_s`: warmup and logical measurement window durations.
+- `request_timeout_s`: per-request HTTP timeout, including queueing and stream
+  drain.
 - `ttft_slo_s` and `itl_slo_s`: service-level objectives used for goodput.
 - `power_backend`: `none`, `nvidia_smi`, `sysfs`, or `tegrastats`.
+- `power_sysfs_path`, `power_rails`, and `power_interval_ms`: backend-specific
+  power sampling settings.
 - `scrape_vllm_metrics`: whether to sample vLLM Prometheus metrics.
 - `config_label`: label written to outputs, such as `single`, `tp2`, or `pp2`.
+- `model_label`: short model slug used in indexes, plots, and explicit
+  multi-model run tags. If empty, it is derived from the served model name.
+- `server_log`: optional captured vLLM stdout log. When present, the benchmark
+  parses extra capacity facts such as vLLM's logged maximum concurrency.
 - `out_dir`: output directory, default `results`.
+- `run_note`: free-form note preserved in the resolved configuration block.
 
 Common script environment variables:
 
-The scripts load a repo-local `.env` file automatically if it exists, so these
-can be saved there instead of exported in every shell session. `.env` is ignored
-by git because it may contain `HF_TOKEN`.
+Every script entrypoint sources `scripts/load_env.sh`, which loads a repo-local
+`.env` file if it exists, so these can be saved there instead of exported in
+every shell session. `.env` is ignored by git because it may contain `HF_TOKEN`.
+It is loaded once per process tree (guarded by `DGX_SPARK_ENV_LOADED`), so a
+wrapper that sources it and then launches child scripts does not re-load it in
+the children; that is what lets `run_models.sh` pass explicit per-model
+`MODEL`, `QUANT`, `GPU_UTIL`, etc. through to the launcher without `.env`
+clobbering them.
+
+`.env` is sourced as shell code, so a plain assignment in `.env` overrides a
+one-shot inline assignment such as `CONCURRENCIES="1" scripts/run_all.sh single`.
+If you want inline values to win, write defaults in `.env` with shell parameter
+expansion, for example:
+
+```bash
+export CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
+```
+
+Set `ENV_FILE=/path/to/another.env` to load a different environment file for a
+script invocation.
 
 ```bash
 export MODEL=Qwen/Qwen3-8B
 export PORT=8000
+export DTYPE=auto
 export MAXLEN=8704
+# Optional serving overrides:
+# export GPU_UTIL=0.90        # default is 0.90 single, 0.80 tp2/pp2
+# export QUANT=fp8
+# export TOKENIZER=Qwen/Qwen3-8B
+# export TRUST_REMOTE_CODE=1
 export VLLM_IMAGE=nvcr.io/nvidia/vllm:26.04-py3
+export VLLM_CONTAINER=vllm-spark
 export HF_TOKEN=...
 export HF_CACHE=$HOME/.cache/huggingface
 export BASE_URL=http://127.0.0.1:8000
 export OUT_DIR=results
 export CONFIG_YAML=configs/experiment.yaml
-export CONCURRENCIES="1 2 4 8 16 32 64 128"
+export CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
 export POWER_BACKEND=none
+export MODELS_YAML=configs/models.yaml
+export READY_TIMEOUT=1200
+export RAY_VERSION=2.53.0
 ```
 
 Dual-node network defaults live in `scripts/connectx_env.sh`. Override them
@@ -234,6 +275,11 @@ Run against a remote or separately managed vLLM server:
 BASE_URL=http://spark-node.example.com:8000 scripts/run_all.sh single
 ```
 
+When you already know the served model or want stable plot labels, pass
+`MODEL`, `MODEL_LABEL`, `TOKENIZER`, and optionally `SERVER_LOG` through the
+environment. `run_all.sh` forwards those to `bench.run_benchmark`; if `MODEL` is
+unset, the benchmark resolves the served name from `/v1/models`.
+
 Run an open-loop Poisson point:
 
 ```bash
@@ -246,8 +292,13 @@ python -m bench.run_benchmark \
 ```
 
 Command-line flags override the YAML for that run. Useful overrides include
-`--model`, `--tokenizer`, `--mode`, `--concurrency`, `--qps`, `--measure-s`,
-`--warmup-s`, `--base-url`, `--out-dir`, and `--power-backend`.
+`--model`, `--model-label`, `--server-log`, `--tokenizer`, `--mode`,
+`--concurrency`, `--qps`, `--measure-s`, `--warmup-s`, `--base-url`,
+`--out-dir`, and `--power-backend`.
+
+The benchmark log prints `point=<value>` for the x-axis load value being
+measured. In `closed` mode, `point` is the fixed concurrency. In `open` mode,
+`point` is the target `qps`.
 
 ## Running Dual-Node Benchmarks
 
@@ -317,10 +368,13 @@ with `MPI=1`. Set `NCCL_TESTS_DIR` to use an existing checkout.
 To characterize several models, list them in `configs/models.yaml` and drive them
 with `scripts/run_models.sh`. Each entry names a Hugging Face model, a short
 `label` used to tag results and plots, the serving configs to run it under
-(`single`, `tp2`, `pp2`), and optional `max_model_len`, `gpu_util`, `quant`, and
-`tokenizer`. A model whose weights plus KV cache do not fit on one GB10 must omit
-`single` and use the dual-node configs, which pool two nodes over ConnectX for
-roughly twice the memory (a 70B model in bf16 is dual-only).
+(`single`, `tp2`, `pp2`), and optional `max_model_len`, `gpu_util`, `quant`,
+`tokenizer`, and `trust_remote_code`. `max_model_len`, `gpu_util`, `quant`,
+`tokenizer`, and `trust_remote_code` are passed to the launcher for that model;
+the tokenizer is also passed to the benchmark client so exact token-id prompts
+match the served tokenizer. A model whose weights plus KV cache do not fit on
+one GB10 must omit `single` and use the dual-node configs, which pool two nodes
+over ConnectX for roughly twice the memory (a 70B model in bf16 is dual-only).
 
 `run_models.sh` takes one serving config at a time. It selects the models that
 request that config, and for each one launches a server, waits until
@@ -348,9 +402,12 @@ the first time on an upgraded checkout: the index gained columns, and the
 benchmark refuses to append rows to an index whose header does not match, to
 avoid silently misaligning columns.
 
-Key environment variables: `MODELS_YAML` (default `configs/models.yaml`),
-`OUT_DIR`, `BASE_URL`, `POWER_BACKEND`, `CONCURRENCIES`, `CONFIG_YAML`, and
-`READY_TIMEOUT` (seconds to wait for a model to load, default 1200). Trim
+Key environment variables for the multi-model wrapper: `MODELS_YAML` (default
+`configs/models.yaml`), `OUT_DIR`, `BASE_URL`, `POWER_BACKEND`,
+`CONCURRENCIES`, `CONFIG_YAML`, and `READY_TIMEOUT` (seconds to wait for a model
+to load, default 1200). It also honors the launcher and network variables from
+the Configuration section, such as `HF_TOKEN`, `HF_CACHE`, `VLLM_IMAGE`,
+`VLLM_CONTAINER`, `DROP_CACHES`, and the ConnectX host/interface settings. Trim
 `configs/models.yaml` to your target models before running; the shipped file is
 an example matrix.
 
@@ -408,6 +465,13 @@ The run tag has this shape:
 
 ```text
 <config_label>_<mode>_<concurrency-or-qps>_<YYYYmmdd-HHMMSS>
+```
+
+When `--model-label` is explicit, as it is in `scripts/run_models.sh`, the run
+tag is prefixed with that label:
+
+```text
+<model_label>_<config_label>_<mode>_<concurrency-or-qps>_<YYYYmmdd-HHMMSS>
 ```
 
 Plot all rows in an index:
@@ -524,10 +588,11 @@ once from `/v1/models`, vLLM `cache_config_info`, and the model config):
   the value divided by the parallel size. `weight_gb` is the checkpoint size and
   approximates the served size unless a different dtype or quantization is used.
   Pass `--server-log` (the multi-model orchestrator does this automatically) to
-  also capture the exact `max_concurrency` vLLM logged at load.
+  also store the exact `max_concurrency` vLLM logged at load in the per-run
+  summary's `server_info` block.
 
-These per-model capacity numbers are collected into `capacity_table.tex`/`.md` by
-`plot_results.py --table`.
+The index-backed capacity numbers are collected into `capacity_table.tex`/`.md`
+by `plot_results.py --table`.
 
 ## Choosing The Measurement Window
 
@@ -565,11 +630,15 @@ Guidance:
 
 ## Power Telemetry
 
-Power is off by default. Enable it with `POWER_BACKEND` for sweeps or
-`--power-backend` for a single run:
+The lightweight smoke config and script wrappers default to `POWER_BACKEND=none`.
+The full `configs/experiment.yaml` enables `nvidia_smi`, so a direct
+`python -m bench.run_benchmark --config configs/experiment.yaml` run will try to
+sample GPU power unless you override it. Enable or disable power with
+`POWER_BACKEND` for sweeps or `--power-backend` for a single run:
 
 ```bash
 POWER_BACKEND=nvidia_smi scripts/run_all.sh single
+POWER_BACKEND=none scripts/run_all.sh single
 python -m bench.run_benchmark --power-backend sysfs --config configs/experiment.yaml
 ```
 
@@ -645,9 +714,10 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
   existing MPI-enabled nccl-tests checkout.
 - No energy figure is generated: rerun with a non-`none` power backend. The
   plotting script skips energy when the index has no power columns.
-- `plot_results.py` reports `Expected 29 fields`: an older `index.csv` row was
-  likely missing a trailing newline before another run appended. New runs guard
-  against this; split the concatenated row or start a fresh `OUT_DIR`.
+- `plot_results.py` reports `Expected N fields` (and the schema versions match):
+  an older `index.csv` row was likely missing a trailing newline before another
+  run appended, concatenating two rows. New runs guard against this; split the
+  concatenated row or start a fresh `OUT_DIR`.
 
 ## Development Checks
 
