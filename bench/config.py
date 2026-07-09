@@ -43,9 +43,14 @@ class ExperimentConfig:
     measure_s: float = 60.0
     request_timeout_s: float = 600.0
 
-    # goodput service level objective
+    # goodput service level objective. Two ITL tiers scored against one TTFT
+    # bound: itl_slo_s is the strict interactive target, itl_slo_s2 a looser
+    # tier that still separates bandwidth-bound models under load (their strict
+    # goodput floors at ~0). goodput_rps uses itl_slo_s, goodput_itl2_rps uses
+    # itl_slo_s2.
     ttft_slo_s: float = 1.0
     itl_slo_s: float = 0.05
+    itl_slo_s2: float = 0.10
 
     # monitors
     power_backend: str = "none"   # none, nvidia_smi, sysfs, tegrastats

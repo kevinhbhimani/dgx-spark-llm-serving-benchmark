@@ -25,9 +25,16 @@ def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None)
     n = len(in_win)
     total_out = sum(r.output_tokens for r in in_win)
     token_gaps = [gap for r in in_win for gap in r.inter_token_latencies]
-    good = [r for r in in_win
-            if r.ttft <= cfg.ttft_slo_s
-            and (math.isnan(r.mean_itl) or r.mean_itl <= cfg.itl_slo_s)]
+    def _goodput(itl_slo):
+        # A request is "good" if it met the TTFT bound and its mean ITL cleared
+        # the tier. NaN mean_itl (single-token outputs have no gaps) is not an
+        # ITL violation, so it does not disqualify.
+        return [r for r in in_win
+                if r.ttft <= cfg.ttft_slo_s
+                and (math.isnan(r.mean_itl) or r.mean_itl <= itl_slo)]
+
+    good = _goodput(cfg.itl_slo_s)
+    good2 = _goodput(cfg.itl_slo_s2)
 
     summary = {
         "config_label": cfg.config_label,
@@ -43,7 +50,9 @@ def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None)
         "request_throughput_rps": n / measure_s,
         "output_token_throughput_tps": total_out / measure_s,
         "goodput_rps": len(good) / measure_s,
-        "slo": {"ttft_s": cfg.ttft_slo_s, "itl_s": cfg.itl_slo_s},
+        "goodput_itl2_rps": len(good2) / measure_s,
+        "slo": {"ttft_s": cfg.ttft_slo_s, "itl_s": cfg.itl_slo_s,
+                "itl_s2": cfg.itl_slo_s2},
         "ttft_s": _pctls([r.ttft for r in in_win]),
         "itl_s": _pctls(token_gaps),
         "mean_itl_s": _pctls([r.mean_itl for r in in_win]),

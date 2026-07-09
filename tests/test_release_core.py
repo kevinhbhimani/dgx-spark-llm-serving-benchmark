@@ -99,6 +99,40 @@ class PlotCompatibilityTests(unittest.TestCase):
         self.assertEqual(plot_results.models_present(df), ["Qwen/Qwen3-8B"])
 
 
+class GoodputTierTests(unittest.TestCase):
+    """metrics.aggregate scores two ITL goodput tiers against one TTFT bound."""
+
+    @staticmethod
+    def _rec(ttft, itl):
+        from types import SimpleNamespace
+        return SimpleNamespace(t_start=0.5, t_end=1.0, success=True,
+                               ttft=ttft, mean_itl=itl, e2e=5.0,
+                               output_tokens=10, inter_token_latencies=[itl] * 9)
+
+    def test_strict_and_loose_tiers_count_independently(self):
+        from bench.metrics import aggregate
+        cfg = ExperimentConfig(ttft_slo_s=3.0, itl_slo_s=0.10, itl_slo_s2=0.20)
+        recs = [
+            self._rec(0.5, 0.08),   # passes both tiers
+            self._rec(0.5, 0.15),   # fails strict 0.10, passes loose 0.20
+            self._rec(0.5, 0.30),   # fails both
+            self._rec(5.0, 0.05),   # fast ITL but TTFT over bound: fails both
+        ]
+        s = aggregate(recs, cfg, window_start=0.0, window_end=10.0)
+        self.assertEqual(round(s["goodput_rps"] * 10), 1)
+        self.assertEqual(round(s["goodput_itl2_rps"] * 10), 2)
+        self.assertEqual(s["slo"], {"ttft_s": 3.0, "itl_s": 0.10, "itl_s2": 0.20})
+
+    def test_nan_itl_single_token_output_is_not_a_violation(self):
+        from bench.metrics import aggregate
+        cfg = ExperimentConfig(ttft_slo_s=3.0, itl_slo_s=0.10, itl_slo_s2=0.20)
+        rec = self._rec(0.5, float("nan"))
+        rec.inter_token_latencies = []
+        s = aggregate([rec], cfg, window_start=0.0, window_end=10.0)
+        self.assertEqual(round(s["goodput_rps"] * 10), 1)
+        self.assertEqual(round(s["goodput_itl2_rps"] * 10), 1)
+
+
 class SweptConcurrenciesTests(unittest.TestCase):
     """scripts/swept_concurrencies.py backs run_models.sh --skip-done."""
 

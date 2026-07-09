@@ -162,7 +162,12 @@ fields:
   drain. Keep it well above the worst-case E2E at the highest load in the
   sweep, or slow-but-successful requests are counted as failures; the shipped
   default is `1800`.
-- `ttft_slo_s` and `itl_slo_s`: service-level objectives used for goodput.
+- `ttft_slo_s`, `itl_slo_s`, and `itl_slo_s2`: service-level objectives used for
+  goodput. Both ITL tiers are scored against the same TTFT bound: `itl_slo_s` is
+  the strict interactive target and `itl_slo_s2` a looser tier, giving two
+  goodput columns (`goodput_rps`, `goodput_itl2_rps`). On bandwidth-bound GB10
+  the dense 32B/70B models floor above the strict ITL even unloaded, so their
+  strict goodput is ~0; the looser tier separates them under load.
 - `power_backend`: `none`, `nvidia_smi`, `sysfs`, or `tegrastats`.
 - `power_sysfs_path`, `power_rails`, and `power_interval_ms`: backend-specific
   power sampling settings.
@@ -578,6 +583,7 @@ Aggregate metrics:
   divided by `measure_s`.
 - `goodput_rps`: successful completions per second whose TTFT is at or below
   `ttft_slo_s` and whose per-request mean ITL is at or below `itl_slo_s`.
+- `goodput_itl2_rps`: the same, but against the looser `itl_slo_s2` ITL tier.
 - Capacity: sampled from vLLM Prometheus metrics. The index uses
   `kv_cache_usage_*`, `requests_running_*`, and `requests_waiting_*` columns.
   The scraper accepts both `vllm:kv_cache_usage_perc` and the older
@@ -692,8 +698,11 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
   sure `MAXLEN`/`--max-model-len` is at least the largest `input_len +
   output_len` in the workload. The default experiment needs `8704`.
 - `goodput=0.00` with successful requests: the run completed, but the measured
-  TTFT or mean ITL did not meet `ttft_slo_s`/`itl_slo_s`. Loosen the SLOs if you
-  want a capacity curve for a less strict service target.
+  TTFT or mean ITL did not meet `ttft_slo_s`/`itl_slo_s`. Check `goodput_itl2_rps`
+  (the looser `itl_slo_s2` tier) for a less strict service target, or loosen the
+  SLOs. On bandwidth-bound hardware, dense models can floor above a strict ITL
+  even unloaded, so a strict `goodput_rps` of 0 across the sweep is expected, not
+  a bug.
 - `PyTorch was not found` from Transformers on the benchmark client is expected
   and harmless: `requirements.txt` intentionally does not install PyTorch
   because the harness only loads tokenizers and model configs locally. vLLM and

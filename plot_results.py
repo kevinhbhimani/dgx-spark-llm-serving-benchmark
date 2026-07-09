@@ -97,7 +97,8 @@ def set_rc(dpi: int, serif: bool) -> None:
 NUMERIC_COLS = [
     "concurrency", "target_qps", "measure_s",
     "requests_started", "requests_completed", "requests_failed",
-    "total_output_tokens", "req_thru_rps", "tok_thru_tps", "goodput_rps",
+    "total_output_tokens", "req_thru_rps", "tok_thru_tps",
+    "goodput_rps", "goodput_itl2_rps",
     "ttft_p50", "ttft_p99", "itl_p50", "itl_p99", "mean_itl_p50",
     "e2e_p50", "e2e_p99",
     "kv_cache_usage_mean", "kv_cache_usage_max",
@@ -388,8 +389,14 @@ def save(fig, name: str, out: str, fmts: list[str], tight: bool = False) -> None
 
 # ---- figures -----------------------------------------------------------------
 def fig_throughput_scaling(df, out, fmts):
-    if not has(df, ["tok_thru_tps"]):
+    tcol = _throughput_col(df)
+    if not has(df, [tcol]):
         return
+    # server_gen_tps is a server-side counter over the window, so it stays honest
+    # even when few requests finished in-window; low completion counts do not make
+    # it unreliable. Only circle low-n points when we fall back to the client
+    # windowed rate, which is the metric those completions actually back.
+    mark_ln = tcol == "tok_thru_tps"
     fig, ax = plt.subplots(figsize=(COL_W, PANEL_H))
     all_loads = []
     any_low_n = False
@@ -397,9 +404,10 @@ def fig_throughput_scaling(df, out, fmts):
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
-        ax.plot(g[lc], g["tok_thru_tps"], marker=s["marker"], color=s["color"],
+        ax.plot(g[lc], g[tcol], marker=s["marker"], color=s["color"],
                 label=s["label"])
-        any_low_n |= mark_low_n(ax, g, g[lc], g["tok_thru_tps"])
+        if mark_ln:
+            any_low_n |= mark_low_n(ax, g, g[lc], g[tcol])
         all_loads += g[lc].tolist()
     set_load_axis(ax, all_loads, mode)
     ax.set_ylabel("Output token throughput (tok/s)")
@@ -410,7 +418,8 @@ def fig_throughput_scaling(df, out, fmts):
 
 
 def fig_latency_throughput(df, out, fmts):
-    if not has(df, ["tok_thru_tps", "ttft_p50", "itl_p50"]):
+    tcol = _throughput_col(df)
+    if not has(df, [tcol, "ttft_p50", "itl_p50"]):
         return
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
     any_low_n = False
@@ -419,14 +428,16 @@ def fig_latency_throughput(df, out, fmts):
         s = style_for(cfg, i)
         ttft_ms = g["ttft_p50"] * 1e3
         itl_ms = g["itl_p50"] * 1e3
-        axl.plot(g["tok_thru_tps"], ttft_ms, marker=s["marker"],
+        axl.plot(g[tcol], ttft_ms, marker=s["marker"],
                  color=s["color"], label=s["label"])
-        axr.plot(g["tok_thru_tps"], itl_ms, marker=s["marker"],
+        axr.plot(g[tcol], itl_ms, marker=s["marker"],
                  color=s["color"], label=s["label"])
-        any_low_n |= mark_low_n(axl, g, g["tok_thru_tps"], ttft_ms)
-        any_low_n |= mark_low_n(axr, g, g["tok_thru_tps"], itl_ms)
+        # the throughput axis is completion-independent, but the latency
+        # percentiles on the y-axis are not, so low-n marking still applies here
+        any_low_n |= mark_low_n(axl, g, g[tcol], ttft_ms)
+        any_low_n |= mark_low_n(axr, g, g[tcol], itl_ms)
         # annotate each point with its load so the swept parameter is visible
-        for x, y, c in zip(g["tok_thru_tps"], ttft_ms, g[lc]):
+        for x, y, c in zip(g[tcol], ttft_ms, g[lc]):
             if pd.notna(x) and pd.notna(y):
                 axl.annotate(f"{c:g}", (x, y), textcoords="offset points",
                              xytext=(3, 3), fontsize=6, color=s["color"])
@@ -489,11 +500,19 @@ def fig_goodput(df, out, fmts):
     all_loads = []
     any_low_n = False
     mode = "closed"
+    # solid = strict ITL SLO (goodput_rps); dashed = looser ITL tier
+    # (goodput_itl2_rps), which recovers the bandwidth-bound models whose strict
+    # goodput floors near zero; dotted = achieved req/s ceiling.
+    has_itl2 = "goodput_itl2_rps" in df.columns and df["goodput_itl2_rps"].notna().any()
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
         ax.plot(g[lc], g["goodput_rps"], marker=s["marker"], color=s["color"],
                 label=s["label"])
+        if has_itl2:
+            ax.plot(g[lc], g["goodput_itl2_rps"], marker=s["marker"],
+                    linestyle="--", color=s["color"], alpha=0.7,
+                    label=f"{s['label']} loose ITL")
         if "req_thru_rps" in g.columns:
             ax.plot(g[lc], g["req_thru_rps"], marker=s["marker"], linestyle=":",
                     color=s["color"], alpha=0.5,
