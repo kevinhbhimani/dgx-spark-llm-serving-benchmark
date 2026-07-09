@@ -20,6 +20,14 @@ if [[ -f "$_load_env_file" ]]; then
     *) _load_env_had_nounset=0 ;;
   esac
 
+  # Standard dotenv precedence: values already in the environment win over
+  # .env, so documented one-shot overrides such as
+  # `CONCURRENCIES="1" scripts/run_all.sh single` keep working when .env sets
+  # the same variable. Snapshot the exported env, source .env, then re-apply
+  # the snapshot. (`export VAR=...` form so the restore is safe even if this
+  # file is ever sourced inside a function.)
+  _load_env_snapshot="$(export -p | sed 's/^declare -x /export /')"
+
   set -a
   # shellcheck disable=SC1090
   source "$_load_env_file"
@@ -27,9 +35,11 @@ if [[ -f "$_load_env_file" ]]; then
   if [[ "$_load_env_had_allexport" != "1" ]]; then
     set +a
   fi
+  eval "$_load_env_snapshot"
   if [[ "$_load_env_had_nounset" == "1" ]]; then
     set -u
   fi
 fi
 
-unset _load_env_root _load_env_file _load_env_had_allexport _load_env_had_nounset
+unset _load_env_root _load_env_file _load_env_had_allexport _load_env_had_nounset \
+      _load_env_snapshot

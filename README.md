@@ -408,6 +408,12 @@ DROP_CACHES=1 scripts/start_ray.sh worker      # on Hoedus
 scripts/run_models.sh tp2
 scripts/run_models.sh pp2
 scripts/start_ray.sh stop                      # on each node when finished
+
+# Rerun a sweep that failed partway without repeating finished work. Consults
+# OUT_DIR/index.csv and skips every closed-mode point already recorded for a
+# model at the current measure_s; a fully covered model never launches its
+# server, a partially swept one resumes with just the missing concurrencies.
+scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 ```
 
 All runs append to one `OUT_DIR/index.csv` tagged by `model_label`, so a single

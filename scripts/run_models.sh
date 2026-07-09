@@ -5,6 +5,14 @@
 #   scripts/run_models.sh single        # every model whose configs include single
 #   scripts/run_models.sh tp2           # dual-node tensor parallel (Ray must be up)
 #   scripts/run_models.sh pp2           # dual-node pipeline parallel (Ray must be up)
+#   scripts/run_models.sh single --skip-done   # skip work already in index.csv
+#
+# --skip-done (or SKIP_DONE=1) consults OUT_DIR/index.csv before each model and
+# only runs the concurrencies not yet recorded for that model/config at the
+# current measurement window (see scripts/swept_concurrencies.py for what counts
+# as done). A model with full coverage is skipped without launching its server;
+# a partially swept model resumes with just the missing concurrencies. Use it to
+# rerun a sweep that failed partway without repeating finished models.
 #
 # For tp2/pp2, start Ray on both nodes first (scripts/start_ray.sh head|worker);
 # this script cycles only the `vllm serve` process between models and leaves the
@@ -19,6 +27,7 @@
 #
 # Env: MODELS_YAML BASE_URL OUT_DIR POWER_BACKEND CONCURRENCIES CONFIG_YAML
 #      READY_TIMEOUT (seconds to wait for a model to come up, default 1200)
+#      SKIP_DONE (1 behaves like --skip-done, default 0)
 #      PYTHON (interpreter for the benchmark and helpers, default python3).
 # Per-model tokenizer defaults to the model name unless configs/models.yaml
 # supplies an explicit tokenizer.
@@ -28,8 +37,16 @@ source "$HERE/connectx_env.sh"     # VLLM_CONTAINER, HEAD_IP, and .env
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2) ;; *)
-  echo "usage: run_models.sh [single|tp2|pp2]" >&2; exit 1 ;;
+  echo "usage: run_models.sh [single|tp2|pp2] [--skip-done]" >&2; exit 1 ;;
 esac
+
+SKIP_DONE="${SKIP_DONE:-0}"
+for arg in "${@:2}"; do
+  case "$arg" in
+    --skip-done) SKIP_DONE=1 ;;
+    *) echo "usage: run_models.sh [single|tp2|pp2] [--skip-done]" >&2; exit 1 ;;
+  esac
+done
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
@@ -114,13 +131,36 @@ run_one() {
   local log="$OUT_DIR/server_${label}_${CONFIG}.log"
   local tokenizer="${tok:-$name}"
   local status=0
+  echo "[models] === $label ($name) config=$CONFIG ==="
+
+  # With --skip-done, only sweep the concurrencies not already recorded in
+  # index.csv for this model/config at the current measurement window. Full
+  # coverage means the server is never launched.
+  local run_concs="$CONCURRENCIES"
+  if [[ "$SKIP_DONE" == "1" ]]; then
+    local done_concs missing=() c
+    done_concs="$("$PYTHON" "$HERE/swept_concurrencies.py" \
+                    "$OUT_DIR/index.csv" "$label" "$CONFIG" "$CONFIG_YAML")" \
+      || { echo "[models] swept_concurrencies.py failed; not skipping" >&2; done_concs=""; }
+    for c in $CONCURRENCIES; do
+      [[ " $done_concs " == *" $c "* ]] || missing+=("$c")
+    done
+    if [[ "${#missing[@]}" -eq 0 ]]; then
+      echo "[models] $label: concurrencies $CONCURRENCIES already in index.csv; skipping"
+      return 0
+    fi
+    if [[ -n "$done_concs" ]]; then
+      echo "[models] $label: already done: $done_concs; running: ${missing[*]}"
+    fi
+    run_concs="${missing[*]}"
+  fi
+
   local launch_env=(MODEL="$name")
   local sweep_env=(MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log"
                    TOKENIZER="$tokenizer" TRUST_REMOTE_CODE="$trust"
                    BASE_URL="$BASE_URL" OUT_DIR="$OUT_DIR"
                    POWER_BACKEND="$POWER_BACKEND" CONFIG_YAML="$CONFIG_YAML"
-                   CONCURRENCIES="$CONCURRENCIES" PYTHON="$PYTHON")
-  echo "[models] === $label ($name) config=$CONFIG ==="
+                   CONCURRENCIES="$run_concs" PYTHON="$PYTHON")
 
   [[ -n "$maxlen" ]] && launch_env+=(MAXLEN="$maxlen")
   [[ -n "$gpu_util" ]] && launch_env+=(GPU_UTIL="$gpu_util")

@@ -99,5 +99,52 @@ class PlotCompatibilityTests(unittest.TestCase):
         self.assertEqual(plot_results.models_present(df), ["Qwen/Qwen3-8B"])
 
 
+class SweptConcurrenciesTests(unittest.TestCase):
+    """scripts/swept_concurrencies.py backs run_models.sh --skip-done."""
+
+    INDEX_COLS = ["model_label", "config_label", "mode", "concurrency",
+                  "measure_s", "requests_completed"]
+
+    @staticmethod
+    def _load_module():
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "scripts" / "swept_concurrencies.py"
+        spec = importlib.util.spec_from_file_location("swept_concurrencies", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _write(self, tmp, rows, measure_s=600.0):
+        index = Path(tmp) / "index.csv"
+        with index.open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(self.INDEX_COLS)
+            writer.writerows(rows)
+        cfg = Path(tmp) / "experiment.yaml"
+        cfg.write_text(f"measure_s: {measure_s}\n")
+        return str(index), str(cfg)
+
+    def test_counts_only_matching_completed_closed_rows(self):
+        mod = self._load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            index, cfg = self._write(tmp, [
+                ["qwen3-8b", "single", "closed", 1, 600.0, 35],    # done
+                ["qwen3-8b", "single", "closed", 2, 600.0, 0],     # nothing completed
+                ["qwen3-8b", "single", "open",   4, 600.0, 40],    # open mode
+                ["qwen3-8b", "tp2",    "closed", 8, 600.0, 40],    # other config
+                ["qwen3-32b", "single", "closed", 8, 600.0, 40],   # other model
+                ["qwen3-8b", "single", "closed", 16, 60.0, 40],    # stale short window
+                ["qwen3-8b", "single", "closed", 32, 600.0, 40],   # done
+            ])
+            self.assertEqual(mod.swept(index, "qwen3-8b", "single", cfg), [1, 32])
+
+    def test_missing_index_means_nothing_done(self):
+        mod = self._load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            _, cfg = self._write(tmp, [])
+            self.assertEqual(
+                mod.swept(str(Path(tmp) / "absent.csv"), "x", "single", cfg), [])
+
+
 if __name__ == "__main__":
     unittest.main()
