@@ -1,0 +1,159 @@
+{
+  "config_label": "single",
+  "mode": "closed",
+  "concurrency": 64,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 268,
+  "requests_completed": 204,
+  "requests_failed": 0,
+  "total_output_tokens": 50304,
+  "request_throughput_rps": 0.34,
+  "output_token_throughput_tps": 83.84,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 5.143699315492995,
+    "p90": 50.698702587187306,
+    "p95": 67.74136306934524,
+    "p99": 86.63049835739658,
+    "mean": 15.219644995033056
+  },
+  "itl_s": {
+    "p50": 0.3508731524925679,
+    "p90": 1.0088363603688777,
+    "p95": 1.0364647595095449,
+    "p99": 1.0437910113553517,
+    "mean": 0.5690421465849745
+  },
+  "mean_itl_s": {
+    "p50": 0.5659183144540406,
+    "p90": 0.6269380815303334,
+    "p95": 0.6552251225022973,
+    "p99": 0.7134912414584808,
+    "mean": 0.5729896924939107
+  },
+  "e2e_s": {
+    "p50": 146.22113104956225,
+    "p90": 287.2688461250393,
+    "p95": 302.3531797860516,
+    "p99": 356.34751899792116,
+    "mean": 154.96973885228292
+  },
+  "energy": {
+    "mean_power_w": 67.6608192327023,
+    "energy_j": 40596.23515452074,
+    "energy_per_token_j": 0.8070180334470567,
+    "tokens_per_watt": 1.2391218573877076
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 59.24074074074074,
+      "max": 64.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 4.166666666666667,
+      "max": 61.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.48711930669320813,
+      "max": 0.5352862849533955
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 758912.0,
+      "rate_per_s": 1266.0105925104938
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 62633.0,
+      "rate_per_s": 104.48384192200118
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "nemotron3-super-120b-a12b-nvfp4_single_closed_64_20260710-040623",
+  "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+  "model_label": "nemotron3-super-120b-a12b-nvfp4",
+  "server_info": {
+    "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "max_model_len": 8704,
+    "block_size": 8320,
+    "gpu_blocks": 752,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "fp8_e4m3",
+    "gpu_memory_utilization": 0.8,
+    "enable_prefix_caching": "False",
+    "total_kv_tokens": 6256640,
+    "worker_kv_cache_gb": 23.87,
+    "max_concurrency": 107.43
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "api_key": "EMPTY",
+    "tokenizer": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "trust_remote_code": true,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 64,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "single",
+    "model_label": "nemotron3-super-120b-a12b-nvfp4",
+    "server_log": "results/server_nemotron3-super-120b-a12b-nvfp4_single.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 73.77585763507523
+}

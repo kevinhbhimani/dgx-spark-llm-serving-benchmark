@@ -1,0 +1,159 @@
+{
+  "config_label": "single",
+  "mode": "closed",
+  "concurrency": 8,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 186,
+  "requests_completed": 178,
+  "requests_failed": 0,
+  "total_output_tokens": 46592,
+  "request_throughput_rps": 0.2966666666666667,
+  "output_token_throughput_tps": 77.65333333333334,
+  "goodput_rps": 0.22,
+  "goodput_itl2_rps": 0.29,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 0.3013543045381084,
+    "p90": 2.2010371521348135,
+    "p95": 2.52143895002082,
+    "p99": 3.566442879915692,
+    "mean": 0.758108926131233
+  },
+  "itl_s": {
+    "p50": 0.08837879449129105,
+    "p90": 0.09520791617687792,
+    "p95": 0.09714490242768078,
+    "p99": 0.45254917214159046,
+    "mean": 0.09509654184378077
+  },
+  "mean_itl_s": {
+    "p50": 0.09355068584152848,
+    "p90": 0.10521397305771198,
+    "p95": 0.10761398728416623,
+    "p99": 0.11253896995716878,
+    "mean": 0.09455159531740995
+  },
+  "e2e_s": {
+    "p50": 24.248365857987665,
+    "p90": 46.61079771933146,
+    "p95": 51.73971597941127,
+    "p99": 58.43093711805295,
+    "mean": 25.554830970245234
+  },
+  "energy": {
+    "mean_power_w": 48.46669118876442,
+    "energy_j": 29078.429210184462,
+    "energy_per_token_j": 0.6241077697927641,
+    "tokens_per_watt": 1.6022000146635753
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 5.0,
+      "mean": 7.897478991596639,
+      "max": 8.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.025210084033613446,
+      "max": 2.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.016740509515658086,
+      "mean": 0.052973204184503325,
+      "max": 0.07632665391199278
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 539392.0,
+      "rate_per_s": 899.9955494948625
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 48822.0,
+      "rate_per_s": 81.46131703369382
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 260864.0,
+      "rate_per_s": 435.26125530862123
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "qwen3-vl-8b_single_closed_8_20260710-012053",
+  "model": "Qwen/Qwen3-VL-8B-Instruct",
+  "model_label": "qwen3-vl-8b",
+  "server_info": {
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 39725,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.9,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 635600,
+    "worker_kv_cache_gb": 87.29,
+    "max_concurrency": 73.02
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "api_key": "EMPTY",
+    "tokenizer": "Qwen/Qwen3-VL-8B-Instruct",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 8,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "single",
+    "model_label": "qwen3-vl-8b",
+    "server_log": "results/server_qwen3-vl-8b_single.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 12.679464029846713
+}

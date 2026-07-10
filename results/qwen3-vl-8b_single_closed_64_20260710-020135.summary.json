@@ -1,0 +1,159 @@
+{
+  "config_label": "single",
+  "mode": "closed",
+  "concurrency": 64,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 288,
+  "requests_completed": 224,
+  "requests_failed": 0,
+  "total_output_tokens": 54912,
+  "request_throughput_rps": 0.37333333333333335,
+  "output_token_throughput_tps": 91.52,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 5.223964141565375,
+    "p90": 25.927579556242563,
+    "p95": 43.09302554794121,
+    "p99": 57.17485085295515,
+    "mean": 10.105784043950345
+  },
+  "itl_s": {
+    "p50": 0.25752470444422215,
+    "p90": 1.0814072067150846,
+    "p95": 1.1249901795526966,
+    "p99": 1.2031060884473845,
+    "mean": 0.5442066753953076
+  },
+  "mean_itl_s": {
+    "p50": 0.5303917125742816,
+    "p90": 0.611488740718467,
+    "p95": 0.6460547550314771,
+    "p99": 0.6785864249452783,
+    "mean": 0.5420173751113859
+  },
+  "e2e_s": {
+    "p50": 139.58302593254484,
+    "p90": 271.8671880761396,
+    "p95": 302.58101647041036,
+    "p99": 314.9760973255499,
+    "mean": 142.96998452987256
+  },
+  "energy": {
+    "mean_power_w": 67.05719416009397,
+    "energy_j": 40231.06184594919,
+    "energy_per_token_j": 0.7326460854813008,
+    "tokens_per_watt": 1.3648050913299912
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 4.0,
+      "mean": 60.65488215488215,
+      "max": 64.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 2.8367003367003365,
+      "max": 60.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.009691873930117834,
+      "mean": 0.38352587398504223,
+      "max": 0.4811952472057195
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 818176.0,
+      "rate_per_s": 1365.7390386324778
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 65148.0,
+      "rate_per_s": 108.74819951798716
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 8176.0,
+      "rate_per_s": 13.647775515120388
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "qwen3-vl-8b_single_closed_64_20260710-020135",
+  "model": "Qwen/Qwen3-VL-8B-Instruct",
+  "model_label": "qwen3-vl-8b",
+  "server_info": {
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 39725,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.9,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 635600,
+    "worker_kv_cache_gb": 87.29,
+    "max_concurrency": 73.02
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "api_key": "EMPTY",
+    "tokenizer": "Qwen/Qwen3-VL-8B-Instruct",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 64,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "single",
+    "model_label": "qwen3-vl-8b",
+    "server_log": "results/server_qwen3-vl-8b_single.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 71.07530790986493
+}
