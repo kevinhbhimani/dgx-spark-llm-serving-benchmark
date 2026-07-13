@@ -13,6 +13,11 @@
 #                   On Grace unified memory, GPU util shares the same pool as host
 #                   memory, so tp2/pp2 default lower to leave headroom for Ray's
 #                   node memory monitor (see README troubleshooting).
+#   HF_HUB_OFFLINE  1 (default) serves purely from the local HF cache. The worker
+#                   node (Hoedus) has no DNS to huggingface.co, so an online launch
+#                   burns minutes on doomed metadata retries before falling back to
+#                   cache. Set HF_HUB_OFFLINE=0 only to pull a not-yet-cached model
+#                   (predownload it first with scripts/predownload.sh).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
@@ -31,6 +36,14 @@ if [[ "$CONFIG" == "tp2" || "$CONFIG" == "pp2" ]]; then
   GPU_UTIL="${GPU_UTIL:-0.80}"
 else
   GPU_UTIL="${GPU_UTIL:-0.90}"
+fi
+
+# Serve from the local HF cache by default; the worker node cannot reach
+# huggingface.co, so online metadata lookups only add slow, failing retries.
+HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+hf_offline_env=()
+if [[ "$HF_HUB_OFFLINE" == "1" ]]; then
+  hf_offline_env=( -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 )
 fi
 
 common=( --host 0.0.0.0 --port "$PORT" --dtype "$DTYPE"
@@ -128,7 +141,7 @@ case "$CONFIG" in
     # reusing $VLLM_CONTAINER here is safe; clear any stale one first.
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     docker run --rm --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host \
-      "${run_env[@]}" -v "$HF_CACHE":/root/.cache/huggingface \
+      "${run_env[@]}" "${hf_offline_env[@]}" -v "$HF_CACHE":/root/.cache/huggingface \
       "$VLLM_IMAGE" \
       vllm serve "$MODEL" "${common[@]}" \
       --tensor-parallel-size 1 --pipeline-parallel-size 1
@@ -137,7 +150,7 @@ case "$CONFIG" in
     echo "[launch] dual node tensor parallel TP=2 PP=1 over Ray in $VLLM_CONTAINER"
     _require_ray
     _check_cluster_memory
-    docker exec "$VLLM_CONTAINER" \
+    docker exec "${hf_offline_env[@]}" "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \
       --tensor-parallel-size 2 --pipeline-parallel-size 1 \
       --distributed-executor-backend ray
@@ -146,7 +159,7 @@ case "$CONFIG" in
     echo "[launch] dual node pipeline parallel TP=1 PP=2 over Ray in $VLLM_CONTAINER"
     _require_ray
     _check_cluster_memory
-    docker exec "$VLLM_CONTAINER" \
+    docker exec "${hf_offline_env[@]}" "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \
       --tensor-parallel-size 1 --pipeline-parallel-size 2 \
       --distributed-executor-backend ray

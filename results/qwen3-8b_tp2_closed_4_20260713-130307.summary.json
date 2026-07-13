@@ -1,0 +1,159 @@
+{
+  "config_label": "tp2",
+  "mode": "closed",
+  "concurrency": 4,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 127,
+  "requests_completed": 123,
+  "requests_failed": 0,
+  "total_output_tokens": 33024,
+  "request_throughput_rps": 0.205,
+  "output_token_throughput_tps": 55.04,
+  "goodput_rps": 0.17666666666666667,
+  "goodput_itl2_rps": 0.17666666666666667,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 0.21105969208292663,
+    "p90": 3.619947673147544,
+    "p95": 3.7846789550734683,
+    "p99": 4.459952666433528,
+    "mean": 1.0644767671535775
+  },
+  "itl_s": {
+    "p50": 0.0605874159373343,
+    "p90": 0.06476905383169651,
+    "p95": 0.06631103297695518,
+    "p99": 0.13913644105196,
+    "mean": 0.06726123446887151
+  },
+  "mean_itl_s": {
+    "p50": 0.06328134488259607,
+    "p90": 0.08085084085170106,
+    "p95": 0.08339847195096142,
+    "p99": 0.09015176119784868,
+    "mean": 0.06693663642797315
+  },
+  "e2e_s": {
+    "p50": 16.301469940925017,
+    "p90": 32.53282051081769,
+    "p95": 41.70429873187095,
+    "p99": 42.6494298393745,
+    "mean": 19.056055382285948
+  },
+  "energy": {
+    "mean_power_w": 36.229319205740026,
+    "energy_j": 21736.29281388839,
+    "energy_per_token_j": 0.6581968511957482,
+    "tokens_per_watt": 1.5192115448661172
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 1.0,
+      "mean": 3.872268907563025,
+      "max": 4.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.01680672268907563,
+      "max": 1.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.00034594539187926543,
+      "mean": 0.014029770684395839,
+      "max": 0.023665227362999253
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 395264.0,
+      "rate_per_s": 659.8764743583021
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 33601.0,
+      "rate_per_s": 56.095443589381546
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 175872.0,
+      "rate_per_s": 293.61084059854505
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "qwen3-8b_tp2_closed_4_20260713-130307",
+  "model": "Qwen/Qwen3-8B",
+  "model_label": "qwen3-8b",
+  "server_info": {
+    "model": "Qwen/Qwen3-8B",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 78048,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.8,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 1248768,
+    "worker_kv_cache_gb": 86.64,
+    "max_concurrency": 143.47
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "Qwen/Qwen3-8B",
+    "api_key": "EMPTY",
+    "tokenizer": "Qwen/Qwen3-8B",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 4,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "tp2",
+    "model_label": "qwen3-8b",
+    "server_log": "results/server_qwen3-8b_tp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 10.202775436919183
+}

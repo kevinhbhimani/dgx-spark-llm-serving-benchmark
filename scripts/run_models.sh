@@ -26,7 +26,8 @@
 # mismatched header).
 #
 # Env: MODELS_YAML BASE_URL OUT_DIR POWER_BACKEND CONCURRENCIES CONFIG_YAML
-#      READY_TIMEOUT (seconds to wait for a model to come up, default 1200)
+#      READY_TIMEOUT (seconds to wait for a model to come up, default 1800;
+#      large models on tp2/pp2 can take >20 min to load weights + capture graphs)
 #      SKIP_DONE (1 behaves like --skip-done, default 0)
 #      PYTHON (interpreter for the benchmark and helpers, default python3).
 # Per-model tokenizer defaults to the model name unless configs/models.yaml
@@ -55,7 +56,7 @@ OUT_DIR="${OUT_DIR:-results}"
 POWER_BACKEND="${POWER_BACKEND:-}"
 CONFIG_YAML="${CONFIG_YAML:-configs/experiment.yaml}"
 CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
-READY_TIMEOUT="${READY_TIMEOUT:-1200}"
+READY_TIMEOUT="${READY_TIMEOUT:-1800}"
 PYTHON="${PYTHON:-python3}"
 
 mkdir -p "$OUT_DIR"
