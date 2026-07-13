@@ -64,6 +64,59 @@ _require_ray() {
   docker exec "$VLLM_CONTAINER" ray status
 }
 
+# vLLM refuses to start when any node's free memory is below GPU_UTIL x total
+# (on Grace unified memory, CUDA free tracks the host's MemFree). Check every
+# Ray node up front so the failure names the offending node, instead of
+# surfacing minutes later as an EngineCore traceback from a remote worker.
+_check_cluster_memory() {
+  echo "[launch] preflight: free memory on all Ray nodes vs GPU_UTIL=$GPU_UTIL"
+  if ! docker exec -i -e GPU_UTIL="$GPU_UTIL" "$VLLM_CONTAINER" python3 -u - <<'PY'
+import os, sys
+import ray
+
+util = float(os.environ["GPU_UTIL"])
+ray.init(address="auto", log_to_driver=False)
+
+def meminfo():
+    fields = {}
+    with open("/proc/meminfo") as f:
+        for line in f:
+            key, value = line.split(":", 1)
+            fields[key] = int(value.split()[0]) * 1024
+    return fields["MemFree"], fields["MemTotal"]
+
+low = []
+for node in ray.nodes():
+    if not node.get("Alive"):
+        continue
+    ip = node["NodeManagerAddress"]
+    probe = ray.remote(resources={f"node:{ip}": 0.001})(meminfo)
+    free, total = ray.get(probe.remote(), timeout=60)
+    need = util * total
+    ok = free >= need
+    print(f"[launch]   node {ip}: free {free / 2**30:.1f} of {total / 2**30:.1f} GiB, "
+          f"need {need / 2**30:.1f} GiB: {'ok' if ok else 'LOW'}")
+    if not ok:
+        low.append(ip)
+if low:
+    print(f"[launch] PREFLIGHT FAILED: low free memory on {', '.join(low)}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    cat >&2 <<'MSG'
+[launch] On the low node, find what is holding memory and free it:
+[launch]   free -g; ps aux --sort=-rss | head              # stale process?
+[launch]   sync; echo 3 | sudo tee /proc/sys/vm/drop_caches  # stale page cache
+[launch] If free stays low with no owning process and nvidia-smi shows no
+[launch] processes, the driver leaked unified memory from a killed CUDA
+[launch] process. Stop Ray there (scripts/start_ray.sh stop), then
+[launch]   sudo rmmod nvidia_uvm && sudo modprobe nvidia_uvm
+[launch] (or reboot the node), and restart Ray: scripts/start_ray.sh worker
+MSG
+    exit 1
+  fi
+}
+
 case "$CONFIG" in
   single)
     echo "[launch] single node TP=1 PP=1, standalone container"
@@ -83,6 +136,7 @@ case "$CONFIG" in
   tp2)
     echo "[launch] dual node tensor parallel TP=2 PP=1 over Ray in $VLLM_CONTAINER"
     _require_ray
+    _check_cluster_memory
     docker exec "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \
       --tensor-parallel-size 2 --pipeline-parallel-size 1 \
@@ -91,6 +145,7 @@ case "$CONFIG" in
   pp2)
     echo "[launch] dual node pipeline parallel TP=1 PP=2 over Ray in $VLLM_CONTAINER"
     _require_ray
+    _check_cluster_memory
     docker exec "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \
       --tensor-parallel-size 1 --pipeline-parallel-size 2 \

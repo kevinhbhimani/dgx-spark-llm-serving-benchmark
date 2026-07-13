@@ -371,6 +371,21 @@ CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_all.sh pp2
 scripts/start_ray.sh stop
 ```
 
+For `tp2` and `pp2` the launcher runs a preflight over the Ray cluster before
+starting `vllm serve`: it reads free memory on every node and fails fast if any
+node is below `GPU_UTIL x total`, which is the same bound vLLM enforces per
+worker at startup (on Grace unified memory, CUDA free memory tracks the host's
+`MemFree`). The preflight names the low node; without it the same condition
+surfaces minutes later as an opaque `EngineCore failed to start` traceback
+from a remote Ray worker. On the low node, check for a stale process
+(`ps aux --sort=-rss`) and stale page cache (`DROP_CACHES=1`, above). If free
+memory stays tens of GiB short with no owning process, `nvidia-smi` lists no
+processes, and `buff/cache` is small, the NVIDIA driver has leaked unified
+memory from a killed CUDA process — dropping caches will not recover it. Stop
+the Ray container (`scripts/start_ray.sh stop`), reload the UVM module with
+`sudo rmmod nvidia_uvm && sudo modprobe nvidia_uvm` (or reboot the node), then
+restart Ray.
+
 Run the interconnect microbenchmark from the head node; the log is written to
 `OUT_DIR` (default `results/`) beside the serving results:
 

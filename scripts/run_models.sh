@@ -196,8 +196,16 @@ FAILURES=0
 for entry in "${ENTRIES[@]}"; do
   IFS='|' read -r label name maxlen gpu_util quant tok trust <<<"$entry"
   if ! run_one "$label" "$name" "$maxlen" "$gpu_util" "$quant" "$tok" "$trust"; then
-    echo "[models] $label did not complete; continuing" >&2
     FAILURES=$((FAILURES + 1))
+    # A failed launcher preflight means a node is short on memory; every later
+    # model would fail the same way, so stop instead of cycling through them.
+    if grep -q "PREFLIGHT FAILED" "$OUT_DIR/server_${label}_${CONFIG}.log" 2>/dev/null; then
+      echo "[models] cluster memory preflight failed for $label; aborting the" \
+           "sweep. Free memory on the low node (see the log), then rerun" \
+           "with --skip-done." >&2
+      exit 1
+    fi
+    echo "[models] $label did not complete; continuing" >&2
   fi
 done
 
