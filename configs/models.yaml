@@ -77,7 +77,14 @@ models:
     label: llama3.3-70b-nvfp4
     configs: [single, tp2, pp2]
     max_model_len: 8704
-    gpu_util: 0.90
+    # 0.90 demands util*total = 107.7 GiB MemFree on EVERY node, which the
+    # two-node preflight can rarely satisfy. 0.85 was measured to put the head
+    # node at 113.67/119.61 GiB = 95.03% on the first request, 40 MB over
+    # Ray's 95% kill threshold (the compiled-DAG spike killed the server).
+    # Single already ran and was recorded at 0.90; keep it. Two-node runs use
+    # 0.80: NVFP4 weights are ~20 GiB per node under tp2/pp2, so the KV budget
+    # is still far beyond the 8704-token workload.
+    gpu_util: {single: 0.90, tp2: 0.80, pp2: 0.80}
 
   # NVIDIA-optimized sparse model. Pre-quantized NVFP4 checkpoint: the config
   # declares its method as modelopt_fp4, so passing --quantization nvfp4 aborts

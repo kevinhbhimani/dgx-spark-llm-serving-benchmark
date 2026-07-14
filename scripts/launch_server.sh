@@ -78,9 +78,14 @@ _require_ray() {
 }
 
 # vLLM refuses to start when any node's free memory is below GPU_UTIL x total
-# (on Grace unified memory, CUDA free tracks the host's MemFree). Check every
-# Ray node up front so the failure names the offending node, instead of
-# surfacing minutes later as an EngineCore traceback from a remote worker.
+# (on Grace unified memory, CUDA free tracks the host's MemFree, measured ~0.5
+# GiB apart). Check every Ray node up front so the failure names the offending
+# node, instead of surfacing minutes later as an EngineCore traceback from a
+# remote worker. When a node is only low because of page cache (MemAvailable
+# high, MemFree low — the false-OOM mode README troubleshooting describes),
+# reclaim it automatically: /proc/sys/vm/drop_caches is read-only inside the
+# container and the worker has no SSH, so a pinned Ray task allocates and
+# touches anonymous memory until the kernel evicts the cache, then releases it.
 _check_cluster_memory() {
   echo "[launch] preflight: free memory on all Ray nodes vs GPU_UTIL=$GPU_UTIL"
   if ! docker exec -i -e GPU_UTIL="$GPU_UTIL" "$VLLM_CONTAINER" python3 -u - <<'PY'
@@ -96,18 +101,45 @@ def meminfo():
         for line in f:
             key, value = line.split(":", 1)
             fields[key] = int(value.split()[0]) * 1024
-    return fields["MemFree"], fields["MemTotal"]
+    return fields["MemFree"], fields["MemAvailable"], fields["MemTotal"]
+
+def reclaim_cache(need):
+    # Grow anonymous memory until MemFree plus what we hold covers `need`,
+    # then free it; the kernel evicts clean page cache to feed the growth.
+    # The 8 GiB reserve leaves room for other tenants of a shared node and
+    # keeps usage under Ray's memory monitor kill threshold (95%).
+    import gc
+    free, avail, total = meminfo()
+    cap = avail - (8 << 30)
+    goal = need + (2 << 30)
+    hold, held, chunk = [], 0, 1 << 30
+    while held < cap and free + held < goal:
+        buf = bytearray(chunk)
+        for i in range(0, chunk, 4096):  # touch every page to force commit
+            buf[i] = 1
+        hold.append(buf)
+        held += chunk
+        free, avail, total = meminfo()
+    del hold
+    gc.collect()
 
 low = []
 for node in ray.nodes():
     if not node.get("Alive"):
         continue
     ip = node["NodeManagerAddress"]
-    probe = ray.remote(resources={f"node:{ip}": 0.001})(meminfo)
-    free, total = ray.get(probe.remote(), timeout=60)
+    pin = {"resources": {f"node:{ip}": 0.001}, "num_cpus": 0}
+    probe = ray.remote(**pin)(meminfo)
+    free, avail, total = ray.get(probe.remote(), timeout=60)
     need = util * total
+    if free < need <= avail - (2 << 30):
+        print(f"[launch]   node {ip}: free {free / 2**30:.1f} GiB but available "
+              f"{avail / 2**30:.1f} GiB is page cache; reclaiming")
+        ray.get(ray.remote(**pin)(reclaim_cache).remote(int(need)), timeout=600)
+        free, avail, total = ray.get(probe.remote(), timeout=60)
     ok = free >= need
-    print(f"[launch]   node {ip}: free {free / 2**30:.1f} of {total / 2**30:.1f} GiB, "
+    print(f"[launch]   node {ip}: free {free / 2**30:.1f} (available "
+          f"{avail / 2**30:.1f}) of {total / 2**30:.1f} GiB, "
           f"need {need / 2**30:.1f} GiB: {'ok' if ok else 'LOW'}")
     if not ok:
         low.append(ip)
@@ -117,9 +149,9 @@ if low:
 PY
   then
     cat >&2 <<'MSG'
-[launch] On the low node, find what is holding memory and free it:
-[launch]   free -g; ps aux --sort=-rss | head              # stale process?
-[launch]   sync; echo 3 | sudo tee /proc/sys/vm/drop_caches  # stale page cache
+[launch] Stale page cache is reclaimed automatically, so a LOW node means the
+[launch] memory is genuinely held. On the low node, find the owner:
+[launch]   free -g; ps aux --sort=-rss | head              # live process?
 [launch] If free stays low with no owning process and nvidia-smi shows no
 [launch] processes, the driver leaked unified memory from a killed CUDA
 [launch] process. Stop Ray there (scripts/start_ray.sh stop), then

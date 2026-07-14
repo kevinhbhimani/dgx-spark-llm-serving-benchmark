@@ -7,6 +7,9 @@ pipe-delimited line per selected model:
     label|name|max_model_len|gpu_util|quant|tokenizer|trust_remote_code
 
 The trust_remote_code field is emitted as "1" when truthy, else empty.
+gpu_util may be a scalar (applies to every config) or a mapping keyed by
+config, e.g. {single: 0.90, tp2: 0.85}; a config absent from the mapping
+emits empty and falls back to launch_server.sh's per-config default.
 
 Empty fields are printed as empty strings, so the caller can decide defaults.
 
@@ -53,10 +56,13 @@ def main() -> int:
             sys.stderr.write(f"{path}: duplicate label '{label}'\n")
             return 2
         seen_labels.add(label)
+        gpu_util = m.get("gpu_util", "")
+        if isinstance(gpu_util, dict):
+            gpu_util = gpu_util.get(want, "")
         # a pipe in any field would corrupt the shell split; reject early
         fields = [label, name,
                   str(m.get("max_model_len", "") or ""),
-                  str(m.get("gpu_util", "") or ""),
+                  str(gpu_util or ""),
                   str(m.get("quant", "") or ""),
                   str(m.get("tokenizer", "") or ""),
                   "1" if m.get("trust_remote_code") else ""]

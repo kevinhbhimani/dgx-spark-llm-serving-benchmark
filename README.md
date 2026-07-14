@@ -405,6 +405,9 @@ with `scripts/run_models.sh`. Each entry names a Hugging Face model, a short
 (`single`, `tp2`, `pp2`), and optional `max_model_len`, `gpu_util`, `quant`,
 `tokenizer`, and `trust_remote_code`. `max_model_len`, `gpu_util`, `quant`,
 `tokenizer`, and `trust_remote_code` are passed to the launcher for that model;
+`gpu_util` is either a scalar or a per-config mapping such as
+`{single: 0.90, tp2: 0.85}` (a config missing from the mapping uses the
+launcher default, 0.90 single / 0.80 dual);
 the tokenizer is also passed to the benchmark client so exact token-id prompts
 match the served tokenizer. A model whose weights plus KV cache do not fit on
 one GB10 must omit `single` and use the dual-node configs, which pool two nodes
@@ -425,6 +428,11 @@ CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh single
 # only the vLLM serve process between models and leaves the Ray cluster up.
 DROP_CACHES=1 scripts/start_ray.sh head        # on Diya
 DROP_CACHES=1 scripts/start_ray.sh worker      # on Hoedus
+# Each node has its OWN HF cache, and the worker can neither reach
+# huggingface.co nor be SSH'd into. Mirror the weights to it over the
+# cluster network first, or the launch dies with HFValidationError from
+# the remote Ray worker. Idempotent; repos already on the worker are skipped.
+scripts/mirror_worker_cache.sh all             # on Diya, after predownload.sh
 scripts/run_models.sh tp2
 scripts/run_models.sh pp2
 scripts/start_ray.sh stop                      # on each node when finished
@@ -748,6 +756,17 @@ offline; a local `nvidia_smi` sampler only sees the local GPU.
 - Dual-node launch says Ray is not active: run `scripts/start_ray.sh head` on
   the head node and `scripts/start_ray.sh worker` on the worker node, then check
   `docker exec vllm-spark ray status`.
+- `tp2`/`pp2` launch dies with `HFValidationError: Repo id must be in the form
+  ...` quoting a `/root/.cache/huggingface/...` path, raised by a
+  `RayWorkerWrapper` at the worker's IP: the model's weights are not in the
+  worker node's HF cache (each node has its own; `predownload.sh` only warms
+  the node it runs on). Run `scripts/mirror_worker_cache.sh tp2|pp2|all` from
+  the head and relaunch.
+- `PREFLIGHT FAILED: low free memory` before a `tp2`/`pp2` launch: the
+  preflight already reclaims stale page cache automatically, so a node
+  reported LOW is genuinely out of memory — usually another process on that
+  shared node (check `ps aux --sort=-rss`), or a `gpu_util` too high for the
+  node's baseline usage (`util x 119.6 GiB` must fit in MemFree).
 - `tp2`/`pp2` launch fails with `ray.exceptions.OutOfMemoryError: Task was
   killed due to the node running low on memory` naming one node's IP: Ray's
   node memory monitor killed a worker, almost always stale page cache on
