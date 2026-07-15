@@ -52,12 +52,22 @@ CONFIG_STYLE = {
 _FALLBACK_COLORS = ["#CC79A7", "#E69F00", "#56B4E9", "#F0E442", "#000000"]
 _FALLBACK_MARKERS = ["D", "v", "P", "X", "*"]
 
-# Configs whose energy/power is sampled on the head node only. On the two-node
-# Spark cluster a local nvidia_smi sampler sees one GB10, so per-token energy for
-# these is a lower bound (real cluster draw is higher) and tokens/W an upper
-# bound. The energy figure and table annotate this instead of silently comparing
-# one-node dual numbers against a true single-node number.
+# Dual-node configs. When their rows record power_nodes < 2 (or predate the
+# power_nodes column), the local nvidia_smi sampler saw one GB10 only, so
+# per-token energy is a lower bound (real cluster draw is higher) and tokens/W
+# an upper bound. The energy figure and table annotate this instead of silently
+# comparing one-node dual numbers against a true single-node number. Rows with
+# power_nodes == 2 carry both nodes' power and need no caveat.
 DUAL_NODE_CONFIGS = {"tp2", "pp2"}
+
+
+def head_only_power(cfg: str, g: pd.DataFrame) -> bool:
+    """True when a dual-node series' energy columns cover the head node only."""
+    if cfg not in DUAL_NODE_CONFIGS:
+        return False
+    if "power_nodes" not in g.columns:
+        return True
+    return not (g["power_nodes"] >= 2).all()
 
 COL_W = 3.5      # one IEEE column, inches
 TEXT_W = 7.0     # full text width, inches
@@ -95,9 +105,11 @@ def set_rc(dpi: int, serif: bool) -> None:
 
 # ---- data helpers ------------------------------------------------------------
 NUMERIC_COLS = [
-    "concurrency", "target_qps", "measure_s",
+    "concurrency", "target_qps", "measure_s", "warmup_s",
     "requests_started", "requests_completed", "requests_failed",
+    "requests_completed_in_window",
     "total_output_tokens", "req_thru_rps", "tok_thru_tps",
+    "tok_thru_completed_tps",
     "goodput_rps", "goodput_itl2_rps",
     "ttft_p50", "ttft_p99", "itl_p50", "itl_p99", "mean_itl_p50",
     "e2e_p50", "e2e_p99",
@@ -105,11 +117,23 @@ NUMERIC_COLS = [
     "requests_running_mean", "requests_running_max",
     "requests_waiting_mean", "requests_waiting_max",
     "server_prompt_tokens", "server_generation_tokens",
-    "server_prompt_tokens_cached", "server_gen_tps", "num_preemptions",
+    "server_prompt_tokens_cached", "server_gen_tps", "server_prompt_tps",
+    "num_preemptions",
     "max_model_len", "gpu_memory_utilization", "block_size", "gpu_blocks",
     "total_kv_tokens", "weight_gb", "kv_cache_gb", "worker_weight_gb",
     "worker_kv_cache_gb", "max_concurrency",
-    "mean_power_w", "energy_per_token_j", "tokens_per_watt",
+    "mean_power_w", "mean_power_w_head", "mean_power_w_worker", "power_nodes",
+    "energy_per_token_j", "tokens_per_watt",
+]
+
+# Columns whose run-to-run spread across REPEATS is kept when repeats are
+# collapsed: the mean lands in the original column and min/max in
+# <col>__lo/<col>__hi, which draw_band() shades behind the mean line.
+BAND_COLS = [
+    "tok_thru_tps", "tok_thru_completed_tps", "server_gen_tps",
+    "req_thru_rps", "goodput_rps", "goodput_itl2_rps",
+    "ttft_p50", "ttft_p99", "itl_p50", "itl_p99", "e2e_p50",
+    "energy_per_token_j", "tokens_per_watt", "mean_power_w",
 ]
 
 
@@ -211,43 +235,66 @@ def group(df: pd.DataFrame, cfg: str):
     return g.sort_values(load_col), load_col, mode
 
 
-def dedupe_index(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop duplicate (config, load) rows, keeping the better-supported run.
+def collapse_repeats(df: pd.DataFrame) -> pd.DataFrame:
+    """Average repeated (model, config, load) rows into one, keeping spread.
 
-    If the same load value was measured more than once (e.g. a sweep was
-    rerun), plotting all of them draws a line that zigzags through two
-    contradictory points at the same x value. Keep the run with more
-    completed requests, since its percentiles rest on a larger sample; ties
-    go to the chronologically later run. Dropped runs are reported so the
-    discrepancy can be investigated in index.csv.
+    A sweep run with REPEATS>1 records several independent copies of each
+    point. Plotting them raw draws a line that zigzags through contradictory
+    points at the same x value; collapsing to the mean gives one point per
+    load, and the min/max across copies is kept for BAND_COLS as
+    <col>__lo/<col>__hi so the figures can shade run-to-run spread behind the
+    mean line. A copy with zero completed requests (a dead-server row) is
+    dropped rather than averaged when a healthy copy of the same point exists.
+    Non-numeric fields keep the first copy's value; n_repeats records how many
+    copies back each point.
     """
     parts = []
+    numeric = [c for c in NUMERIC_COLS if c in df.columns]
     for model, msub in iter_model_frames(df):
         pfx = f"{model} " if model else ""
         for cfg in configs_present(msub):
             g = msub[msub["config_label"] == cfg].copy()   # chronological order
             mode = str(g["mode"].iloc[0]) if "mode" in g.columns and len(g) else "closed"
             load_col = load_col_for(g, mode)
-            if "requests_completed" in g.columns:
-                # stable sort: ties keep chronological order, so keep="last" below
-                # then prefers the later run among equally-supported duplicates
-                g = g.sort_values("requests_completed", kind="stable", na_position="first")
-            dup_mask = g.duplicated(subset=[load_col], keep="last")
-            if dup_mask.any():
-                kept = g[~dup_mask]
-                for _, row in g[dup_mask].iterrows():
-                    match = kept[kept[load_col] == row[load_col]]
-                    winner = match.iloc[0] if len(match) else None
-                    winner_tag = winner.get("run_tag", "?") if winner is not None else "?"
-                    n_dropped = row.get("requests_completed", "?")
-                    n_winner = winner.get("requests_completed", "?") if winner is not None else "?"
-                    print(f"  note: {pfx}{cfg} {load_col}={row[load_col]:g}: run "
-                          f"{row.get('run_tag', '?')} (n={n_dropped}) superseded by "
-                          f"{winner_tag} (n={n_winner}); dropped from the figures "
-                          f"(compare both in index.csv)")
-                g = kept
-            parts.append(g)
+            if not g.duplicated(subset=[load_col]).any():
+                g["n_repeats"] = 1
+                parts.append(g)
+                continue
+            rows = []
+            for load, grp in g.groupby(load_col, sort=False, dropna=False):
+                if "requests_completed" in grp.columns and len(grp) > 1:
+                    healthy = grp[grp["requests_completed"] > 0]
+                    if len(healthy) and len(healthy) < len(grp):
+                        print(f"  note: {pfx}{cfg} {load_col}={load:g}: dropped "
+                              f"{len(grp) - len(healthy)} zero-completion "
+                              f"cop(ies) before averaging")
+                        grp = healthy
+                row = grp.iloc[0].copy()
+                for c in numeric:
+                    row[c] = grp[c].mean()
+                for c in BAND_COLS:
+                    if c in grp.columns and grp[c].notna().any():
+                        row[f"{c}__lo"] = grp[c].min()
+                        row[f"{c}__hi"] = grp[c].max()
+                row["n_repeats"] = len(grp)
+                if len(grp) > 1:
+                    print(f"  note: {pfx}{cfg} {load_col}={load:g}: averaged "
+                          f"{len(grp)} repeats (spread shaded in figures)")
+                rows.append(row)
+            parts.append(pd.DataFrame(rows))
     return pd.concat(parts) if parts else df
+
+
+def draw_band(ax, g, x, ycol, color, scale: float = 1.0) -> None:
+    """Shade the min-max spread across repeats behind a mean line, if present."""
+    lo, hi = f"{ycol}__lo", f"{ycol}__hi"
+    if lo not in g.columns or hi not in g.columns:
+        return
+    lo_v, hi_v = g[lo] * scale, g[hi] * scale
+    if not (lo_v.notna() & hi_v.notna()).any():
+        return
+    x = x if isinstance(x, pd.Series) else pd.Series(x, index=g.index)
+    ax.fill_between(x, lo_v, hi_v, color=color, alpha=0.15, linewidth=0)
 
 
 def has(df: pd.DataFrame, cols: list[str]) -> bool:

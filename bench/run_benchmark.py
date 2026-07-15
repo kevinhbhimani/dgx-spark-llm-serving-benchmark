@@ -12,7 +12,7 @@ import urllib.request
 from .config import ExperimentConfig
 from .workload import Workload
 from .runner import run_phase
-from .monitors import PowerSampler, VLLMMetricsScraper
+from .monitors import PowerSampler, VLLMMetricsScraper, WorkerPowerSampler
 from .metrics import aggregate
 from . import server_info
 
@@ -26,12 +26,15 @@ INDEX_FIELDS = [
     "concurrency",
     "target_qps",
     "measure_s",
+    "warmup_s",
     "requests_started",
     "requests_completed",
     "requests_failed",
+    "requests_completed_in_window",
     "total_output_tokens",
     "req_thru_rps",
     "tok_thru_tps",
+    "tok_thru_completed_tps",
     "goodput_rps",
     "goodput_itl2_rps",
     "ttft_p50",
@@ -52,6 +55,7 @@ INDEX_FIELDS = [
     "server_generation_tokens",
     "server_prompt_tokens_cached",
     "server_gen_tps",
+    "server_prompt_tps",
     "num_preemptions",
     # served-model capacity and launch configuration (constant per server)
     "max_model_len",
@@ -65,8 +69,13 @@ INDEX_FIELDS = [
     "worker_weight_gb",
     "worker_kv_cache_gb",
     "max_concurrency",
-    # energy
+    # energy. mean_power_w totals every sampled node; the head/worker split and
+    # power_nodes make dual-node rows self-describing (power_nodes=1 on a tp2/pp2
+    # row means the worker sampler failed and the energy is head-only again).
     "mean_power_w",
+    "mean_power_w_head",
+    "mean_power_w_worker",
+    "power_nodes",
     "energy_per_token_j",
     "tokens_per_watt",
 ]
@@ -158,6 +167,7 @@ def _append_index(out_dir, s):
         return vllm.get(name, {}).get(stat)
 
     gen_delta = vcounter("vllm:generation_tokens_total")
+    prompt_delta = vcounter("vllm:prompt_tokens_total")
     measure_s = s["measure_s"]
     row = {
         "run_tag": s["run_tag"],
@@ -168,12 +178,15 @@ def _append_index(out_dir, s):
         "concurrency": s["concurrency"],
         "target_qps": s["target_qps"],
         "measure_s": measure_s,
+        "warmup_s": s.get("warmup_s"),
         "requests_started": s["requests_started"],
         "requests_completed": s["requests_completed"],
         "requests_failed": s["requests_failed"],
+        "requests_completed_in_window": s.get("requests_completed_in_window"),
         "total_output_tokens": s["total_output_tokens"],
         "req_thru_rps": s["request_throughput_rps"],
         "tok_thru_tps": s["output_token_throughput_tps"],
+        "tok_thru_completed_tps": s.get("completed_token_throughput_tps"),
         "goodput_rps": s["goodput_rps"],
         "goodput_itl2_rps": s["goodput_itl2_rps"],
         "ttft_p50": s["ttft_s"]["p50"],
@@ -194,6 +207,8 @@ def _append_index(out_dir, s):
         "server_prompt_tokens_cached": vcounter("vllm:prompt_tokens_cached_total"),
         "server_gen_tps": (gen_delta / measure_s)
         if (gen_delta is not None and measure_s) else None,
+        "server_prompt_tps": (prompt_delta / measure_s)
+        if (prompt_delta is not None and measure_s) else None,
         "num_preemptions": vcounter("vllm:num_preemptions_total"),
         "max_model_len": info.get("max_model_len"),
         "kv_cache_dtype": info.get("kv_cache_dtype"),
@@ -207,6 +222,9 @@ def _append_index(out_dir, s):
         "worker_kv_cache_gb": info.get("worker_kv_cache_gb"),
         "max_concurrency": info.get("max_concurrency"),
         "mean_power_w": energy.get("mean_power_w"),
+        "mean_power_w_head": energy.get("mean_power_w_head"),
+        "mean_power_w_worker": energy.get("mean_power_w_worker"),
+        "power_nodes": energy.get("power_nodes"),
         "energy_per_token_j": energy.get("energy_per_token_j"),
         "tokens_per_watt": energy.get("tokens_per_watt"),
     }
@@ -259,10 +277,17 @@ def main():
     ap.add_argument("--qps", type=float)
     ap.add_argument("--measure-s", type=float)
     ap.add_argument("--warmup-s", type=float)
+    ap.add_argument("--cooldown-s", type=float)
     ap.add_argument("--base-url")
     ap.add_argument("--out-dir")
     ap.add_argument("--power-backend",
                     choices=["none", "nvidia_smi", "sysfs", "tegrastats"])
+    ap.add_argument("--worker-power-container",
+                    help="docker container holding the Ray cluster; with "
+                    "--worker-power-node-ip, samples the worker node's GPU "
+                    "power so dual-node energy covers both nodes")
+    ap.add_argument("--worker-power-node-ip",
+                    help="Ray node IP of the worker to sample (e.g. 10.10.10.2)")
     args = ap.parse_args()
 
     cfg = ExperimentConfig.from_yaml(args.config) if args.config else ExperimentConfig()
@@ -284,12 +309,18 @@ def main():
         cfg.measure_s = args.measure_s
     if args.warmup_s is not None:
         cfg.warmup_s = args.warmup_s
+    if args.cooldown_s is not None:
+        cfg.cooldown_s = args.cooldown_s
     if args.base_url:
         cfg.base_url = args.base_url
     if args.out_dir:
         cfg.out_dir = args.out_dir
     if args.power_backend:
         cfg.power_backend = args.power_backend
+    if args.worker_power_container:
+        cfg.worker_power_container = args.worker_power_container
+    if args.worker_power_node_ip:
+        cfg.worker_power_node_ip = args.worker_power_node_ip
     if args.model_label is not None:
         cfg.model_label = args.model_label
     if args.server_log is not None:
@@ -322,27 +353,49 @@ def main():
     print(f"[bench] model={cfg.model} config={cfg.config_label} "
           f"mode={cfg.mode} point={point}")
 
-    if cfg.warmup_s > 0:
-        print(f"[bench] warmup {cfg.warmup_s}s")
-        asyncio.run(run_phase(cfg, workload, cfg.warmup_s))
-
     power = PowerSampler(cfg.power_backend, cfg.power_interval_ms,
                          cfg.power_sysfs_path, cfg.power_rails)
+    wpower = None
+    if (cfg.power_backend != "none" and cfg.worker_power_container
+            and cfg.worker_power_node_ip):
+        wpower = WorkerPowerSampler(cfg.worker_power_container,
+                                    cfg.worker_power_node_ip)
     vmet = VLLMMetricsScraper(cfg.base_url) if cfg.scrape_vllm_metrics else None
     power.start()
+    if wpower:
+        wpower.start()
     if vmet:
         vmet.start()
         # Seed a baseline before window_start; the background thread interval is
         # one second, which is longer than some smoke-test windows.
         vmet.scrape_once()
 
-    print(f"[bench] measure {cfg.measure_s}s")
-    window_start = time.perf_counter()
-    records = asyncio.run(run_phase(cfg, workload, cfg.measure_s))
-    logical_window_end = window_start + cfg.measure_s
+    # One continuous phase. A separate warmup loop drains completely before the
+    # measurement starts, so the window used to open on an idle server hit by a
+    # thundering herd of cold prefills; here load is held through warmup ->
+    # measure -> cooldown and the aggregation slices the middle window out.
+    # The cooldown keeps offered load up while requests started near the end of
+    # the window finish, so their latency is not flattered by a draining server.
+    total_s = cfg.warmup_s + cfg.measure_s + cfg.cooldown_s
+    print(f"[bench] continuous phase: warmup {cfg.warmup_s:g}s + "
+          f"measure {cfg.measure_s:g}s + cooldown {cfg.cooldown_s:g}s "
+          f"= {total_s:g}s, plus drain")
+    t0 = time.perf_counter()
+    window_start = t0 + cfg.warmup_s
+    window_end = window_start + cfg.measure_s
+    window_start_unix = time.time() + cfg.warmup_s
+    records = asyncio.run(run_phase(cfg, workload, total_s))
     actual_end = time.perf_counter()
 
     power.stop()
+    if wpower:
+        wpower.stop()
+        if wpower.sample_count() == 0:
+            print("[bench] WARNING: worker power sampler returned no samples; "
+                  "this row's energy covers the head node only "
+                  "(power_nodes=1). Check that Ray is up in "
+                  f"{cfg.worker_power_container} and node "
+                  f"{cfg.worker_power_node_ip} is alive.")
     if vmet:
         vmet.stop()
 
@@ -352,14 +405,20 @@ def main():
                                compute_from_hf=cfg.collect_hf_metadata,
                                trust_remote_code=cfg.trust_remote_code)
 
-    summary = aggregate(records, cfg, window_start, logical_window_end,
-                        power if cfg.power_backend != "none" else None, vmet)
+    summary = aggregate(records, cfg, window_start, window_end,
+                        power if cfg.power_backend != "none" else None, vmet,
+                        worker_power=wpower)
     summary["run_tag"] = tag
     summary["model"] = cfg.model
     summary["model_label"] = cfg.model_label
+    summary["warmup_s"] = cfg.warmup_s
+    summary["cooldown_s"] = cfg.cooldown_s
+    # Wall-clock anchor for the perf_counter window bounds, so raw.jsonl can be
+    # re-aggregated post hoc and cross-referenced with server logs.
+    summary["window_start_unix"] = window_start_unix
     summary["server_info"] = info
     summary["config"] = cfg.to_dict()
-    summary["drain_s"] = max(0.0, actual_end - logical_window_end)
+    summary["drain_s"] = max(0.0, actual_end - (t0 + total_s))
     # NaN -> null for the files; the console print below keeps the raw values.
     safe_summary = _json_safe(summary)
 

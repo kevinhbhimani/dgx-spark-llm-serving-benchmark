@@ -18,17 +18,24 @@ mode: "closed"            # closed for fixed concurrency, open for Poisson arriv
 concurrency: 16
 qps: 4.0
 max_inflight: 512
-# This workload is long-context: at high concurrency a single request's e2e is
-# tens to hundreds of seconds, so a short warmup opens the measurement window
-# mid-transient (concurrency ramped but nothing completed, KV still filling),
-# which biases the completed-in-window aggregates toward prefill. Warm long
-# enough for requests_running and KV to plateau before measuring.
-warmup_s: 120.0
-measure_s: 600.0
+# Warmup, measure, and cooldown run as ONE continuous phase; the aggregation
+# slices [warmup, warmup+measure) out of it, so load is never dropped around
+# the window boundaries. Sizing rationale for this long-context workload:
+#   warmup_s   >= the worst single-request lifetime observed at c=128 on the
+#                 slowest dense model (~550s), so the window opens with a
+#                 steady running/queue mix rather than mid first-wave;
+#   measure_s  ~2x that lifetime; with token-in-window accounting the rate
+#                 converges quickly once the composition is steady;
+#   cooldown_s keeps offered load up while requests started near the window's
+#                 end finish, so their latency is measured under load, not on
+#                 a draining server (>= ~p50 e2e at the heaviest point).
+warmup_s: 600.0
+measure_s: 1200.0
+cooldown_s: 300.0
 # Must comfortably exceed the worst-case e2e (queueing + full stream) at the
 # highest concurrency in the sweep, or slow-but-successful requests are
-# recorded as timeout failures. Keep it well above measure_s.
-request_timeout_s: 1800.0
+# recorded as timeout failures.
+request_timeout_s: 3600.0
 
 # service level objective used for goodput. Two ITL tiers are scored against the
 # same TTFT bound: itl_slo_s is the strict interactive target (10 tok/s/stream),

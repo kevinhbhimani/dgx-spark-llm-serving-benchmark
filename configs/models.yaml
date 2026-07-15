@@ -13,8 +13,12 @@
 #   configs       serving configs to benchmark: any of [single, tp2, pp2].
 #   max_model_len passed to vLLM --max-model-len and used to size the workload;
 #                 must be >= the largest input_len + output_len in the workload.
-#   gpu_util      optional --gpu-memory-utilization override (else the launcher
-#                 default: 0.90 single, 0.80 tp2/pp2 on Grace unified memory).
+#   gpu_util      optional --gpu-memory-utilization override (launcher default
+#                 0.80). Keep it IDENTICAL across a model's configs: the
+#                 single-vs-tp2-vs-pp2 comparison is the paper's axis, and a
+#                 different KV budget per config confounds exactly the
+#                 high-concurrency behavior being compared. The old matrix
+#                 mixed 0.90 single / 0.80 dual for several models.
 #   quant         optional --quantization for on-the-fly quantization of an
 #                 unquantized checkpoint (e.g. fp8). Leave unset for checkpoints
 #                 that are already quantized (NVFP4/ModelOpt): vLLM auto-detects
@@ -29,15 +33,22 @@
 # memory) over the ConnectX link. Weight footprint ~= params * dtype_bytes; a
 # 70B model in bf16 (~140 GB) exceeds one 128 GB node and is dual-only.
 #
+# tp2/pp2 prerequisite: the worker node (Hoedus) serves from its LOCAL HF cache
+# and has no DNS to huggingface.co. Before a dual-node sweep, warm the head with
+# scripts/predownload.sh and mirror to the worker with
+# scripts/mirror_worker_cache.sh, or every model missing there dies at launch.
+#
 # This matrix keeps the paper/runtime focused: neutral open baselines plus
-# NVIDIA/Nemotron optimized models for the hardware-specific story. The default
-# workload's largest bucket is 8192 input + 512 output => max_model_len 8704.
+# NVIDIA/Nemotron optimized models for the hardware-specific story. Every model
+# that can run pp2 lists it, so the TP-vs-PP comparison is a claim across model
+# classes rather than an anecdote from one or two models. The default workload's
+# largest bucket is 8192 input + 512 output => max_model_len 8704.
 
 models:
   # Baseline dense 8B.
   - name: Qwen/Qwen3-8B
     label: qwen3-8b
-    configs: [single, tp2]
+    configs: [single, tp2, pp2]
     max_model_len: 8704
 
   # Dense 32B reference.
@@ -45,14 +56,12 @@ models:
     label: qwen3-32b
     configs: [single, tp2, pp2]
     max_model_len: 8704
-    gpu_util: 0.85
 
   # BF16 MoE counterpart to Qwen3-32B.
   - name: Qwen/Qwen3-30B-A3B
     label: qwen3-30b-a3b
-    configs: [single, tp2]
+    configs: [single, tp2, pp2]
     max_model_len: 8704
-    gpu_util: 0.85
 
   # Large dense model.
   # BF16 exceeds a single GB10 (~140 GB weights), so benchmark only on two nodes.
@@ -61,13 +70,13 @@ models:
     configs: [tp2, pp2]
     max_model_len: 8704
 
-  # Same model in FP8 (fits on one GB10).
+  # Same model in FP8 (fits on one GB10). Completes the bf16/fp8/nvfp4
+  # quantization ladder on the same weights.
   - name: meta-llama/Llama-3.3-70B-Instruct
     label: llama3.3-70b-fp8
     configs: [single, tp2, pp2]
     max_model_len: 8704
     quant: fp8
-    gpu_util: 0.85
 
   # Same model in NVFP4 (comfortably fits on one GB10). Uses NVIDIA's
   # pre-quantized ModelOpt checkpoint (ungated): vLLM cannot quantize to NVFP4
@@ -77,66 +86,51 @@ models:
     label: llama3.3-70b-nvfp4
     configs: [single, tp2, pp2]
     max_model_len: 8704
-    # 0.90 demands util*total = 107.7 GiB MemFree on EVERY node, which the
-    # two-node preflight can rarely satisfy. 0.85 was measured to put the head
-    # node at 113.67/119.61 GiB = 95.03% on the first request, 40 MB over
-    # Ray's 95% kill threshold (the compiled-DAG spike killed the server).
-    # Single already ran and was recorded at 0.90; keep it. Two-node runs use
-    # 0.80: NVFP4 weights are ~20 GiB per node under tp2/pp2, so the KV budget
-    # is still far beyond the 8704-token workload.
-    gpu_util: {single: 0.90, tp2: 0.80, pp2: 0.80}
 
   # NVIDIA-optimized sparse model. Pre-quantized NVFP4 checkpoint: the config
   # declares its method as modelopt_fp4, so passing --quantization nvfp4 aborts
   # the launch with a method mismatch; let vLLM auto-detect instead.
+  # pp2 is speculative for the hybrid (mamba) architecture; if vLLM refuses the
+  # pipeline split, run_models.sh logs the failure and moves on.
   - name: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
     label: nemotron3-nano-30b-a3b-nvfp4
-    configs: [single, tp2]
+    configs: [single, tp2, pp2]
     max_model_len: 8704
     trust_remote_code: true
-
-  # Multimodal baseline.
-  - name: Qwen/Qwen3-VL-8B-Instruct
-    label: qwen3-vl-8b
-    configs: [single, tp2]
-    max_model_len: 8704
 
   # NVIDIA flagship LatentMoE. Pre-quantized NVFP4 checkpoint; no quant field
-  # (auto-detected, see the nano entry above).
+  # (auto-detected, see the nano entry above). pp2 speculative as for the nano.
   - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
     label: nemotron3-super-120b-a12b-nvfp4
-    configs: [single, tp2]
+    configs: [single, tp2, pp2]
     max_model_len: 8704
-    gpu_util: 0.80
     trust_remote_code: true
 
   # ------------------------------------------------------------------
-  # Large open multimodal models, dual node only.
-  # Added to evaluate on-prem VLM options for UD researchers. Both exceed a
-  # single 128 GB GB10 at BF16, so they run only across two nodes.
-  # NOTE: the default workload is text only. These entries measure the text
-  # generation serving path at scale. To exercise the vision encoder, drive them
-  # with an image workload through the OpenAI content format.
+  # Cut from the paper matrix. Re-enable by uncommenting.
   # ------------------------------------------------------------------
 
-  # Dense multimodal workhorse. Image and video input, mature vLLM support.
-  # BF16 ~144 GB weights exceeds one node; comfortable on two with KV headroom.
-  - name: Qwen/Qwen2.5-VL-72B-Instruct
-    label: qwen2.5-vl-72b
-    configs: [tp2, pp2]
-    max_model_len: 8704
-    gpu_util: 0.85
+  # Qwen3-VL-8B on the text-only workload reproduced Qwen3-8B within noise
+  # across the whole sweep (identical text backbone), so it spends a model slot
+  # saying nothing. Re-add it only together with an image workload that
+  # actually exercises the vision encoder.
+  # - name: Qwen/Qwen3-VL-8B-Instruct
+  #   label: qwen3-vl-8b
+  #   configs: [single, tp2]
+  #   max_model_len: 8704
 
-  # Flagship open multimodal MoE, native image input, very long context.
-  # 109B total, 17B active; BF16 ~218 GB needs two nodes and is tight in the
-  # 256 GB pool. gpu_util 0.88 is as high as Grace unified memory allows while
-  # keeping per-node headroom under Ray's 95% node-memory monitor (see README
-  # troubleshooting; 0.92 trips it once weights and KV are resident). KV room
-  # is limited at this setting: if the launch fails with too little KV cache
-  # for max_model_len, lower max_model_len or serve an FP8 checkpoint. For one
-  # node production use, an FP8 checkpoint fits a single GB10.
-  - name: meta-llama/Llama-4-Scout-17B-16E-Instruct
-    label: llama4-scout-17b-16e
-    configs: [tp2, pp2]
-    max_model_len: 8704
-    gpu_util: 0.88
+  # Large open multimodal models for UD researchers' on-prem VLM evaluation;
+  # never yet benchmarked, not part of the PMBS matrix, and each adds ~5h per
+  # dual-node config. The default workload is text-only, so these would measure
+  # the text path at scale anyway. Note llama4-scout previously needed
+  # gpu_util 0.88 to fit at all, which breaks the uniform-0.80 comparison
+  # policy; treat any run of it as a capability demo, not a comparable point.
+  # - name: Qwen/Qwen2.5-VL-72B-Instruct
+  #   label: qwen2.5-vl-72b
+  #   configs: [tp2, pp2]
+  #   max_model_len: 8704
+  # - name: meta-llama/Llama-4-Scout-17B-16E-Instruct
+  #   label: llama4-scout-17b-16e
+  #   configs: [tp2, pp2]
+  #   max_model_len: 8704
+  #   gpu_util: 0.88

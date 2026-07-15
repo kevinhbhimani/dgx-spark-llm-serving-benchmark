@@ -19,6 +19,10 @@ class Workload:
         self.tok = tokenizer
         self.rng = random.Random(cfg.seed)
         self._base_ids = self._build_base_ids()
+        # distinct token values for the uniqueness tag; base_ids itself repeats
+        # values heavily, which would let two counters produce the same tokens
+        self._tag_vocab = sorted(set(self._base_ids)) if self._base_ids else []
+        self._uid = 0
         self.specs = self._load_trace(cfg.trace_path) if cfg.trace_path else None
         if self.specs is not None and not self.specs:
             raise ValueError(f"trace is empty: {cfg.trace_path}")
@@ -53,6 +57,18 @@ class Workload:
         return ids
 
     def _make_prompt(self, input_len):
+        # Every prompt must be unique from its first token: the random slices
+        # below can repeat across requests (and across warmup vs measurement),
+        # and with server-side prefix caching enabled that silently skipped up
+        # to a third of the prefill work in some runs while models launched
+        # with caching disabled did it all -- an unusable cross-model confound.
+        # The launcher now disables prefix caching, and this tag makes the
+        # workload itself cache-defeating: the leading tokens encode a
+        # per-request counter in base len(tag_vocab) (unique token sequences
+        # for len(tag_vocab)^2 requests), which breaks any block-aligned
+        # prefix match at block 0. Deterministic given the seed; the counter
+        # restarts per run, which is safe with server-side caching disabled.
+        self._uid += 1
         if self.tok is not None and self._base_ids:
             ids = self._base_ids
             if len(ids) < input_len:
@@ -60,9 +76,14 @@ class Workload:
             start_max = max(0, len(ids) - input_len)
             start = self.rng.randint(0, start_max) if start_max else 0
             prompt_ids = ids[start:start + input_len]
+            vocab = self._tag_vocab
+            k = min(2, input_len)
+            tag = [vocab[(self._uid // (len(vocab) ** j)) % len(vocab)]
+                   for j in range(k)]
+            prompt_ids = tag + prompt_ids[k:]
             return prompt_ids if self.cfg.use_token_ids else self.tok.decode(prompt_ids)
         # fallback without a tokenizer, length is approximate not token exact
-        return ("word " * input_len).strip()
+        return (f"uniq{self._uid} " + "word " * max(0, input_len - 1)).strip()
 
     def _load_trace(self, path):
         specs = []

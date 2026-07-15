@@ -1,0 +1,159 @@
+{
+  "config_label": "tp2",
+  "mode": "closed",
+  "concurrency": 16,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 296,
+  "requests_completed": 280,
+  "requests_failed": 0,
+  "total_output_tokens": 72832,
+  "request_throughput_rps": 0.4666666666666667,
+  "output_token_throughput_tps": 121.38666666666667,
+  "goodput_rps": 0.235,
+  "goodput_itl2_rps": 0.36666666666666664,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 0.32386392552871257,
+    "p90": 4.813660235935822,
+    "p95": 7.762709056213499,
+    "p99": 11.36983843136345,
+    "mean": 1.73215739214876
+  },
+  "itl_s": {
+    "p50": 0.09086634090635926,
+    "p90": 0.09938536575064064,
+    "p95": 0.14648929425748064,
+    "p99": 0.9085484767775052,
+    "mean": 0.12172267513972305
+  },
+  "mean_itl_s": {
+    "p50": 0.09984009365103774,
+    "p90": 0.17380641344072903,
+    "p95": 0.18154815174652894,
+    "p99": 0.20507963476233224,
+    "mean": 0.12106971047777816
+  },
+  "e2e_s": {
+    "p50": 24.434230766491964,
+    "p90": 50.386097123031504,
+    "p95": 81.90378804770299,
+    "p99": 94.36033570501708,
+    "mean": 33.272262907933744
+  },
+  "energy": {
+    "mean_power_w": 40.13686529794692,
+    "energy_j": 24081.209588736572,
+    "energy_per_token_j": 0.3306405095114314,
+    "tokens_per_watt": 3.024318560146147
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 7.0,
+      "mean": 15.421140939597315,
+      "max": 16.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.28187919463087246,
+      "max": 8.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.028214408369217736,
+      "mean": 0.053486735245865454,
+      "max": 0.07930679206403723
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 851328.0,
+      "rate_per_s": 1420.5169401160215
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 74519.0,
+      "rate_per_s": 124.34161904754197
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 420032.0,
+      "rate_per_s": 700.8609741378326
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "qwen3-vl-8b_tp2_closed_16_20260714-232337",
+  "model": "Qwen/Qwen3-VL-8B-Instruct",
+  "model_label": "qwen3-vl-8b",
+  "server_info": {
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 75707,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.8,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 1211312,
+    "worker_kv_cache_gb": 83.18,
+    "max_concurrency": 139.17
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "api_key": "EMPTY",
+    "tokenizer": "Qwen/Qwen3-VL-8B-Instruct",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 16,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "tp2",
+    "model_label": "qwen3-vl-8b",
+    "server_log": "results/server_qwen3-vl-8b_tp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 25.348805317888036
+}

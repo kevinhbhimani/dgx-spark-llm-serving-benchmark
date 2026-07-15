@@ -112,6 +112,127 @@ class PowerSampler:
         return sum(vals) / len(vals) if vals else float("nan")
 
 
+# Runs inside the serving container on the head node. Pins a tiny actor to the
+# worker node through the shared Ray cluster (the only remote-execution channel:
+# there is no SSH path from head to worker), streams the worker GPU's power
+# draw one watts value per line, and exits when stdin reaches EOF.
+_WORKER_POWER_SCRIPT = r"""
+import subprocess, sys, threading, time
+import ray
+
+ip, interval_ms = sys.argv[1], int(sys.argv[2])
+ray.init(address="auto", log_to_driver=False)
+
+
+@ray.remote(num_cpus=0, resources={f"node:{ip}": 0.001})
+class Reader:
+    def __init__(self, ms):
+        self.latest = None
+        threading.Thread(target=self._pump, args=(ms,), daemon=True).start()
+
+    def _pump(self, ms):
+        p = subprocess.Popen(
+            ["nvidia-smi", "--query-gpu=power.draw",
+             "--format=csv,noheader,nounits", "-lms", str(ms)],
+            stdout=subprocess.PIPE, text=True)
+        for line in p.stdout:
+            try:
+                self.latest = float(line.strip().split(",")[0])
+            except ValueError:
+                pass
+
+    def read(self):
+        return self.latest
+
+
+reader = Reader.remote(interval_ms)
+stop = threading.Event()
+
+
+def _watch_stdin():
+    sys.stdin.read()          # EOF when the head-side sampler closes stdin
+    stop.set()
+
+
+threading.Thread(target=_watch_stdin, daemon=True).start()
+while not stop.is_set():
+    try:
+        watts = ray.get(reader.read.remote(), timeout=10)
+        if watts is not None:
+            print(watts, flush=True)
+    except Exception:
+        pass
+    time.sleep(interval_ms / 1000.0)
+ray.kill(reader)
+"""
+
+
+class WorkerPowerSampler(PowerSampler):
+    """Sample the worker node's GPU power through the shared Ray cluster.
+
+    A helper process is docker-exec'ed into the head node's serving container;
+    it pins an actor to the worker node (Ray's node:<ip> custom resource), polls
+    nvidia-smi there, and prints one watts value per line. Each line is
+    timestamped on receipt with the head's perf_counter, so the samples share
+    the request records' clock; staleness is bounded by the sampling interval,
+    which is negligible against a multi-hundred-second window.
+
+    Best effort by design: if Ray, the container, or the worker is unreachable,
+    the sampler yields no samples and mean_power/energy_joules return NaN, which
+    metrics.aggregate reports as head-node-only power rather than failing the
+    run.
+    """
+
+    def __init__(self, container, node_ip, interval_ms=1000):
+        super().__init__(backend="none", interval_ms=interval_ms)
+        self.container = container
+        self.node_ip = node_ip
+
+    def start(self):
+        cmd = ["docker", "exec", "-i", self.container, "python3", "-u", "-c",
+               _WORKER_POWER_SCRIPT, self.node_ip,
+               str(int(self.interval * 1000))]
+        try:
+            self._proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True)
+        except FileNotFoundError:
+            print(f"[bench] WARNING: docker not found; worker power for "
+                  f"{self.node_ip} will not be sampled")
+            return
+        self._thread = threading.Thread(target=self._consume, daemon=True)
+        self._thread.start()
+
+    def _consume(self):
+        for line in self._proc.stdout:
+            if self._stop.is_set():
+                break
+            try:
+                self._add(float(line.strip()))
+            except ValueError:
+                continue
+
+    def stop(self):
+        self._stop.set()
+        if self._proc is not None:
+            try:
+                self._proc.stdin.close()   # EOF stops the remote script cleanly
+            except Exception:
+                pass
+            try:
+                self._proc.wait(timeout=15)
+            except Exception:
+                try:
+                    self._proc.terminate()
+                except Exception:
+                    pass
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
+
+    def sample_count(self):
+        return len(self._samples)
+
+
 class VLLMMetricsScraper:
     # Gauges: instantaneous occupancy/queue state, summarized as min/mean/max.
     GAUGE_KEYS = [

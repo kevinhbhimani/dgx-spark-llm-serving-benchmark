@@ -9,10 +9,15 @@
 #                   before large model loads on Grace unified memory to avoid false OOM.
 #   TOKENIZER       override vLLM --tokenizer (defaults to the model tokenizer).
 #   TRUST_REMOTE_CODE  non-empty adds --trust-remote-code (models with custom code).
-#   GPU_UTIL        override --gpu-memory-utilization (default 0.90 single, 0.80 tp2/pp2).
-#                   On Grace unified memory, GPU util shares the same pool as host
-#                   memory, so tp2/pp2 default lower to leave headroom for Ray's
-#                   node memory monitor (see README troubleshooting).
+#   GPU_UTIL        override --gpu-memory-utilization (default 0.80 for every
+#                   config). One uniform value so single vs tp2/pp2 comparisons
+#                   hold the KV budget policy constant; 0.80 is the highest that
+#                   clears the two-node preflight and Ray's node memory monitor
+#                   on Grace unified memory (see README troubleshooting).
+#   PREFIX_CACHING  1 re-enables vLLM prefix caching. Default off: the synthetic
+#                   workload can repeat prompt slices, and cache hits skipped up
+#                   to a third of prefill work in some models but not others,
+#                   contaminating cross-model comparisons.
 #   HF_HUB_OFFLINE  1 (default) serves purely from the local HF cache. The worker
 #                   node (Hoedus) has no DNS to huggingface.co, so an online launch
 #                   burns minutes on doomed metadata retries before falling back to
@@ -32,11 +37,8 @@ TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-}"  # non-empty adds --trust-remote-code
 # vLLM max model length is prompt + generated tokens. The default experiment's
 # largest bucket is 8192 input + 512 output, so use at least 8704 by default.
 MAXLEN="${MAXLEN:-8704}"
-if [[ "$CONFIG" == "tp2" || "$CONFIG" == "pp2" ]]; then
-  GPU_UTIL="${GPU_UTIL:-0.80}"
-else
-  GPU_UTIL="${GPU_UTIL:-0.90}"
-fi
+GPU_UTIL="${GPU_UTIL:-0.80}"
+PREFIX_CACHING="${PREFIX_CACHING:-0}"
 
 # Serve from the local HF cache by default; the worker node cannot reach
 # huggingface.co, so online metadata lookups only add slow, failing retries.
@@ -49,6 +51,9 @@ fi
 common=( --host 0.0.0.0 --port "$PORT" --dtype "$DTYPE"
          --max-model-len "$MAXLEN" --gpu-memory-utilization "$GPU_UTIL"
          --no-enable-log-requests )
+if [[ "$PREFIX_CACHING" != "1" ]]; then
+  common+=( --no-enable-prefix-caching )
+fi
 if [[ -n "$QUANT" ]]; then common+=( --quantization "$QUANT" ); fi
 if [[ -n "$TOKENIZER" ]]; then common+=( --tokenizer "$TOKENIZER" ); fi
 if [[ -n "$TRUST_REMOTE_CODE" ]]; then common+=( --trust-remote-code ); fi
