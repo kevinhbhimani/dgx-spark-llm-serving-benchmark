@@ -1,0 +1,159 @@
+{
+  "config_label": "pp2",
+  "mode": "closed",
+  "concurrency": 16,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 54,
+  "requests_completed": 38,
+  "requests_failed": 0,
+  "total_output_tokens": 8832,
+  "request_throughput_rps": 0.06333333333333334,
+  "output_token_throughput_tps": 14.72,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 1.4828296710038558,
+    "p90": 21.315029725735094,
+    "p95": 24.532478811638427,
+    "p99": 26.714498844894116,
+    "mean": 6.590981863696422
+  },
+  "itl_s": {
+    "p50": 0.6873963481048122,
+    "p90": 0.7193046938627958,
+    "p95": 1.071329640096519,
+    "p99": 4.3500329816574235,
+    "mean": 0.8079814181373659
+  },
+  "mean_itl_s": {
+    "p50": 0.7930058683706995,
+    "p90": 0.9400127178897132,
+    "p95": 0.9453744140087043,
+    "p99": 0.9539727275746362,
+    "mean": 0.7991293652090267
+  },
+  "e2e_s": {
+    "p50": 176.53963013051543,
+    "p90": 254.6112851099577,
+    "p95": 286.4988529927793,
+    "p99": 451.2993140226533,
+    "mean": 193.57491383934394
+  },
+  "energy": {
+    "mean_power_w": 46.044669117647054,
+    "energy_j": 27628.104071140013,
+    "energy_per_token_j": 3.1281820732721934,
+    "tokens_per_watt": 0.3196895597705234
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 4.0,
+      "mean": 15.485714285714286,
+      "max": 16.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.2991596638655462,
+      "max": 6.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.04041132960490712,
+      "mean": 0.3371858214691253,
+      "max": 0.5015334656323291
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 159232.0,
+      "rate_per_s": 265.4863513017519
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 10913.0,
+      "rate_per_s": 18.19516524163496
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 53760.0,
+      "rate_per_s": 89.63365558419275
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "llama3.3-70b_pp2_closed_16_20260715-034528",
+  "model": "meta-llama/Llama-3.3-70B-Instruct",
+  "model_label": "llama3.3-70b",
+  "server_info": {
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 11087,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.8,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 177392,
+    "worker_kv_cache_gb": 27.07,
+    "max_concurrency": 20.38
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "api_key": "EMPTY",
+    "tokenizer": "meta-llama/Llama-3.3-70B-Instruct",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 16,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "pp2",
+    "model_label": "llama3.3-70b",
+    "server_log": "results/server_llama3.3-70b_pp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 334.0159532879479
+}

@@ -1,0 +1,159 @@
+{
+  "config_label": "tp2",
+  "mode": "closed",
+  "concurrency": 16,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 149,
+  "requests_completed": 133,
+  "requests_failed": 0,
+  "total_output_tokens": 35328,
+  "request_throughput_rps": 0.22166666666666668,
+  "output_token_throughput_tps": 58.88,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.006666666666666667,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 3.090310877887532,
+    "p90": 11.219944576127448,
+    "p95": 20.306429590703875,
+    "p99": 32.62811633042991,
+    "mean": 4.98411712405811
+  },
+  "itl_s": {
+    "p50": 0.1459874790161848,
+    "p90": 0.2495241972617805,
+    "p95": 1.279091128474101,
+    "p99": 1.3141726098302753,
+    "mean": 0.23969065393624203
+  },
+  "mean_itl_s": {
+    "p50": 0.23814554228995213,
+    "p90": 0.2734738596584041,
+    "p95": 0.2868985823222308,
+    "p99": 0.3102170033484505,
+    "mean": 0.24052675111952337
+  },
+  "e2e_s": {
+    "p50": 62.85531210084446,
+    "p90": 127.72994469888508,
+    "p95": 134.25097101251592,
+    "p99": 143.96623045870106,
+    "mean": 68.41205026125326
+  },
+  "energy": {
+    "mean_power_w": 45.89607578033718,
+    "energy_j": 27537.37934481618,
+    "energy_per_token_j": 0.7794774497513638,
+    "tokens_per_watt": 1.2828983523952042
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 15.145973154362416,
+      "max": 16.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.4664429530201342,
+      "max": 15.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.026470378005838617,
+      "max": 0.029147982062780242
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 446080.0,
+      "rate_per_s": 744.1563809860644
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 37035.0,
+      "rate_per_s": 61.782262306803474
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "nemotron3-super-120b-a12b-nvfp4_tp2_closed_16_20260715-011546",
+  "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+  "model_label": "nemotron3-super-120b-a12b-nvfp4",
+  "server_info": {
+    "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "max_model_len": 8704,
+    "block_size": 8320,
+    "gpu_blocks": 3569,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "fp8_e4m3",
+    "gpu_memory_utilization": 0.8,
+    "enable_prefix_caching": "False",
+    "total_kv_tokens": 29694080,
+    "worker_kv_cache_gb": 57.01,
+    "max_concurrency": 509.86
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "api_key": "EMPTY",
+    "tokenizer": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "trust_remote_code": true,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 16,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "tp2",
+    "model_label": "nemotron3-super-120b-a12b-nvfp4",
+    "server_log": "results/server_nemotron3-super-120b-a12b-nvfp4_tp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 46.677960224915296
+}

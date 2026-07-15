@@ -1,0 +1,159 @@
+{
+  "config_label": "tp2",
+  "mode": "closed",
+  "concurrency": 32,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 100,
+  "requests_completed": 68,
+  "requests_failed": 0,
+  "total_output_tokens": 16000,
+  "request_throughput_rps": 0.11333333333333333,
+  "output_token_throughput_tps": 26.666666666666668,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 1.9671524750301614,
+    "p90": 43.17672923537903,
+    "p95": 51.635019131703295,
+    "p99": 86.61581964194302,
+    "mean": 11.879406518097419
+  },
+  "itl_s": {
+    "p50": 0.4001670730067417,
+    "p90": 0.42835666926112026,
+    "p95": 4.596528950135689,
+    "p99": 4.852613582287449,
+    "mean": 0.6638287858420339
+  },
+  "mean_itl_s": {
+    "p50": 0.6209734389899295,
+    "p90": 1.101914356234927,
+    "p95": 1.1383640719162682,
+    "p99": 1.3528718262942558,
+    "mean": 0.6671850433933165
+  },
+  "e2e_s": {
+    "p50": 135.50760933454148,
+    "p90": 341.75471368308644,
+    "p95": 341.7574153013062,
+    "p99": 357.80310398558385,
+    "mean": 167.41060068840778
+  },
+  "energy": {
+    "mean_power_w": 43.948790915163656,
+    "energy_j": 26367.245992362266,
+    "energy_per_token_j": 1.6479528745226417,
+    "tokens_per_watt": 0.6067667872397797
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 27.87604690117253,
+      "max": 32.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 3.3601340033500837,
+      "max": 15.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.272127011306938,
+      "max": 0.356057785389828
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 283776.0,
+      "rate_per_s": 473.3430443257854
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 20771.0,
+      "rate_per_s": 34.646370283924256
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 133072.0,
+      "rate_per_s": 221.96628888461646
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "llama3.3-70b-fp8_tp2_closed_32_20260714-171836",
+  "model": "meta-llama/Llama-3.3-70B-Instruct",
+  "model_label": "llama3.3-70b-fp8",
+  "server_info": {
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 26859,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.85,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 429744,
+    "worker_kv_cache_gb": 66.98,
+    "max_concurrency": 49.37
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "api_key": "EMPTY",
+    "tokenizer": "meta-llama/Llama-3.3-70B-Instruct",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 32,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "tp2",
+    "model_label": "llama3.3-70b-fp8",
+    "server_log": "results/server_llama3.3-70b-fp8_tp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 163.8171815678943
+}

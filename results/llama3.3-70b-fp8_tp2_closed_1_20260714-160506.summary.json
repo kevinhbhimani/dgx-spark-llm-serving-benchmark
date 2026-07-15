@@ -1,0 +1,159 @@
+{
+  "config_label": "tp2",
+  "mode": "closed",
+  "concurrency": 1,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 10,
+  "requests_completed": 9,
+  "requests_failed": 0,
+  "total_output_tokens": 2176,
+  "request_throughput_rps": 0.015,
+  "output_token_throughput_tps": 3.6266666666666665,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 8.111033980036154,
+    "p90": 9.886449625669048,
+    "p95": 13.118615834834051,
+    "p99": 15.70434880216606,
+    "mean": 5.850464607045676
+  },
+  "itl_s": {
+    "p50": 0.2363644631113857,
+    "p90": 0.24862355422228574,
+    "p95": 0.2524164460133761,
+    "p99": 0.3645544538693503,
+    "mean": 0.23712585359477847
+  },
+  "mean_itl_s": {
+    "p50": 0.23727070140451484,
+    "p90": 0.24256165928901266,
+    "p95": 0.2429110521185851,
+    "p99": 0.24319056638224307,
+    "mean": 0.23554607487850632
+  },
+  "e2e_s": {
+    "p50": 68.61508115800098,
+    "p90": 84.2766269740183,
+    "p95": 112.22628447595051,
+    "p99": 134.5860104774963,
+    "mean": 62.945121220778674
+  },
+  "energy": {
+    "mean_power_w": 36.53117755136128,
+    "energy_j": 21915.300275155827,
+    "energy_per_token_j": 10.071369611744405,
+    "tokens_per_watt": 0.09927593112945038
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 0.9546979865771812,
+      "max": 1.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.0,
+      "max": 0.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.009164092435433481,
+      "max": 0.02025467272321091
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 30080.0,
+      "rate_per_s": 50.16187948244909
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 2280.0,
+      "rate_per_s": 3.8021637373664867
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "llama3.3-70b-fp8_tp2_closed_1_20260714-160506",
+  "model": "meta-llama/Llama-3.3-70B-Instruct",
+  "model_label": "llama3.3-70b-fp8",
+  "server_info": {
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 26859,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.85,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 429744,
+    "worker_kv_cache_gb": 66.98,
+    "max_concurrency": 49.37
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "api_key": "EMPTY",
+    "tokenizer": "meta-llama/Llama-3.3-70B-Instruct",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 1,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "tp2",
+    "model_label": "llama3.3-70b-fp8",
+    "server_log": "results/server_llama3.3-70b-fp8_tp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 34.47703590383753
+}

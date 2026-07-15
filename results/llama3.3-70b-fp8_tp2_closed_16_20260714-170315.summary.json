@@ -1,0 +1,159 @@
+{
+  "config_label": "tp2",
+  "mode": "closed",
+  "concurrency": 16,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 78,
+  "requests_completed": 62,
+  "requests_failed": 0,
+  "total_output_tokens": 16512,
+  "request_throughput_rps": 0.10333333333333333,
+  "output_token_throughput_tps": 27.52,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 1.3777284674579278,
+    "p90": 28.9589576824801,
+    "p95": 39.82966026709181,
+    "p99": 43.00733576633502,
+    "mean": 9.655912085571476
+  },
+  "itl_s": {
+    "p50": 0.31320781901013106,
+    "p90": 0.3249096727697179,
+    "p95": 0.32937213423429057,
+    "p99": 4.2939197096461434,
+    "mean": 0.4241531611549156
+  },
+  "mean_itl_s": {
+    "p50": 0.4341282297279813,
+    "p90": 0.5522537628348011,
+    "p95": 0.6302207883729085,
+    "p99": 0.6600167451320239,
+    "mean": 0.42651489573018775
+  },
+  "e2e_s": {
+    "p50": 101.65086027048528,
+    "p90": 222.89978085919284,
+    "p95": 222.90102226026357,
+    "p99": 293.93351690982934,
+    "mean": 122.19334032088368
+  },
+  "energy": {
+    "mean_power_w": 42.45959091668058,
+    "energy_j": 25474.37631750107,
+    "energy_per_token_j": 1.5427795734920706,
+    "tokens_per_watt": 0.6481456699383449
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 0.0,
+      "mean": 14.728643216080402,
+      "max": 16.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 0.7504187604690117,
+      "max": 5.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0,
+      "mean": 0.14612410976370172,
+      "max": 0.21029116092039613
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 238848.0,
+      "rate_per_s": 398.153634312802
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 19059.0,
+      "rate_per_s": 31.7708756881686
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 124128.0,
+      "rate_per_s": 206.91826734986054
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "llama3.3-70b-fp8_tp2_closed_16_20260714-170315",
+  "model": "meta-llama/Llama-3.3-70B-Instruct",
+  "model_label": "llama3.3-70b-fp8",
+  "server_info": {
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 26859,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "auto",
+    "gpu_memory_utilization": 0.85,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 429744,
+    "worker_kv_cache_gb": 66.98,
+    "max_concurrency": 49.37
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "meta-llama/Llama-3.3-70B-Instruct",
+    "api_key": "EMPTY",
+    "tokenizer": "meta-llama/Llama-3.3-70B-Instruct",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 16,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "tp2",
+    "model_label": "llama3.3-70b-fp8",
+    "server_log": "results/server_llama3.3-70b-fp8_tp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 126.37055480899289
+}

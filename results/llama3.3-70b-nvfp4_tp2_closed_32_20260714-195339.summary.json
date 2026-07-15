@@ -1,0 +1,159 @@
+{
+  "config_label": "tp2",
+  "mode": "closed",
+  "concurrency": 32,
+  "target_qps": null,
+  "measure_s": 600.0,
+  "window_policy": "completed_in_window",
+  "requests_started": 153,
+  "requests_completed": 121,
+  "requests_failed": 0,
+  "total_output_tokens": 30080,
+  "request_throughput_rps": 0.20166666666666666,
+  "output_token_throughput_tps": 50.13333333333333,
+  "goodput_rps": 0.0,
+  "goodput_itl2_rps": 0.0,
+  "slo": {
+    "ttft_s": 3.0,
+    "itl_s": 0.1,
+    "itl_s2": 0.2
+  },
+  "ttft_s": {
+    "p50": 1.2089653690345585,
+    "p90": 37.53636330412701,
+    "p95": 51.2786807839293,
+    "p99": 54.39704288714565,
+    "mean": 10.841600558195218
+  },
+  "itl_s": {
+    "p50": 0.28539853217080235,
+    "p90": 0.30273865489289165,
+    "p95": 3.3769552868325263,
+    "p99": 3.5657687896350363,
+    "mean": 0.4873518063955143
+  },
+  "mean_itl_s": {
+    "p50": 0.49098750001604796,
+    "p90": 0.7703234739683787,
+    "p95": 0.8008397134230929,
+    "p99": 0.8577182414978213,
+    "mean": 0.48638938606661875
+  },
+  "e2e_s": {
+    "p50": 103.38636444997974,
+    "p90": 238.285547434818,
+    "p95": 253.7808280820027,
+    "p99": 332.43278162381614,
+    "mean": 131.5075024104858
+  },
+  "energy": {
+    "mean_power_w": 39.82169893190921,
+    "energy_j": 23891.619758510573,
+    "energy_per_token_j": 0.7942692738866547,
+    "tokens_per_watt": 1.258945114799243
+  },
+  "vllm_metrics": {
+    "vllm:num_requests_running": {
+      "min": 2.0,
+      "mean": 29.52181208053691,
+      "max": 32.0
+    },
+    "vllm:num_requests_waiting": {
+      "min": 0.0,
+      "mean": 1.6258389261744965,
+      "max": 10.0
+    },
+    "vllm:kv_cache_usage_perc": {
+      "min": 0.0011932580917813906,
+      "mean": 0.1197823460757681,
+      "max": 0.16519995359551864
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 407424.0,
+      "rate_per_s": 679.530857400113
+    },
+    "vllm:generation_tokens_total": {
+      "delta": 33076.0,
+      "rate_per_s": 55.16651606033551
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 220576.0,
+      "rate_per_s": 367.89241282272843
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "rate_per_s": 0.0
+    }
+  },
+  "run_tag": "llama3.3-70b-nvfp4_tp2_closed_32_20260714-195339",
+  "model": "nvidia/Llama-3.3-70B-Instruct-NVFP4",
+  "model_label": "llama3.3-70b-nvfp4",
+  "server_info": {
+    "model": "nvidia/Llama-3.3-70B-Instruct-NVFP4",
+    "max_model_len": 8704,
+    "block_size": 16,
+    "gpu_blocks": 60340,
+    "num_cpu_blocks": null,
+    "kv_cache_dtype": "fp8_e4m3",
+    "gpu_memory_utilization": 0.8,
+    "enable_prefix_caching": "True",
+    "total_kv_tokens": 965440,
+    "worker_kv_cache_gb": 73.73,
+    "max_concurrency": 110.92
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/v1/completions",
+    "model": "nvidia/Llama-3.3-70B-Instruct-NVFP4",
+    "api_key": "EMPTY",
+    "tokenizer": "nvidia/Llama-3.3-70B-Instruct-NVFP4",
+    "trust_remote_code": false,
+    "use_token_ids": true,
+    "trace_path": "",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "seed": 1234,
+    "mode": "closed",
+    "concurrency": 32,
+    "qps": 4.0,
+    "max_inflight": 512,
+    "warmup_s": 120.0,
+    "measure_s": 600.0,
+    "request_timeout_s": 1800.0,
+    "ttft_slo_s": 3.0,
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "power_backend": "nvidia_smi",
+    "power_sysfs_path": "",
+    "power_rails": [],
+    "power_interval_ms": 100,
+    "scrape_vllm_metrics": true,
+    "config_label": "tp2",
+    "model_label": "llama3.3-70b-nvfp4",
+    "server_log": "results/server_llama3.3-70b-nvfp4_tp2.log",
+    "collect_hf_metadata": false,
+    "out_dir": "results",
+    "run_note": ""
+  },
+  "drain_s": 134.09201461682096
+}
