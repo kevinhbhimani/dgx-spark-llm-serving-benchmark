@@ -222,3 +222,5 @@ figs/
 .claude/
 
 run_job.sh
+
+results/

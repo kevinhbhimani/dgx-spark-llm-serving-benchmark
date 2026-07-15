@@ -157,11 +157,18 @@ fields:
 - `concurrency`: number of closed-loop workers.
 - `qps`: offered request rate for open-loop mode.
 - `max_inflight`: open-loop cap on concurrently in-flight requests.
-- `warmup_s` and `measure_s`: warmup and logical measurement window durations.
+- `warmup_s`, `measure_s`, and `cooldown_s`: one continuous load phase; the
+  logical measurement window is `[warmup_s, warmup_s + measure_s)` within it.
+  Load is never dropped at the window boundaries: warmup holds full concurrency
+  into the window (a separate warmup loop used to drain completely and reopen
+  the window on an idle server), and the cooldown keeps offered load up while
+  requests started near the window's end finish, so their latency is measured
+  under load. Size `warmup_s` at or above the worst single-request lifetime at
+  the highest concurrency, and `cooldown_s` around its p50.
 - `request_timeout_s`: per-request HTTP timeout, including queueing and stream
   drain. Keep it well above the worst-case E2E at the highest load in the
   sweep, or slow-but-successful requests are counted as failures; the shipped
-  default is `1800`.
+  default is `3600`.
 - `ttft_slo_s`, `itl_slo_s`, and `itl_slo_s2`: service-level objectives used for
   goodput. Both ITL tiers are scored against the same TTFT bound: `itl_slo_s` is
   the strict interactive target and `itl_slo_s2` a looser tier, giving two
@@ -213,7 +220,12 @@ export PORT=8000
 export DTYPE=auto
 export MAXLEN=8704
 # Optional serving overrides:
-# export GPU_UTIL=0.90        # default is 0.90 single, 0.80 tp2/pp2
+# export GPU_UTIL=0.80        # default is 0.80 for every config: keep it
+#                             # identical across single/tp2/pp2 for one model,
+#                             # or the KV budget confounds the comparison
+# export PREFIX_CACHING=1     # prefix caching is OFF by default: cache hits on
+#                             # repeated synthetic prompts skipped up to a third
+#                             # of prefill work in some models but not others
 # export QUANT=fp8
 # export TOKENIZER=Qwen/Qwen3-8B
 # export TRUST_REMOTE_CODE=1
@@ -473,10 +485,13 @@ buckets:
 ```
 
 With `use_token_ids: true` and a tokenizer configured, prompts are exact
-token-id lists. Synthetic prompts are randomized slices of a larger token buffer
-so repeated requests do not all share the same complete prefix. Record the vLLM
-prefix-cache setting you used, because it materially affects long-context TTFT
-and KV cache behavior.
+token-id lists: randomized slices of a larger token buffer whose first tokens
+are overwritten with a per-request counter tag, so every prompt is unique from
+its first KV block and no request can hit another's cached prefix. The launcher
+also disables vLLM prefix caching by default (`PREFIX_CACHING=1` re-enables):
+random slices alone repeated often enough that cache hits skipped up to a third
+of prefill work in some models while models whose launch had caching disabled
+did all of it, which contaminated cross-model comparisons.
 
 A JSONL trace can replace buckets by setting `trace_path` in the YAML. Each
 line can contain:
@@ -549,43 +564,58 @@ Two figures need a word on what they do and do not show:
 - The reliability figure is two panels. The left panel is the real reliability
   signal: the share of *finished* requests that returned an error (this is zero
   across the reference sweep). The right panel is the share of requests that both
-  started and completed inside the measurement window; at high concurrency with a
-  short window it falls toward zero simply because long requests do not finish
-  before the window closes. That is a windowing/backlog effect, not the server
-  dropping requests, and the panels are separated so the two are never conflated.
-- The energy figure daggers the dual-node (`tp2`, `pp2`) series and prints a
-  footnote, because `nvidia_smi` samples only the head node's GB10. Dual-node
-  per-token energy is therefore a lower bound and tokens/W an upper bound; do not
-  compare a one-node dual number against a true single-node number without
-  summing both nodes' power offline.
+  started and completed inside the measurement window
+  (`requests_completed_in_window / requests_started`); at high concurrency it
+  falls simply because long requests outlive the window. That is a
+  windowing/backlog indicator, not the server dropping requests, and the panels
+  are separated so the two are never conflated.
+- The energy figure daggers any dual-node (`tp2`, `pp2`) series whose rows
+  record `power_nodes < 2` (or predate that column) and prints a footnote:
+  those rows' power covers the head node's GB10 only, so per-token energy is a
+  lower bound and tokens/W an upper bound. Series with `power_nodes = 2` carry
+  both nodes' draw and compare cleanly against single-node numbers.
 
 Before drawing anything, the script prints a short data-quality report: per
 configuration it lists the number of points, the measurement window(s) used,
-peak observed throughput, and any point with zero completions in the window
-(where throughput is "no data", not a real zero). Mixed measurement windows
-within one series are called out, since windowed rates stay comparable but the
-per-point sample sizes behind the percentiles do not.
+peak observed throughput, and any point with zero completions in the window.
+Mixed measurement windows within one series are called out, since windowed
+rates stay comparable but the per-point sample sizes behind the percentiles do
+not.
 
-If a sweep was rerun so the same `config_label` and load (concurrency or
-`qps`) appear twice in `index.csv`, `plot_results.py` keeps only the run with
-more completed requests (its percentiles rest on a larger sample) and prints
-a `note:` line naming both runs so you can compare them yourself; without
-this, two contradictory points at the same x value draw a zigzag through the
-figures instead of a curve. Separately, any point backed by fewer than
-`--min-samples` completed requests (default 20) is circled in the figures
-and listed in a `warning:` line, since its percentiles are small-sample noise
-rather than a real reading, not a capacity signal to draw conclusions from.
-This shows up at the lowest loads (few requests fit in the window even when
-the server keeps up) and at loads beyond a config's capacity (requests queue
-faster than they complete, so few finish inside the window at all). A longer
-`--measure-s` gives more completions to trust at high concurrency.
+If the same `config_label` and load (concurrency or `qps`) appear more than
+once in `index.csv` — a sweep run with `REPEATS>1`, or a rerun — the copies are
+averaged into one point per load, a `note:` line reports how many copies back
+it, and the min-max spread across copies is shaded behind the mean line for the
+headline metrics; a copy with zero completed requests (a dead-server row) is
+dropped rather than averaged when a healthy copy exists. Separately, any point
+whose percentiles rest on fewer than `--min-samples` requests (default 20) is
+circled in the figures and listed in a `warning:` line, since its percentiles
+are small-sample noise rather than a real reading. This shows up at the lowest
+loads, where few requests start within the window even when the server keeps
+up; a longer `--measure-s` gives more samples to trust.
 
 ## Metric Semantics
 
-The logical measurement window starts after warmup and lasts `measure_s`
-seconds. The load generator drains in-flight requests after that point, but
-aggregate metrics count only requests that complete inside the logical window.
-The drain duration is reported as `drain_s` in the summary.
+Warmup, measurement, and cooldown run as one continuous load phase; the logical
+measurement window is the `measure_s` seconds starting `warmup_s` into it. The
+load generator stops launching new requests when the cooldown ends and drains
+in-flight requests to completion; the drain duration is reported as `drain_s`
+in the summary. The window's `perf_counter` bounds (`window_start_perf`,
+`window_end_perf`) and a wall-clock anchor (`window_start_unix`) are stored in
+the summary so `raw.jsonl` token timestamps can be re-aggregated post hoc.
+
+Two accounting sets share the window (this split is what fixed the 60s/600s
+windowing artifacts, where completed-in-window throughput read near zero at
+high concurrency while the server was busy):
+
+- Throughput counts tokens *received during the window* across all requests,
+  including requests started in warmup and requests still streaming when the
+  window closes. It should track `server_gen_tps` closely at every load.
+- Latency percentiles, goodput, and `requests_completed` cover requests
+  *started in* the window and tracked to completion, even when they finish
+  after it closes. Completed-in-window counts survive as
+  `requests_completed_in_window` and `tok_thru_completed_tps` for the
+  methodology diagnostic figure only.
 
 Per-request metrics:
 
@@ -600,19 +630,26 @@ Per-request metrics:
 
 Aggregate metrics:
 
-- `request_throughput_rps`: successful completions in the window divided by
-  `measure_s`.
-- `output_token_throughput_tps`: generated output tokens from those completions
-  divided by `measure_s`.
-- `goodput_rps`: successful completions per second whose TTFT is at or below
-  `ttft_slo_s` and whose per-request mean ITL is at or below `itl_slo_s`.
+- `request_throughput_rps`: successful requests started in the window (tracked
+  to completion) divided by `measure_s`.
+- `output_token_throughput_tps`: tokens received during the window (all
+  requests) divided by `measure_s`. Index column `tok_thru_tps`.
+- `goodput_rps`: started-in-window successes per second whose TTFT is at or
+  below `ttft_slo_s` and whose per-request mean ITL is at or below `itl_slo_s`.
 - `goodput_itl2_rps`: the same, but against the looser `itl_slo_s2` ITL tier.
 - Capacity: sampled from vLLM Prometheus metrics. The index uses
   `kv_cache_usage_*`, `requests_running_*`, and `requests_waiting_*` columns.
   The scraper accepts both `vllm:kv_cache_usage_perc` and the older
   `vllm:gpu_cache_usage_perc` metric name.
 - Energy: when enabled, power samples over the same logical window produce
-  `mean_power_w`, `energy_per_token_j`, and `tokens_per_watt`.
+  `mean_power_w`, `energy_per_token_j`, and `tokens_per_watt`. On dual-node
+  runs, `scripts/run_all.sh` additionally samples the worker's GPU through a
+  Ray actor pinned to `node:<worker ip>` inside the serving container (there is
+  no SSH path head to worker); `mean_power_w` then totals both nodes,
+  `mean_power_w_head`/`mean_power_w_worker` carry the split, and `power_nodes`
+  records coverage (a tp2/pp2 row with `power_nodes=1` means the worker sampler
+  failed and that row's energy is a head-only lower bound; the plots dagger
+  such series automatically).
 
 Server-side counters (from vLLM `/metrics`, differenced over the logical window):
 
@@ -649,37 +686,40 @@ by `plot_results.py --table`.
 
 ## Choosing The Measurement Window
 
-Because only requests that *complete* inside the window count, the window must be
-long enough to collect a trustable number of completions at the load you care
-about, or the aggregate rates understate the server and the percentiles are
-small-sample noise. This workload is long-context: a single request can take
-tens of seconds end to end at low load and well over a minute once the server is
-saturated, so a short window collects very few completions per point.
+Throughput no longer depends on how many requests finish inside the window
+(tokens are counted as they arrive), so the window-sizing question is about two
+things instead: opening the window in steady state, and collecting enough
+started-in-window requests to back the latency percentiles.
 
-A 60 s window is far too short here. At high concurrency it can report zero
-completions while the server is healthy and busy (`requests_failed` is 0, KV
-cache is not full, and `requests_running` is high) — the requests simply have
-not finished yet. That reads as a throughput *collapse* that is not real: on a
-longer window the same point keeps climbing. For example, `tp2` at concurrency 64
-measured 0 tok/s over 60 s (0 completions) but 141 tok/s over 240 s (138
-completions), and `pp2` at concurrency 128 measured 0 tok/s over 60 s but 135
-tok/s over 360 s. Treat any windowed throughput backed by a handful of
-completions as a lower bound, not a capacity reading.
+The history matters because it bit twice. With completed-in-window accounting,
+a 60 s window reported literal zero throughput at high concurrency while the
+server was healthy and busy, and a 600 s window still understated large dense
+models by 5-10x at concurrency 64-128 (client/server throughput ratios of
+0.1-0.7), because a single request's end-to-end time reached 500+ s. On top of
+that, warmup used to run as a separate loop that drained completely, so the
+window opened on an idle server hit by a thundering herd of cold prefills.
+Both are structural, not tuning, problems; token-in-window accounting and the
+continuous warmup/measure/cooldown phase fix them. The
+`server_vs_client_throughput` figure is the regression check: the client and
+server curves should now track closely at every load, with the dotted
+completed-only curve showing what the old accounting would have read.
 
 Guidance:
 
-- Set `measure_s` to at least several times the E2E p50 you expect at the
-  highest load in the sweep. For the default workload that means `measure_s`
-  around `300`-`600`; the shipped `configs/experiment.yaml` default is `600`.
-- Aim for at least `MIN_SAMPLES` (20, the plotting threshold) completions per
-  point, and preferably many more at the loads you will quote in the paper.
+- Set `warmup_s` at or above the worst single-request lifetime (queueing +
+  full stream) at the highest concurrency in the sweep, so the window opens
+  with a steady running/queue mix. The shipped default is `600`.
+- Set `measure_s` to a small multiple of that lifetime; the shipped default is
+  `1200`. Longer windows buy more percentile samples at the highest loads.
+- Set `cooldown_s` around the p50 lifetime at the heaviest point (shipped
+  `300`), so requests started late in the window finish under load rather than
+  on a draining server.
+- Aim for at least `MIN_SAMPLES` (20, the plotting threshold) started-in-window
+  requests per point, and preferably many more at the loads you will quote.
 - Keep the window consistent across a sweep and across configs you compare.
-  `plot_results.py` still plots mixed-window sweeps but flags them, because the
-  per-point sample sizes behind the percentiles differ even though the windowed
-  rates remain comparable.
-- Points below `MIN_SAMPLES` completions are circled in the figures, daggered in
-  the summary table, and listed in the data-quality report; rerun them with a
-  longer `--measure-s` before quoting their numbers.
+  `plot_results.py` still plots mixed-window sweeps but flags them.
+- Run `REPEATS=3` (or rerun the sweep) at least for the points you will quote,
+  so the figures carry run-to-run spread instead of a single sample.
 
 ## Power Telemetry
 
@@ -704,9 +744,18 @@ Backends:
 - `tegrastats`: parses named rails from `power_rails`, or all matched rails if
   the list is empty.
 
-Validate the backend on DGX Spark before using energy numbers. For dual-node
-energy, make sure the sampled rail covers both nodes or combine per-node energy
-offline; a local `nvidia_smi` sampler only sees the local GPU.
+Validate the backend on DGX Spark before using energy numbers. Note that
+`nvidia_smi` reports the GPU module's draw, not wall power.
+
+For dual-node runs, a local sampler only sees the head node's GPU. There is no
+SSH path from head to worker, so `scripts/run_all.sh` (for `tp2`/`pp2` labels)
+also passes `--worker-power-container`/`--worker-power-node-ip`, and the
+benchmark samples the worker's GPU through a tiny Ray actor pinned to
+`node:<worker ip>` inside the serving container. `mean_power_w` then totals
+both nodes and `power_nodes=2` marks the row as fully covered; if the worker
+sampler fails, the run continues, warns, and records `power_nodes=1`, and the
+plots dagger that series as head-only. Set `WORKER_POWER_NODE_IP=""` to disable
+worker sampling explicitly.
 
 ## Troubleshooting
 

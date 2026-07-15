@@ -388,7 +388,7 @@ def _report_series(msub, cfg, pfx, have_ms):
         imax = g["tok_thru_tps"].idxmax()
         peak = (f"{g.loc[imax, 'tok_thru_tps']:.0f} tok/s @ "
                 f"{lc}={g.loc[imax, lc]:g}")
-    tag = " [head-node power only]" if cfg in DUAL_NODE_CONFIGS else ""
+    tag = " [head-node power only]" if head_only_power(cfg, g) else ""
     print(f"  {pfx + cfg:16s} {n_pts} pts, window(s)={win_str}, peak={peak}{tag}")
     if have_ms and len(windows) > 1:
         print(f"           mixed measurement windows in this series; windowed "
@@ -453,6 +453,7 @@ def fig_throughput_scaling(df, out, fmts):
         s = style_for(cfg, i)
         ax.plot(g[lc], g[tcol], marker=s["marker"], color=s["color"],
                 label=s["label"])
+        draw_band(ax, g, g[lc], tcol, s["color"])
         if mark_ln:
             any_low_n |= mark_low_n(ax, g, g[lc], g[tcol])
         all_loads += g[lc].tolist()
@@ -524,6 +525,8 @@ def fig_tail_latency(df, out, fmts):
                  color=s["color"], label=f"{s['label']} p50")
         axr.plot(g[lc], itl_p99_ms, marker=s["marker"], linestyle="--",
                  color=s["color"], alpha=0.7, label=f"{s['label']} p99")
+        draw_band(axl, g, g[lc], "ttft_p50", s["color"], scale=1e3)
+        draw_band(axr, g, g[lc], "itl_p50", s["color"], scale=1e3)
         any_low_n |= mark_low_n(axl, g, g[lc], ttft_p50_ms)
         any_low_n |= mark_low_n(axl, g, g[lc], ttft_p99_ms)
         any_low_n |= mark_low_n(axr, g, g[lc], itl_p50_ms)
@@ -556,6 +559,7 @@ def fig_goodput(df, out, fmts):
         s = style_for(cfg, i)
         ax.plot(g[lc], g["goodput_rps"], marker=s["marker"], color=s["color"],
                 label=s["label"])
+        draw_band(ax, g, g[lc], "goodput_rps", s["color"])
         if has_itl2:
             ax.plot(g[lc], g["goodput_itl2_rps"], marker=s["marker"],
                     linestyle="--", color=s["color"], alpha=0.7,
@@ -625,6 +629,12 @@ def fig_reliability(df, out, fmts):
     need_win = has(df, ["requests_completed", "requests_started"])
     if not (need_fail or need_win):
         return
+    # the in-window completion column keeps the right panel's backlog meaning
+    # under the new accounting, where requests_completed tracks started-in-window
+    # requests to completion and no longer says anything about the window
+    win_col = ("requests_completed_in_window"
+               if has(df, ["requests_completed_in_window"])
+               else "requests_completed")
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
     all_loads = []
     any_low_n = False
@@ -638,7 +648,7 @@ def fig_reliability(df, out, fmts):
         if np.isfinite(err.values).any():
             max_err = max(max_err, float(np.nanmax(err.values)))
         axl.plot(g[lc], err, marker=s["marker"], color=s["color"], label=s["label"])
-        frac = (g["requests_completed"] / g["requests_started"]).clip(0, 1) * 100
+        frac = (g[win_col] / g["requests_started"]).clip(0, 1) * 100
         axr.plot(g[lc], frac, marker=s["marker"], color=s["color"], label=s["label"])
         any_low_n |= mark_low_n(axr, g, g[lc], frac)
         all_loads += g[lc].tolist()
@@ -668,22 +678,24 @@ def fig_energy(df, out, fmts):
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
     all_loads = []
     mode = "closed"
-    dual_present = False
+    caveat_present = False
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
-        dual = cfg in DUAL_NODE_CONFIGS
-        dual_present |= dual
-        # dagger the dual-node labels so the head-node-only caveat rides along
-        # into any legend the figure is dropped into
-        lab = s["label"] + (r" $\dagger$" if dual else "")
-        ls = "--" if dual else "-"
+        # dagger only the series whose power really covers one node; rows with
+        # power_nodes == 2 carry both nodes' draw and compare cleanly
+        head_only = head_only_power(cfg, g)
+        caveat_present |= head_only
+        lab = s["label"] + (r" $\dagger$" if head_only else "")
+        ls = "--" if cfg in DUAL_NODE_CONFIGS else "-"
         if "energy_per_token_j" in g.columns:
             axl.plot(g[lc], g["energy_per_token_j"], marker=s["marker"],
                      color=s["color"], linestyle=ls, label=lab)
+            draw_band(axl, g, g[lc], "energy_per_token_j", s["color"])
         if "tokens_per_watt" in g.columns:
             axr.plot(g[lc], g["tokens_per_watt"], marker=s["marker"],
                      color=s["color"], linestyle=ls, label=lab)
+            draw_band(axr, g, g[lc], "tokens_per_watt", s["color"])
         all_loads += g[lc].tolist()
     set_load_axis(axl, all_loads, mode)
     set_load_axis(axr, all_loads, mode)
@@ -692,14 +704,14 @@ def fig_energy(df, out, fmts):
     axr.set_ylabel("Tokens per watt (tok/s/W)")
     axr.set_ylim(bottom=0)
     axl.legend()
-    if dual_present:
+    if caveat_present:
         # one caption for the whole figure rather than crowding both panels
         fig.text(0.5, -0.04,
-                 r"$\dagger$ dual-node (TP=2, PP=2) power sampled on the head "
-                 r"node only: per-token energy is a lower bound, tokens/W an "
-                 r"upper bound.",
+                 r"$\dagger$ power sampled on the head node only for this "
+                 r"dual-node series: per-token energy is a lower bound, "
+                 r"tokens/W an upper bound.",
                  ha="center", va="top", fontsize=6.5, color="0.30")
-    save(fig, "energy", out, fmts, tight=dual_present)
+    save(fig, "energy", out, fmts, tight=caveat_present)
 
 
 def _throughput_col(df: pd.DataFrame) -> str:
@@ -716,16 +728,20 @@ def _throughput_col(df: pd.DataFrame) -> str:
 
 
 def fig_server_vs_client(df, out, fmts):
-    """Client windowed throughput vs server-side counter throughput per config.
+    """Client throughput vs server-side counter throughput per config.
 
-    A methodology diagnostic: where the client curve falls below the server
-    curve, the measurement window was too short to let enough requests finish,
-    so the client rate understates the server. They converge once the window is
-    long relative to request duration.
+    A methodology diagnostic. With token-in-window accounting the client rate
+    should track the server counter closely at every load; a residual gap means
+    streaming losses or a window opened off steady state. When the index also
+    carries the old completed-requests-only rate (tok_thru_completed_tps), it is
+    drawn dotted to show how badly that accounting understates throughput once
+    request duration approaches the window (the 60s/600s windowing artifacts).
     """
     if not (has(df, ["tok_thru_tps"]) and "server_gen_tps" in df.columns
             and df["server_gen_tps"].notna().any()):
         return
+    have_completed = ("tok_thru_completed_tps" in df.columns
+                      and df["tok_thru_completed_tps"].notna().any())
     fig, ax = plt.subplots(figsize=(COL_W, PANEL_H))
     all_loads = []
     mode = "closed"
@@ -736,6 +752,10 @@ def fig_server_vs_client(df, out, fmts):
                 label=f"{s['label']} client")
         ax.plot(g[lc], g["server_gen_tps"], marker=s["marker"], linestyle="--",
                 color=s["color"], alpha=0.7, label=f"{s['label']} server")
+        if have_completed:
+            ax.plot(g[lc], g["tok_thru_completed_tps"], marker=s["marker"],
+                    linestyle=":", color=s["color"], alpha=0.5,
+                    label=f"{s['label']} completed-only")
         all_loads += g[lc].tolist()
     set_load_axis(ax, all_loads, mode)
     ax.set_ylabel("Output token throughput (tok/s)")
@@ -836,6 +856,7 @@ def write_summary_table(df, out) -> None:
         for cfg in configs_present(msub):
             g, lc, _ = group(msub, cfg)
             s = style_for(cfg, 0)
+            head_only = head_only_power(cfg, g)
             for _, r in g.iterrows():
                 n = r.get("requests_completed", float("nan"))
                 low = pd.notna(n) and n < MIN_SAMPLES
@@ -846,7 +867,7 @@ def write_summary_table(df, out) -> None:
                     "win": r.get("measure_s", float("nan")),
                     "n": n,
                     "low": low,
-                    "dual": cfg in DUAL_NODE_CONFIGS,
+                    "dual": head_only,
                     "tps": r.get("tok_thru_tps", float("nan")),
                     "rps": r.get("req_thru_rps", float("nan")),
                     "ttft50": (r.get("ttft_p50", float("nan")) * 1e3),
@@ -892,7 +913,7 @@ def write_summary_table(df, out) -> None:
     md.append("")
     md.append(f"† fewer than {MIN_SAMPLES} completions in the window; "
               "percentiles are small-sample noise.")
-    if energy_present:
+    if energy_present and any(r["dual"] for r in rows):
         md.append("* dual-node power sampled on the head node only; per-token "
                   "energy is a lower bound.")
     md_path = os.path.join(out, "summary_table.md")
@@ -942,7 +963,7 @@ def write_summary_table(df, out) -> None:
         rf"% $^\dagger$ fewer than {MIN_SAMPLES} completions in the window "
         r"(small-sample).",
     ]
-    if energy_present:
+    if energy_present and any(r["dual"] for r in rows):
         lines.append(r"% $^*$ dual-node power sampled on head node only "
                      r"(per-token energy is a lower bound).")
     tex_path = os.path.join(out, "summary_table.tex")
@@ -1079,7 +1100,7 @@ def main() -> None:
     print(f"loaded {len(df)} rows, "
           + (f"models: {', '.join(models)}, " if models else "")
           + f"configs: {', '.join(configs_present(df))}")
-    df = dedupe_index(df)
+    df = collapse_repeats(df)
     report_quality(df)
     warn_low_n(df)
 

@@ -133,6 +133,109 @@ class GoodputTierTests(unittest.TestCase):
         self.assertEqual(round(s["goodput_itl2_rps"] * 10), 1)
 
 
+class WindowAccountingTests(unittest.TestCase):
+    """Throughput counts tokens received in-window; latency uses started-in-
+    window requests tracked to completion (the 60s/600s windowing-artifact
+    fixes)."""
+
+    @staticmethod
+    def _rec(t_start, t_end, token_times, success=True):
+        from types import SimpleNamespace
+        gaps = [b - a for a, b in zip(token_times, token_times[1:])]
+        return SimpleNamespace(
+            t_start=t_start, t_end=t_end, success=success,
+            output_tokens=len(token_times), token_times=token_times,
+            ttft=(token_times[0] - t_start) if token_times else float("nan"),
+            e2e=t_end - t_start,
+            mean_itl=(sum(gaps) / len(gaps)) if gaps else float("nan"),
+            inter_token_latencies=gaps)
+
+    def test_tokens_in_window_count_partial_streams(self):
+        from bench.metrics import aggregate
+        cfg = ExperimentConfig()
+        recs = [
+            # started in warmup, streams through the window: only the 3
+            # in-window tokens count
+            self._rec(1.0, 25.0, [5.0, 12.0, 14.0, 16.0, 22.0]),
+            # started and finished inside the window: both tokens count
+            self._rec(11.0, 13.0, [11.5, 12.5]),
+            # started in-window, finishes after it: 1 of 2 tokens in-window
+            self._rec(18.0, 30.0, [19.0, 21.0]),
+        ]
+        s = aggregate(recs, cfg, window_start=10.0, window_end=20.0)
+        self.assertEqual(s["total_output_tokens"], 6)
+        self.assertAlmostEqual(s["output_token_throughput_tps"], 0.6)
+        # completed-only accounting sees just the middle request
+        self.assertEqual(s["completed_output_tokens"], 2)
+        self.assertEqual(s["requests_completed_in_window"], 1)
+
+    def test_latency_set_is_started_in_window_tracked_to_completion(self):
+        from bench.metrics import aggregate
+        cfg = ExperimentConfig()
+        warmup_req = self._rec(1.0, 12.0, [2.0, 11.0])       # excluded: early start
+        slow_req = self._rec(11.0, 40.0, [15.0, 39.0])       # counted, ends late
+        s = aggregate([warmup_req, slow_req], cfg,
+                      window_start=10.0, window_end=20.0)
+        self.assertEqual(s["requests_started"], 1)
+        self.assertEqual(s["requests_completed"], 1)
+        self.assertAlmostEqual(s["e2e_s"]["p50"], 29.0)
+
+    def test_energy_totals_head_and_worker(self):
+        from types import SimpleNamespace
+        from bench.metrics import aggregate
+        cfg = ExperimentConfig()
+        head = SimpleNamespace(energy_joules=lambda a, b: 100.0,
+                               mean_power=lambda a, b: 10.0)
+        worker = SimpleNamespace(energy_joules=lambda a, b: 50.0,
+                                 mean_power=lambda a, b: 5.0)
+        rec = self._rec(11.0, 13.0, [11.5, 12.5])
+        s = aggregate([rec], cfg, 10.0, 20.0, power=head, worker_power=worker)
+        self.assertEqual(s["energy"]["power_nodes"], 2)
+        self.assertAlmostEqual(s["energy"]["mean_power_w"], 15.0)
+        self.assertAlmostEqual(s["energy"]["energy_j"], 150.0)
+        self.assertAlmostEqual(s["energy"]["energy_per_token_j"], 75.0)
+
+    def test_energy_falls_back_to_head_when_worker_has_no_samples(self):
+        from types import SimpleNamespace
+        from bench.metrics import aggregate
+        cfg = ExperimentConfig()
+        head = SimpleNamespace(energy_joules=lambda a, b: 100.0,
+                               mean_power=lambda a, b: 10.0)
+        dead = SimpleNamespace(energy_joules=lambda a, b: float("nan"),
+                               mean_power=lambda a, b: float("nan"))
+        rec = self._rec(11.0, 13.0, [11.5, 12.5])
+        s = aggregate([rec], cfg, 10.0, 20.0, power=head, worker_power=dead)
+        self.assertEqual(s["energy"]["power_nodes"], 1)
+        self.assertAlmostEqual(s["energy"]["mean_power_w"], 10.0)
+
+
+class PromptUniquenessTests(unittest.TestCase):
+    """Every generated prompt must differ from its first block (prefix-cache
+    defeating), including across identical buckets."""
+
+    class FakeTok:
+        def __call__(self, text, add_special_tokens=False):
+            return {"input_ids": [j % 97 for j in range(2048)]}
+
+        def decode(self, ids):
+            return " ".join(str(i) for i in ids)
+
+    def test_token_id_prompts_are_unique(self):
+        cfg = ExperimentConfig(tokenizer="fake", use_token_ids=True)
+        cfg.buckets = [WorkloadBucket(16, 8, 1.0)]
+        wl = Workload(cfg, tokenizer=self.FakeTok())
+        prompts = [tuple(wl.sample().prompt) for _ in range(200)]
+        self.assertEqual(len(set(p[:2] for p in prompts)), 200)
+        self.assertTrue(all(len(p) == 16 for p in prompts))
+
+    def test_fallback_text_prompts_are_unique(self):
+        cfg = ExperimentConfig(tokenizer="")
+        cfg.buckets = [WorkloadBucket(8, 4, 1.0)]
+        wl = Workload(cfg)
+        prompts = [wl.sample().prompt for _ in range(50)]
+        self.assertEqual(len(set(prompts)), 50)
+
+
 class SweptConcurrenciesTests(unittest.TestCase):
     """scripts/swept_concurrencies.py backs run_models.sh --skip-done."""
 
