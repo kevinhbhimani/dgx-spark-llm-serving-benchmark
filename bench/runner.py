@@ -1,10 +1,18 @@
-"""Load generation engines: closed loop fixed concurrency and open loop Poisson."""
+"""Load generation engines with steady-state measurement boundaries.
+
+Closed-loop measurement does not open until the configured warmup has elapsed
+*and* every worker has completed its initial request. After the nominal cooldown,
+both engines keep offering replacement load until every request that started in
+the measurement window has finished. Only then do remaining cooldown requests
+drain. This prevents first-wave and drain-down bias in latency percentiles.
+"""
 from __future__ import annotations
 import asyncio
+import math
 import random
 import time
 import aiohttp
-from .client import send_request
+from .client import RequestRecord, send_request
 
 # A dead server fails requests in microseconds; without a pause between retries
 # the closed loop hammers it at thousands of requests per second (one real run
@@ -16,15 +24,51 @@ FAILURE_BACKOFF_S = 0.5
 CONSECUTIVE_FAILURE_LIMIT = 50
 
 
-async def _closed_loop(cfg, workload, session, stop_at, records):
+async def _closed_loop(cfg, workload, session, phase_start, records):
     consecutive_failures = 0
+    desired_window_start = phase_start + cfg.warmup_s
+    initial_remaining = cfg.concurrency
+    measurement_pending = 0
+    state = {
+        "window_start": None,
+        "window_end": None,
+        "nominal_stop": None,
+        "load_stop": None,
+    }
 
     async def worker():
-        nonlocal consecutive_failures
-        while time.perf_counter() < stop_at:
+        nonlocal consecutive_failures, initial_remaining, measurement_pending
+        first = True
+        while True:
+            now = time.perf_counter()
+            nominal_stop = state["nominal_stop"]
+            if (nominal_stop is not None and now >= nominal_stop
+                    and measurement_pending == 0):
+                if state["load_stop"] is None:
+                    state["load_stop"] = now
+                break
             spec = workload.sample()
-            rec = await send_request(session, cfg, spec)
+            arrival = time.perf_counter()
+            is_measurement = (state["window_start"] is not None
+                              and state["window_start"] <= arrival
+                              < state["window_end"])
+            if is_measurement:
+                measurement_pending += 1
+            rec = await send_request(session, cfg, spec, t_start=arrival)
             records.append(rec)
+            if first:
+                first = False
+                initial_remaining -= 1
+                if initial_remaining == 0:
+                    # If the first wave outlives the configured warmup, begin only
+                    # after it is gone. Otherwise retain the configured boundary.
+                    window_start = max(desired_window_start, time.perf_counter())
+                    state["window_start"] = window_start
+                    state["window_end"] = window_start + cfg.measure_s
+                    state["nominal_stop"] = (state["window_end"]
+                                               + cfg.cooldown_s)
+            if is_measurement:
+                measurement_pending -= 1
             if rec.success:
                 consecutive_failures = 0
                 continue
@@ -42,56 +86,153 @@ async def _closed_loop(cfg, workload, session, stop_at, records):
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+    if state["window_start"] is None:
+        raise RuntimeError("closed-loop workers ended before warmup completed")
+    state["load_stop"] = state["load_stop"] or time.perf_counter()
+    return state
 
 
-async def _open_loop(cfg, workload, session, stop_at, records):
+async def _open_loop(cfg, workload, session, phase_start, records):
     rng = random.Random(cfg.seed + 7)
-    sem = asyncio.Semaphore(cfg.max_inflight)
     inflight = set()
+    window_start = phase_start + cfg.warmup_s
+    window_end = window_start + cfg.measure_s
+    nominal_stop = window_end + cfg.cooldown_s
+    measurement_pending = 0
+    measurement_done = asyncio.Event()
+    measurement_done.set()
+    consecutive_failures = 0
+    fatal_error = None
 
-    async def launch(spec, arrival):
-        async with sem:
-            # t_start is the intended arrival time, so time a request spends
-            # queued at the client (max_inflight) counts toward its latency
-            # rather than being silently dropped (coordinated omission).
-            records.append(await send_request(session, cfg, spec,
-                                              t_start=arrival))
+    async def launch(spec, arrival, is_measurement):
+        nonlocal measurement_pending, consecutive_failures, fatal_error
+        try:
+            rec = await send_request(session, cfg, spec, t_start=arrival)
+            records.append(rec)
+            if rec.success:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
+                    fatal_error = RuntimeError(
+                        f"aborting phase: {consecutive_failures} consecutive "
+                        f"request failures, last error: {rec.error}"
+                    )
+        finally:
+            if is_measurement:
+                measurement_pending -= 1
+                if measurement_pending == 0:
+                    measurement_done.set()
+
+    def schedule(arrival):
+        nonlocal measurement_pending, consecutive_failures, fatal_error
+        is_measurement = window_start <= arrival < window_end
+        spec = workload.sample()
+        # Bound *all* outstanding HTTP requests, not just the subset that has
+        # acquired a semaphore. When the client-side limit is full, record the
+        # offered arrival as a failed attempt instead of building an unbounded
+        # task queue or blocking the arrival clock (coordinated omission).
+        if len(inflight) >= cfg.max_inflight:
+            now = time.perf_counter()
+            rec = RequestRecord(cfg.config_label, spec.input_len,
+                                spec.output_len, t_start=arrival, t_end=now,
+                                error="client max_inflight exceeded")
+            records.append(rec)
+            consecutive_failures += 1
+            if consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
+                fatal_error = RuntimeError(
+                    f"aborting phase: {consecutive_failures} consecutive "
+                    "request failures, last error: client max_inflight exceeded"
+                )
+            return
+        if is_measurement:
+            if measurement_pending == 0:
+                measurement_done.clear()
+            measurement_pending += 1
+        t = asyncio.create_task(launch(spec, arrival, is_measurement))
+        inflight.add(t)
+        t.add_done_callback(inflight.discard)
 
     # Schedule arrivals against absolute times: sleeping one interarrival gap at
     # a time accumulates event-loop overhead and drops the achieved rate below
     # the target qps. If the loop falls behind, arrivals catch up in a burst,
     # preserving the average rate.
-    next_arrival = time.perf_counter() + rng.expovariate(cfg.qps)
-    while next_arrival < stop_at:
+    next_arrival = phase_start + rng.expovariate(cfg.qps)
+    while next_arrival < nominal_stop:
+        if fatal_error is not None:
+            break
         delay = next_arrival - time.perf_counter()
         if delay > 0:
             await asyncio.sleep(delay)
-        t = asyncio.create_task(launch(workload.sample(), next_arrival))
-        inflight.add(t)
-        t.add_done_callback(inflight.discard)
+        schedule(next_arrival)
         next_arrival += rng.expovariate(cfg.qps)
+
+    # Cooldown is a minimum. Continue Poisson arrivals while any measurement
+    # request (including one queued behind max_inflight) remains unfinished.
+    while measurement_pending > 0 and fatal_error is None:
+        delay = next_arrival - time.perf_counter()
+        if delay > 0:
+            try:
+                await asyncio.wait_for(measurement_done.wait(), timeout=delay)
+                break
+            except asyncio.TimeoutError:
+                pass
+        if measurement_pending == 0:
+            break
+        schedule(next_arrival)
+        next_arrival += rng.expovariate(cfg.qps)
+    load_stop = time.perf_counter()
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
+    if fatal_error is not None:
+        raise fatal_error
+    return {
+        "window_start": window_start,
+        "window_end": window_end,
+        "nominal_stop": nominal_stop,
+        "load_stop": load_stop,
+    }
 
 
-async def run_phase(cfg, workload, duration_s):
-    if duration_s <= 0:
-        raise ValueError("phase duration must be positive")
-    if cfg.mode == "closed" and cfg.concurrency < 1:
-        raise ValueError("closed-loop concurrency must be at least 1")
+async def run_phase(cfg, workload):
+    durations = (cfg.warmup_s, cfg.measure_s, cfg.cooldown_s)
+    if (any(isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value) for value in durations)
+            or cfg.warmup_s < 0 or cfg.measure_s <= 0
+            or cfg.cooldown_s < 0):
+        raise ValueError(
+            "warmup/cooldown must be finite and non-negative and measure positive"
+        )
+    if (isinstance(cfg.request_timeout_s, bool)
+            or not isinstance(cfg.request_timeout_s, (int, float))
+            or not math.isfinite(cfg.request_timeout_s)
+            or cfg.request_timeout_s <= 0):
+        raise ValueError("request_timeout_s must be finite and positive")
+    if cfg.mode == "closed":
+        if (isinstance(cfg.concurrency, bool)
+                or not isinstance(cfg.concurrency, int)
+                or cfg.concurrency < 1):
+            raise ValueError("closed-loop concurrency must be a positive integer")
     if cfg.mode == "open":
-        if cfg.qps <= 0:
-            raise ValueError("open-loop qps must be positive")
-        if cfg.max_inflight < 1:
-            raise ValueError("open-loop max_inflight must be at least 1")
+        if (isinstance(cfg.qps, bool)
+                or not isinstance(cfg.qps, (int, float))
+                or not math.isfinite(cfg.qps) or cfg.qps <= 0):
+            raise ValueError("open-loop qps must be finite and positive")
+        if (isinstance(cfg.max_inflight, bool)
+                or not isinstance(cfg.max_inflight, int)
+                or cfg.max_inflight < 1):
+            raise ValueError("open-loop max_inflight must be a positive integer")
     records = []
     connector = aiohttp.TCPConnector(limit=0)   # server controls admission
     async with aiohttp.ClientSession(connector=connector) as session:
-        stop_at = time.perf_counter() + duration_s
+        phase_start = time.perf_counter()
         if cfg.mode == "closed":
-            await _closed_loop(cfg, workload, session, stop_at, records)
+            state = await _closed_loop(cfg, workload, session, phase_start, records)
         elif cfg.mode == "open":
-            await _open_loop(cfg, workload, session, stop_at, records)
+            state = await _open_loop(cfg, workload, session, phase_start, records)
         else:
             raise ValueError(f"unknown mode {cfg.mode}")
-    return records
+    state["phase_start"] = phase_start
+    state["actual_end"] = time.perf_counter()
+    return records, state

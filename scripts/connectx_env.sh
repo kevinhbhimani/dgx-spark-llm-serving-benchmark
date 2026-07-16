@@ -33,11 +33,15 @@ export VLLM_HOST_IP="${VLLM_HOST_IP:-$HEAD_IP}"
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 
-# Container settings. Pin this tag in the platform table for reproducibility.
-# Check NGC for a newer monthly tag and pin whatever you validate on sm_121.
-export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm:26.04-py3}"
+# Container settings. The digest is the validated 26.04-py3 image; a mutable
+# monthly tag alone is not sufficient provenance for a paper rerun.
+export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+# The campus system resolver can be unavailable while direct DNS still works.
+# Docker launchers use this resolver explicitly; set empty only when local DNS
+# is known healthy and policy requires it.
+export CONTAINER_DNS="${CONTAINER_DNS-8.8.8.8}"
 
 # nvcr.io/nvidia/vllm tags do not consistently bundle Ray (26.04-py3 does not,
 # though earlier tags did), so start_ray.sh installs it explicitly. Pinned to

@@ -17,10 +17,12 @@ class ExperimentConfig:
     base_url: str = "http://127.0.0.1:8000"
     endpoint: str = "/v1/completions"
     model: str = ""               # served name; resolved from /v1/models if empty
+    model_revision: str = ""      # pinned HF commit used by the server
     api_key: str = "EMPTY"
 
     # prompt construction
     tokenizer: str = ""           # HF id or local path
+    tokenizer_revision: str = ""  # pinned HF commit; defaults to model revision
     trust_remote_code: bool = False  # for tokenizer/config loads of custom-code models
     use_token_ids: bool = True    # send token ids for exact input length
 
@@ -33,14 +35,20 @@ class ExperimentConfig:
         WorkloadBucket(8192, 512, 0.5),
     ])
     seed: int = 1234
+    # Smooth weighted round robin keeps every contiguous request slice close to
+    # the configured bucket proportions. This matters at slow points where only
+    # a few dozen requests start in the measurement window.
+    balanced_workload: bool = True
 
-    # load pattern. Warmup, measure, and cooldown run as ONE continuous phase:
-    # load is never dropped between warmup and the measurement window (a
-    # separate warmup loop drains completely and reopens the window on an idle
-    # server), and the cooldown keeps offered load up while requests started
-    # near the window's end finish, so their latency is measured under load.
+    # Load pattern. Warmup, measure, and cooldown run as one continuous phase.
+    # In closed loop, warmup is extended until every worker's first request has
+    # finished. Cooldown is a minimum: replacement load continues until every
+    # measurement-started request finishes, then remaining replacements drain.
     mode: str = "closed"          # closed for fixed concurrency, open for Poisson
     concurrency: int = 16
+    # Canonical intended load rectangle for fail-closed campaign plotting.
+    # scripts/run_all.sh supplies this even when a targeted repeat runs a subset.
+    expected_concurrencies: str = ""
     qps: float = 4.0
     max_inflight: int = 512
     warmup_s: float = 15.0
@@ -63,6 +71,11 @@ class ExperimentConfig:
     power_rails: list = field(default_factory=list)
     power_interval_ms: int = 100
     scrape_vllm_metrics: bool = True
+    # Release runs fail instead of silently writing incomplete observability.
+    # Smoke tests and ad-hoc users can leave these false.
+    require_power_data: bool = False
+    require_vllm_metrics_data: bool = False
+    require_provenance: bool = False
     # Dual-node runs: sample the worker node's GPU power too, via a Ray actor
     # pinned to node:<ip> inside the serving container (no SSH path exists from
     # head to worker). Both must be set; scripts/run_all.sh fills them in for
@@ -73,6 +86,10 @@ class ExperimentConfig:
     # labeling and output
     config_label: str = "single"
     model_label: str = ""         # short model slug for tags/plots; defaults from model
+    serving_fingerprint: str = "" # launch-policy hash supplied by run_models.sh
+    deployment_fingerprint: str = ""  # live server-state hash checked on resume
+    repeat_id: int = 1             # repeated measurement-window number
+    repeat_count: int = 1          # intended total windows in this campaign
     server_log: str = ""          # optional vLLM stdout log for exact capacity figures
     collect_hf_metadata: bool = False  # optional HF Hub lookups for weight/KV fallback
     out_dir: str = "results"

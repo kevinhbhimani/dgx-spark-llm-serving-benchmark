@@ -33,9 +33,13 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, NullFormatter
 
 
-# Below this many completions in the measurement window, percentiles are small
-# sample noise rather than a real reading (see fig_* functions and warn_low_n).
+# Below this many successful requests started in the measurement window,
+# percentiles are small-sample noise rather than a real reading.
 MIN_SAMPLES = 20
+# A p99 backed by fewer than 100 requests has not even observed one full
+# percentile's worth of tail samples. Keep its warning separate from the p50
+# threshold above rather than pretending one generic cutoff fits both.
+MIN_P99_SAMPLES = 100
 
 # ---- configuration appearance ------------------------------------------------
 CONFIG_ORDER = ["single", "tp2", "pp2"]
@@ -105,9 +109,13 @@ def set_rc(dpi: int, serif: bool) -> None:
 
 # ---- data helpers ------------------------------------------------------------
 NUMERIC_COLS = [
-    "concurrency", "target_qps", "measure_s", "warmup_s",
+    "concurrency", "target_qps", "repeat_id", "repeat_count", "measure_s", "warmup_s",
+    "configured_warmup_s", "warmup_extension_s", "cooldown_s",
+    "load_extension_s", "drain_s",
     "requests_started", "requests_completed", "requests_failed",
     "requests_completed_in_window",
+    "requests_started_and_completed_in_window",
+    "avg_input_tokens", "avg_requested_output_tokens",
     "total_output_tokens", "req_thru_rps", "tok_thru_tps",
     "tok_thru_completed_tps",
     "goodput_rps", "goodput_itl2_rps",
@@ -118,11 +126,16 @@ NUMERIC_COLS = [
     "requests_waiting_mean", "requests_waiting_max",
     "server_prompt_tokens", "server_generation_tokens",
     "server_prompt_tokens_cached", "server_gen_tps", "server_prompt_tps",
+    "server_metric_samples", "server_metric_sample_span_s",
+    "server_metric_max_gap_s", "kv_metric_samples", "kv_metric_sample_span_s",
+    "kv_metric_max_gap_s",
     "num_preemptions",
     "max_model_len", "gpu_memory_utilization", "block_size", "gpu_blocks",
     "total_kv_tokens", "weight_gb", "kv_cache_gb", "worker_weight_gb",
     "worker_kv_cache_gb", "max_concurrency",
     "mean_power_w", "mean_power_w_head", "mean_power_w_worker", "power_nodes",
+    "power_samples_head", "power_samples_worker",
+    "power_max_gap_s_head", "power_max_gap_s_worker",
     "energy_per_token_j", "tokens_per_watt",
 ]
 
@@ -155,6 +168,19 @@ def load_index(path: str) -> pd.DataFrame:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     if "config_label" not in df.columns:
         sys.exit("index is missing config_label; cannot group")
+    config_text = df["config_label"].astype(str)
+    if df["config_label"].isna().any() or config_text.str.strip().eq("").any():
+        sys.exit("index contains a blank config_label")
+    if "model_label" in df.columns or "model" in df.columns:
+        resolved = pd.Series(pd.NA, index=df.index, dtype="object")
+        for col in ("model_label", "model"):
+            if col not in df.columns:
+                continue
+            rendered = df[col].astype(str)
+            usable = df[col].notna() & rendered.str.strip().ne("")
+            resolved = resolved.where(resolved.notna(), rendered.where(usable))
+        if resolved.isna().any():
+            sys.exit("index contains a row with no model_label or model")
     return df
 
 
@@ -173,6 +199,23 @@ def style_for(cfg: str, i: int) -> dict:
                 marker=_FALLBACK_MARKERS[i % len(_FALLBACK_MARKERS)])
 
 
+def _model_values(df: pd.DataFrame) -> pd.Series | None:
+    """Return each row's display model, preferring a nonblank model label.
+
+    A partially populated ``model_label`` column must not hide rows that can be
+    identified by ``model``. Returning one resolved series also keeps every
+    filtering/grouping caller on the same row-wise fallback rule.
+    """
+    values = pd.Series(pd.NA, index=df.index, dtype="object")
+    for col in ("model_label", "model"):
+        if col not in df.columns:
+            continue
+        rendered = df[col].astype(str)
+        usable = df[col].notna() & rendered.str.strip().ne("")
+        values = values.where(values.notna(), rendered.where(usable))
+    return values if values.notna().any() else None
+
+
 def models_present(df: pd.DataFrame) -> list[str]:
     """Distinct model labels in the index, in first-seen order.
 
@@ -180,10 +223,8 @@ def models_present(df: pd.DataFrame) -> list[str]:
     list when neither is present (an old single-model index), which keeps the
     plots in their original per-config comparison mode.
     """
-    for col in ("model_label", "model"):
-        if col in df.columns and df[col].notna().any():
-            return list(dict.fromkeys(df[col].dropna().astype(str).tolist()))
-    return []
+    values = _model_values(df)
+    return [] if values is None else list(dict.fromkeys(values.dropna().tolist()))
 
 
 def _slug(name: str) -> str:
@@ -194,13 +235,6 @@ def _slug(name: str) -> str:
     return s.strip("-") or "model"
 
 
-def _model_col(df: pd.DataFrame) -> str | None:
-    for col in ("model_label", "model"):
-        if col in df.columns and df[col].notna().any():
-            return col
-    return None
-
-
 def iter_model_frames(df: pd.DataFrame):
     """Yield (model_label_or_None, sub_df) for each model in the index.
 
@@ -209,12 +243,12 @@ def iter_model_frames(df: pd.DataFrame):
     single-model or old index yields one (None, df) pair, preserving the
     original behavior.
     """
-    col = _model_col(df)
-    if col is None:
+    values = _model_values(df)
+    if values is None:
         yield None, df
         return
     for model in models_present(df):
-        yield model, df[df[col].astype(str) == model]
+        yield model, df[values == model]
 
 
 def load_col_for(g: pd.DataFrame, mode: str) -> str:
@@ -235,51 +269,244 @@ def group(df: pd.DataFrame, cfg: str):
     return g.sort_values(load_col), load_col, mode
 
 
-def collapse_repeats(df: pd.DataFrame) -> pd.DataFrame:
+def collapse_repeats(df: pd.DataFrame, *,
+                     allow_incomplete: bool = False) -> pd.DataFrame:
     """Average repeated (model, config, load) rows into one, keeping spread.
 
-    A sweep run with REPEATS>1 records several independent copies of each
+    A sweep run with REPEATS>1 records several fixed-workload windows of each
     point. Plotting them raw draws a line that zigzags through contradictory
     points at the same x value; collapsing to the mean gives one point per
     load, and the min/max across copies is kept for BAND_COLS as
     <col>__lo/<col>__hi so the figures can shade run-to-run spread behind the
-    mean line. A copy with zero completed requests (a dead-server row) is
-    dropped rather than averaged when a healthy copy of the same point exists.
-    Non-numeric fields keep the first copy's value; n_repeats records how many
-    copies back each point.
+    mean line. Failed copies are retained: dropping them would create
+    survivorship bias. Non-numeric fields keep the first copy's value;
+    n_repeats records how many windows back each point and the minimum per-window
+    sample size is preserved for percentile warnings.
     """
     parts = []
-    numeric = [c for c in NUMERIC_COLS if c in df.columns]
+    numeric = [
+        c for c in NUMERIC_COLS
+        if c in df.columns and c not in {"repeat_id", "repeat_count"}
+    ]
     for model, msub in iter_model_frames(df):
         pfx = f"{model} " if model else ""
         for cfg in configs_present(msub):
             g = msub[msub["config_label"] == cfg].copy()   # chronological order
             mode = str(g["mode"].iloc[0]) if "mode" in g.columns and len(g) else "closed"
+            if "mode" in g.columns and g["mode"].dropna().nunique() > 1:
+                sys.exit(f"cannot combine closed/open rows under config_label '{cfg}'")
             load_col = load_col_for(g, mode)
-            if not g.duplicated(subset=[load_col]).any():
-                g["n_repeats"] = 1
-                parts.append(g)
-                continue
+
+            if mode == "closed" and "expected_concurrencies" in g.columns:
+                schedule_sets = []
+                for raw in g["expected_concurrencies"]:
+                    tokens = str(raw or "").split()
+                    if (not tokens
+                            or any(not token.isdigit() or int(token) < 1
+                                   for token in tokens)
+                            or len(set(tokens)) != len(tokens)):
+                        sys.exit(
+                            f"invalid expected_concurrencies={raw!r} in the "
+                            f"{pfx}{cfg} curve"
+                        )
+                    schedule_sets.append(frozenset(map(int, tokens)))
+                if len(set(schedule_sets)) != 1:
+                    sys.exit(
+                        f"incompatible expected_concurrencies across the "
+                        f"{pfx}{cfg} curve"
+                    )
+                expected_loads = set(schedule_sets[0])
+                observed_values = pd.to_numeric(g[load_col], errors="coerce")
+                if (observed_values.isna().any()
+                        or not np.isfinite(observed_values).all()
+                        or not np.isclose(
+                            observed_values, np.round(observed_values)
+                        ).all()):
+                    sys.exit(f"invalid {load_col} in the {pfx}{cfg} curve")
+                observed_loads = set(np.round(observed_values).astype(int))
+                if observed_loads != expected_loads:
+                    message = (
+                        f"incomplete load rectangle for {pfx}{cfg}: observed "
+                        f"{sorted(observed_loads)}, intended "
+                        f"{sorted(expected_loads)}"
+                    )
+                    if not allow_incomplete:
+                        sys.exit(message + "; rerun the missing loads or pass "
+                                 "--allow-incomplete for diagnostic plots")
+                    print("  WARNING: " + message, file=sys.stderr)
+
+            # A release curve must describe one methodology and one actual
+            # deployment across *all* loads. Checking only duplicate rows at a
+            # single load lets a resumed sweep silently splice two servers into
+            # a plausible-looking line.
+            family_identity_cols = [
+                "methodology_version", "config_file_sha256",
+                "expected_concurrencies", "harness_source_sha256",
+                "client_environment_sha256",
+                "serving_fingerprint", "deployment_fingerprint", "model",
+                "measure_s", "configured_warmup_s", "cooldown_s",
+                "power_nodes", "power_scope", "vllm_version",
+                "max_model_len", "kv_cache_dtype", "gpu_memory_utilization",
+                "block_size", "gpu_blocks", "total_kv_tokens",
+                "total_kv_tokens_source", "hybrid_cache",
+            ]
+            mixed_family = [
+                c for c in family_identity_cols
+                if c in g.columns
+                and g[c].astype(object).where(g[c].notna(), "<missing>")
+                .nunique() > 1
+            ]
+            if mixed_family:
+                sys.exit(
+                    f"incompatible rows across the {pfx}{cfg} curve: "
+                    f"{', '.join(mixed_family)} differ. Plot separate indexes "
+                    "or filter to one deployment."
+                )
+
+            repeat_key = "__checked_repeat_id"
+            has_repeat_ids = "repeat_id" in g.columns and g["repeat_id"].notna().any()
+            has_repeat_counts = "repeat_count" in g.columns
+            expected_repeat_count = None
+            if has_repeat_counts:
+                raw_counts = pd.to_numeric(g["repeat_count"], errors="coerce")
+                valid_counts = (
+                    raw_counts.notna() & np.isfinite(raw_counts)
+                    & (raw_counts >= 1)
+                    & np.isclose(raw_counts, np.round(raw_counts))
+                )
+                if not valid_counts.all():
+                    sys.exit(
+                        f"invalid or missing repeat_count in the {pfx}{cfg} curve; "
+                        "repeat counts must be positive integers"
+                    )
+                expected_repeat_count = int(raw_counts.max())
+                if not has_repeat_ids:
+                    sys.exit(
+                        f"repeat_count is present without repeat_id in the "
+                        f"{pfx}{cfg} curve"
+                    )
+            if has_repeat_ids:
+                raw_ids = pd.to_numeric(g["repeat_id"], errors="coerce")
+                valid = (raw_ids.notna() & np.isfinite(raw_ids) & (raw_ids >= 1)
+                         & np.isclose(raw_ids, np.round(raw_ids)))
+                if not valid.all():
+                    sys.exit(
+                        f"invalid or missing repeat_id in the {pfx}{cfg} curve; "
+                        "repeat ids must be positive integers"
+                    )
+                g[repeat_key] = np.round(raw_ids).astype(int)
+                repeat_sets = []
+                if (has_repeat_counts
+                        and (g[repeat_key]
+                             > np.round(raw_counts).astype(int)).any()):
+                    sys.exit(
+                        f"repeat_id exceeds repeat_count in the {pfx}{cfg} curve"
+                    )
+                for load, grp in g.groupby(load_col, sort=False, dropna=False):
+                    duplicated = grp[repeat_key][grp[repeat_key].duplicated()].unique()
+                    if len(duplicated):
+                        ids = ", ".join(str(int(v)) for v in sorted(duplicated))
+                        sys.exit(
+                            f"duplicate repeat_id(s) {ids} for {pfx}{cfg} "
+                            f"{load_col}={load:g}; remove or isolate duplicate rows"
+                        )
+                    repeat_sets.append((load, frozenset(grp[repeat_key])))
+                observed = set().union(*(ids for _, ids in repeat_sets))
+                intended = (expected_repeat_count if expected_repeat_count is not None
+                            else max(observed) if observed else 0)
+                expected = set(range(1, intended + 1))
+                # A campaign may raise repeat_count mid-flight (top-up repeats
+                # resumed with --skip-done). Rows then declare mixed counts;
+                # as long as every load is complete up to the smallest declared
+                # count, the extra intended windows are pending work, not lost
+                # data, and the curve stays plottable with a warning.
+                floor_count = (int(raw_counts.min()) if has_repeat_counts
+                               else intended)
+                floor_expected = set(range(1, floor_count + 1))
+                topping_up = (
+                    floor_count != intended
+                    and all(ids >= floor_expected for _, ids in repeat_sets)
+                )
+                if any(ids != expected for _, ids in repeat_sets):
+                    detail = ", ".join(
+                        f"{load:g}={{{','.join(map(str, sorted(ids)))}}}"
+                        for load, ids in repeat_sets
+                    )
+                    message = (
+                        f"incomplete repeat rectangle for {pfx}{cfg} "
+                        f"({load_col}:repeat_ids {detail}; intended "
+                        f"{{{','.join(map(str, sorted(expected)))}}})"
+                    )
+                    if not (allow_incomplete or topping_up):
+                        sys.exit(
+                            message + "; rerun the missing windows or pass "
+                            "--allow-incomplete for diagnostic plots"
+                        )
+                    print(
+                        "  WARNING: " + message
+                        + "; aggregates use incomplete intended windows",
+                        file=sys.stderr,
+                    )
+            else:
+                # Legacy indexes predate repeat_id. They remain plottable, but
+                # duplicate rows cannot be certified as distinct windows.
+                if g.duplicated(subset=[load_col]).any():
+                    sys.exit(
+                        f"duplicate legacy rows for {pfx}{cfg} have no repeat_id; "
+                        "plot a deduplicated index"
+                    )
+                g[repeat_key] = 1
+
             rows = []
             for load, grp in g.groupby(load_col, sort=False, dropna=False):
-                if "requests_completed" in grp.columns and len(grp) > 1:
-                    healthy = grp[grp["requests_completed"] > 0]
-                    if len(healthy) and len(healthy) < len(grp):
-                        print(f"  note: {pfx}{cfg} {load_col}={load:g}: dropped "
-                              f"{len(grp) - len(healthy)} zero-completion "
-                              f"cop(ies) before averaging")
-                        grp = healthy
+                # Repeated rows may be averaged only if their methodology,
+                # resolved experiment, and measurement window are identical.
+                # Otherwise a plausible-looking mean would describe no run
+                # that actually occurred.
+                identity_cols = [
+                    "methodology_version", "config_file_sha256",
+                    "harness_source_sha256", "client_environment_sha256",
+                    "serving_fingerprint", "deployment_fingerprint",
+                    "experiment_fingerprint",
+                    "measure_s", "configured_warmup_s", "cooldown_s",
+                    # Energy values with different node coverage or sensor
+                    # scopes are not repeated measurements of the same
+                    # quantity and must never be averaged together.
+                    "power_nodes", "power_scope",
+                ]
+                mixed = [
+                    c for c in identity_cols
+                    if c in grp.columns
+                    and grp[c].astype(object).where(grp[c].notna(), "<missing>")
+                    .nunique() > 1
+                ]
+                if mixed:
+                    sys.exit(
+                        f"incompatible reruns for {pfx}{cfg} {load_col}={load:g}: "
+                        f"{', '.join(mixed)} differ. Plot separate indexes or "
+                        "filter to one experiment fingerprint."
+                    )
                 row = grp.iloc[0].copy()
+                row = row.drop(labels=[repeat_key])
                 for c in numeric:
-                    row[c] = grp[c].mean()
+                    row[c] = grp[c].mean(skipna=False)
+                if expected_repeat_count is not None:
+                    row["repeat_count"] = expected_repeat_count
                 for c in BAND_COLS:
                     if c in grp.columns and grp[c].notna().any():
                         row[f"{c}__lo"] = grp[c].min()
                         row[f"{c}__hi"] = grp[c].max()
-                row["n_repeats"] = len(grp)
-                if len(grp) > 1:
+                row["n_repeats"] = grp[repeat_key].nunique()
+                if row["n_repeats"] > 1 and "repeat_id" in row.index:
+                    row["repeat_id"] = np.nan
+                if "requests_completed" in grp.columns:
+                    row["requests_completed__min"] = grp["requests_completed"].min()
+                if "requests_failed" in grp.columns:
+                    row["requests_failed__max"] = grp["requests_failed"].max()
+                if row["n_repeats"] > 1:
                     print(f"  note: {pfx}{cfg} {load_col}={load:g}: averaged "
-                          f"{len(grp)} repeats (spread shaded in figures)")
+                          f"{int(row['n_repeats'])} repeats "
+                          "(spread shaded in figures)")
                 rows.append(row)
             parts.append(pd.DataFrame(rows))
     return pd.concat(parts) if parts else df
@@ -301,8 +528,8 @@ def has(df: pd.DataFrame, cols: list[str]) -> bool:
     return all(c in df.columns and df[c].notna().any() for c in cols)
 
 
-def mark_low_n(ax, g, x, y) -> bool:
-    """Circle points backed by fewer than MIN_SAMPLES completions.
+def mark_low_n(ax, g, x, y, minimum=None) -> bool:
+    """Circle points backed by fewer than the requested successful samples.
 
     x and y must be the same (already unit-converted) values passed to the
     line's ax.plot() call -- e.g. ttft_p50 * 1e3, not the raw column -- or
@@ -310,9 +537,13 @@ def mark_low_n(ax, g, x, y) -> bool:
 
     Returns whether any point was marked, so callers can add a legend entry.
     """
-    if "requests_completed" not in g.columns:
+    ncol = ("requests_completed__min"
+            if "requests_completed__min" in g.columns
+            else "requests_completed")
+    if ncol not in g.columns:
         return False
-    mask = g["requests_completed"] < MIN_SAMPLES
+    minimum = MIN_SAMPLES if minimum is None else minimum
+    mask = g[ncol] < minimum
     if not mask.any():
         return False
     x = x if isinstance(x, pd.Series) else pd.Series(x, index=g.index)
@@ -325,9 +556,12 @@ def mark_low_n(ax, g, x, y) -> bool:
 LOW_N_PROXY = Line2D([], [], marker="o", linestyle="none", markersize=7,
                      markerfacecolor="none", markeredgecolor="0.15",
                      label=f"n < {MIN_SAMPLES} (unreliable)")
+P99_LOW_N_PROXY = Line2D([], [], marker="o", linestyle="none", markersize=7,
+                         markerfacecolor="none", markeredgecolor="0.15",
+                         label=f"p99 n < {MIN_P99_SAMPLES}")
 
 
-def add_low_n_legend(ax, any_marked: bool, **legend_kwargs) -> None:
+def add_low_n_legend(ax, any_marked: bool, proxies=None, **legend_kwargs) -> None:
     """Re-add the legend with a low-n proxy entry appended.
 
     Pass the same kwargs (loc, fontsize, ncol, ...) used for the figure's
@@ -335,8 +569,9 @@ def add_low_n_legend(ax, any_marked: bool, **legend_kwargs) -> None:
     """
     if not any_marked:
         return
+    proxies = proxies or [LOW_N_PROXY]
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles + [LOW_N_PROXY], labels + [LOW_N_PROXY.get_label()],
+    ax.legend(handles + proxies, labels + [p.get_label() for p in proxies],
               **legend_kwargs)
 
 
@@ -344,31 +579,47 @@ def warn_low_n(df: pd.DataFrame) -> None:
     if "requests_completed" not in df.columns:
         return
     any_bad = False
+    any_bad_p99 = False
     for model, msub in iter_model_frames(df):
         pfx = f"{model}/" if model else ""
         for cfg in configs_present(msub):
             g, lc, _ = group(msub, cfg)
-            bad = g[g["requests_completed"] < MIN_SAMPLES]
+            ncol = ("requests_completed__min"
+                    if "requests_completed__min" in g.columns
+                    else "requests_completed")
+            bad = g[g[ncol] < MIN_SAMPLES]
             if len(bad):
                 any_bad = True
                 pts = ", ".join(f"{lc}={v:g} (n={int(n)})"
-                                for v, n in zip(bad[lc], bad["requests_completed"]))
+                                for v, n in zip(bad[lc], bad[ncol]))
                 print(f"  warning: {pfx}{cfg} has {len(bad)} point(s) with fewer "
-                      f"than {MIN_SAMPLES} completed requests in the window: {pts}")
+                      f"than {MIN_SAMPLES} successful requests started in "
+                      f"the window: {pts}")
+            bad_p99 = g[g[ncol] < MIN_P99_SAMPLES]
+            if len(bad_p99):
+                any_bad_p99 = True
+                pts = ", ".join(
+                    f"{lc}={v:g} (n={int(n)})"
+                    for v, n in zip(bad_p99[lc], bad_p99[ncol])
+                )
+                print(f"  warning: {pfx}{cfg} has {len(bad_p99)} point(s) with "
+                      f"fewer than {MIN_P99_SAMPLES} requests for p99: {pts}")
     if any_bad:
         print(f"           percentiles at those loads are small-sample noise, not "
               f"a capacity reading; circled (o) in the figures. A longer "
-              f"--measure-s at high concurrency gives more completions to trust.")
+              f"--measure-s gives more requests to trust.")
+    if any_bad_p99:
+        print("           p99 points below the p99 threshold are circled in the "
+              "tail-latency figure; quote them only as exploratory maxima.")
 
 
 def report_quality(df: pd.DataFrame) -> None:
     """Print a compact data-quality report before drawing anything.
 
     Surfaces the two things that most often make this workload's numbers
-    misleading: (1) measurement windows so short that few requests finish, so
-    windowed throughput reads far below the server's real capacity (and can even
-    read zero while the server is healthy and busy), and (2) dual-node runs whose
-    power is sampled on one node only.
+    misleading: (1) too few successful measurement-started requests for stable
+    latency percentiles, and (2) dual-node runs whose power is sampled on one
+    node only.
     """
     print("data-quality report")
     have_ms = "measure_s" in df.columns
@@ -393,15 +644,27 @@ def _report_series(msub, cfg, pfx, have_ms):
     if have_ms and len(windows) > 1:
         print(f"           mixed measurement windows in this series; windowed "
               f"rates stay comparable but per-point sample sizes differ a lot")
-    # a completed==0 point is not a measurement of zero throughput; it means
-    # nothing finished inside the window. Call it out explicitly.
-    if "requests_completed" in g.columns:
-        empties = g[g["requests_completed"] == 0]
+    # A completed-in-window==0 point does not invalidate exact token-in-window
+    # throughput, but it does expose why conventional completed-only accounting
+    # would have been misleading. Call that diagnostic out explicitly.
+    if "requests_completed_in_window" in g.columns:
+        empties = g[g["requests_completed_in_window"] == 0]
         if len(empties):
             pts = ", ".join(f"{lc}={v:g}" for v in empties[lc])
             print(f"           {len(empties)} point(s) with 0 completions "
-                  f"in-window ({pts}): throughput there is 'no data', not 0; "
-                  f"rerun with a longer --measure-s before trusting the curve")
+                  f"in-window ({pts}): the completed-only diagnostic is 0, "
+                  f"but exact token/server throughput remains valid")
+    failed_col = ("requests_failed__max" if "requests_failed__max" in g.columns
+                  else "requests_failed")
+    if failed_col in g.columns:
+        failed = g[g[failed_col] > 0]
+        if len(failed):
+            pts = ", ".join(
+                f"{lc}={v:g} (max failed={int(n)})"
+                for v, n in zip(failed[lc], failed[failed_col])
+            )
+            print(f"           request failures occurred at {pts}; repeats "
+                  "are retained rather than survivorship-filtered")
 
 
 def set_load_axis(ax, loads, mode: str) -> None:
@@ -439,14 +702,8 @@ def fig_throughput_scaling(df, out, fmts):
     tcol = _throughput_col(df)
     if not has(df, [tcol]):
         return
-    # server_gen_tps is a server-side counter over the window, so it stays honest
-    # even when few requests finished in-window; low completion counts do not make
-    # it unreliable. Only circle low-n points when we fall back to the client
-    # windowed rate, which is the metric those completions actually back.
-    mark_ln = tcol == "tok_thru_tps"
     fig, ax = plt.subplots(figsize=(COL_W, PANEL_H))
     all_loads = []
-    any_low_n = False
     mode = "closed"
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
@@ -454,14 +711,11 @@ def fig_throughput_scaling(df, out, fmts):
         ax.plot(g[lc], g[tcol], marker=s["marker"], color=s["color"],
                 label=s["label"])
         draw_band(ax, g, g[lc], tcol, s["color"])
-        if mark_ln:
-            any_low_n |= mark_low_n(ax, g, g[lc], g[tcol])
         all_loads += g[lc].tolist()
     set_load_axis(ax, all_loads, mode)
     ax.set_ylabel("Output token throughput (tok/s)")
     ax.set_ylim(bottom=0)
     ax.legend()
-    add_low_n_legend(ax, any_low_n)
     save(fig, "throughput_scaling", out, fmts)
 
 
@@ -509,6 +763,7 @@ def fig_tail_latency(df, out, fmts):
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
     all_loads = []
     any_low_n = False
+    any_low_p99 = False
     mode = "closed"
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
@@ -528,9 +783,11 @@ def fig_tail_latency(df, out, fmts):
         draw_band(axl, g, g[lc], "ttft_p50", s["color"], scale=1e3)
         draw_band(axr, g, g[lc], "itl_p50", s["color"], scale=1e3)
         any_low_n |= mark_low_n(axl, g, g[lc], ttft_p50_ms)
-        any_low_n |= mark_low_n(axl, g, g[lc], ttft_p99_ms)
+        any_low_p99 |= mark_low_n(axl, g, g[lc], ttft_p99_ms,
+                                  MIN_P99_SAMPLES)
         any_low_n |= mark_low_n(axr, g, g[lc], itl_p50_ms)
-        any_low_n |= mark_low_n(axr, g, g[lc], itl_p99_ms)
+        any_low_p99 |= mark_low_n(axr, g, g[lc], itl_p99_ms,
+                                  MIN_P99_SAMPLES)
         all_loads += g[lc].tolist()
     for ax, title in ((axl, "TTFT (ms)"), (axr, "Inter token latency (ms)")):
         set_load_axis(ax, all_loads, mode)
@@ -539,7 +796,10 @@ def fig_tail_latency(df, out, fmts):
     tail_legend_kwargs = dict(ncol=2, loc="upper center",
                               bbox_to_anchor=(0.5, -0.18), fontsize=7)
     axl.legend(**tail_legend_kwargs)
-    add_low_n_legend(axl, any_low_n, **tail_legend_kwargs)
+    proxies = ([LOW_N_PROXY] if any_low_n else []) + (
+        [P99_LOW_N_PROXY] if any_low_p99 else [])
+    add_low_n_legend(axl, bool(proxies), proxies=proxies,
+                     **tail_legend_kwargs)
     save(fig, "tail_latency", out, fmts)
 
 
@@ -626,15 +886,11 @@ def fig_reliability(df, out, fmts):
     windowing effect from being read as the server dropping requests.
     """
     need_fail = has(df, ["requests_failed", "requests_completed"])
-    need_win = has(df, ["requests_completed", "requests_started"])
+    need_win = has(df, ["requests_started_and_completed_in_window",
+                        "requests_completed"])
     if not (need_fail or need_win):
         return
-    # the in-window completion column keeps the right panel's backlog meaning
-    # under the new accounting, where requests_completed tracks started-in-window
-    # requests to completion and no longer says anything about the window
-    win_col = ("requests_completed_in_window"
-               if has(df, ["requests_completed_in_window"])
-               else "requests_completed")
+    win_col = "requests_started_and_completed_in_window"
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
     all_loads = []
     any_low_n = False
@@ -643,14 +899,23 @@ def fig_reliability(df, out, fmts):
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
-        finished = g["requests_completed"] + g.get("requests_failed", 0)
-        err = (g.get("requests_failed", 0) / finished.replace(0, np.nan)) * 100
-        if np.isfinite(err.values).any():
-            max_err = max(max_err, float(np.nanmax(err.values)))
-        axl.plot(g[lc], err, marker=s["marker"], color=s["color"], label=s["label"])
-        frac = (g[win_col] / g["requests_started"]).clip(0, 1) * 100
-        axr.plot(g[lc], frac, marker=s["marker"], color=s["color"], label=s["label"])
-        any_low_n |= mark_low_n(axr, g, g[lc], frac)
+        if need_fail:
+            finished = g["requests_completed"] + g["requests_failed"]
+            err = (g["requests_failed"] / finished.replace(0, np.nan)) * 100
+            if np.isfinite(err.values).any():
+                max_err = max(max_err, float(np.nanmax(err.values)))
+            axl.plot(g[lc], err, marker=s["marker"], color=s["color"],
+                     label=s["label"])
+        if need_win:
+            # Use successful measurement-started requests in both numerator
+            # and denominator. Failures belong exclusively in the left panel;
+            # letting them lower this ratio would make an error look like
+            # backlog despite the panel's stated purpose.
+            frac = (g[win_col] / g["requests_completed"].replace(0, np.nan))
+            frac = frac.clip(0, 1) * 100
+            axr.plot(g[lc], frac, marker=s["marker"], color=s["color"],
+                     label=s["label"])
+            any_low_n |= mark_low_n(axr, g, g[lc], frac)
         all_loads += g[lc].tolist()
     set_load_axis(axl, all_loads, mode)
     set_load_axis(axr, all_loads, mode)
@@ -658,14 +923,23 @@ def fig_reliability(df, out, fmts):
     # keep a readable band even when every value is zero, so a flat "no errors"
     # result is legible rather than a line pinned to an invisible axis edge
     axl.set_ylim(-0.5, max(5.0, max_err * 1.15))
-    if max_err == 0:
+    if need_fail and max_err == 0:
         axl.text(0.5, 0.5, "no request failures\nacross the sweep",
+                 transform=axl.transAxes, ha="center", va="center",
+                 fontsize=8, color="0.4")
+    elif not need_fail:
+        axl.text(0.5, 0.5, "unavailable in index schema",
                  transform=axl.transAxes, ha="center", va="center",
                  fontsize=8, color="0.4")
     axr.set_ylabel("Completed within window (%)")
     axr.set_ylim(0, 105)
     axr.set_title("windowing / backlog, not errors", fontsize=7.5, color="0.35")
-    axl.legend()
+    if not need_win:
+        axr.text(0.5, 0.5, "unavailable in old index schema",
+                 transform=axr.transAxes, ha="center", va="center",
+                 fontsize=8, color="0.4")
+    if need_fail:
+        axl.legend()
     add_low_n_legend(axr, any_low_n)
     save(fig, "reliability", out, fmts)
 
@@ -676,55 +950,68 @@ def fig_energy(df, out, fmts):
               "(rerun with POWER_BACKEND set)")
         return
     fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
+    gpu_scope = ("power_scope" in df.columns
+                 and df["power_scope"].dropna().eq("gpu_devices").all())
     all_loads = []
     mode = "closed"
     caveat_present = False
     for i, cfg in enumerate(configs_present(df)):
         g, lc, mode = group(df, cfg)
         s = style_for(cfg, i)
-        # dagger only the series whose power really covers one node; rows with
-        # power_nodes == 2 carry both nodes' draw and compare cleanly
-        head_only = head_only_power(cfg, g)
-        caveat_present |= head_only
-        lab = s["label"] + (r" $\dagger$" if head_only else "")
+        if cfg in DUAL_NODE_CONFIGS:
+            head_mask = ((~(g["power_nodes"] >= 2)) if "power_nodes" in g.columns
+                         else pd.Series(True, index=g.index))
+        else:
+            head_mask = pd.Series(False, index=g.index)
+        caveat_present |= bool(head_mask.any())
+        lab = s["label"]
         ls = "--" if cfg in DUAL_NODE_CONFIGS else "-"
         if "energy_per_token_j" in g.columns:
             axl.plot(g[lc], g["energy_per_token_j"], marker=s["marker"],
                      color=s["color"], linestyle=ls, label=lab)
+            if head_mask.any():
+                axl.scatter(g.loc[head_mask, lc],
+                            g.loc[head_mask, "energy_per_token_j"], marker="x",
+                            color="0.15", s=35, zorder=7)
             draw_band(axl, g, g[lc], "energy_per_token_j", s["color"])
         if "tokens_per_watt" in g.columns:
             axr.plot(g[lc], g["tokens_per_watt"], marker=s["marker"],
                      color=s["color"], linestyle=ls, label=lab)
+            if head_mask.any():
+                axr.scatter(g.loc[head_mask, lc],
+                            g.loc[head_mask, "tokens_per_watt"], marker="x",
+                            color="0.15", s=35, zorder=7)
             draw_band(axr, g, g[lc], "tokens_per_watt", s["color"])
         all_loads += g[lc].tolist()
     set_load_axis(axl, all_loads, mode)
     set_load_axis(axr, all_loads, mode)
-    axl.set_ylabel("Energy per token (J)")
+    axl.set_ylabel("GPU energy per token (J)" if gpu_scope
+                   else "Sampled energy per token (J)")
     axl.set_ylim(bottom=0)
-    axr.set_ylabel("Tokens per watt (tok/s/W)")
+    axr.set_ylabel("Tokens per GPU watt (tok/s/W)" if gpu_scope
+                   else "Tokens per sampled watt (tok/s/W)")
     axr.set_ylim(bottom=0)
     axl.legend()
     if caveat_present:
         # one caption for the whole figure rather than crowding both panels
         fig.text(0.5, -0.04,
-                 r"$\dagger$ power sampled on the head node only for this "
-                 r"dual-node series: per-token energy is a lower bound, "
+                 r"$\times$ power sampled on the head node only at marked "
+                 r"dual-node points: per-token energy is a lower bound, "
                  r"tokens/W an upper bound.",
                  ha="center", va="top", fontsize=6.5, color="0.30")
     save(fig, "energy", out, fmts, tight=caveat_present)
 
 
 def _throughput_col(df: pd.DataFrame) -> str:
-    """Prefer the server-side generation rate over the client windowed rate.
+    """Use exact client token-in-window throughput as the headline rate.
 
-    server_gen_tps counts tokens the server produced during the window and does
-    not depend on how many client requests finished inside it, so it is the
-    honest throughput at high concurrency. Falls back to the client rate when the
-    server counter is absent (older indexes).
+    New runs count returned delta token IDs exactly, including partial streams,
+    so this is completion-independent and present for every valid row. The
+    server counter remains a separate diagnostic and a fallback for old indexes.
     """
-    if "server_gen_tps" in df.columns and df["server_gen_tps"].notna().any():
-        return "server_gen_tps"
-    return "tok_thru_tps"
+    if "tok_thru_tps" in df.columns and df["tok_thru_tps"].notna().any():
+        return "tok_thru_tps"
+    return "server_gen_tps"
 
 
 def fig_server_vs_client(df, out, fmts):
@@ -766,10 +1053,10 @@ def fig_server_vs_client(df, out, fmts):
 
 # ---- cross-model comparison --------------------------------------------------
 def _series_rows(df, model, cfg):
-    col = _model_col(df)
-    if col is None:
+    values = _model_values(df)
+    if values is None:
         return df[df["config_label"] == cfg]
-    return df[(df[col].astype(str) == str(model)) & (df["config_label"] == cfg)]
+    return df[(values == str(model)) & (df["config_label"] == cfg)]
 
 
 def _peak_row(sub, tcol):
@@ -782,8 +1069,8 @@ def fig_model_comparison(df, out, fmts):
     """Grouped bars comparing models: peak throughput and TTFT at that peak.
 
     One group per model, one bar per serving config (colored by config, <=3
-    hues). Throughput is the peak over the concurrency sweep using the honest
-    server-side rate when available; TTFT is the median at that same peak point.
+    hues). Throughput is the peak exact client token-in-window rate over the
+    concurrency sweep; TTFT is the median at that same peak point.
     """
     models = models_present(df)
     if len(models) < 2:
@@ -805,7 +1092,7 @@ def fig_model_comparison(df, out, fmts):
         off = (j - (len(configs) - 1) / 2) * width
         axl.bar(x + off, peaks, width, color=s["color"], label=s["label"])
         axr.bar(x + off, ttfts, width, color=s["color"], label=s["label"])
-    srv = " (server-side)" if tcol == "server_gen_tps" else ""
+    srv = " (server fallback)" if tcol == "server_gen_tps" else ""
     axl.set_ylabel(f"Peak output throughput{srv} (tok/s)")
     axl.set_ylim(bottom=0)
     axr.set_ylabel("Median TTFT at peak (ms)")
@@ -834,32 +1121,50 @@ def _fmt(v, spec, low_n=False):
         return str(v)
 
 
+def _yes_no(v):
+    try:
+        if pd.isna(v):
+            return "--"
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str):
+        return "yes" if v.strip().lower() in {"true", "1", "yes"} else "no"
+    return "yes" if bool(v) else "no"
+
+
 def write_summary_table(df, out) -> None:
     """Write a paper-ready per-point table as LaTeX (booktabs) and Markdown.
 
     One row per (config, load). Columns are the headline serving numbers a
     reader wants beside the figures: sample size, output-token and request
     throughput, TTFT/ITL/E2E percentiles, goodput, and (when present) per-token
-    energy. Rows whose percentiles rest on fewer than MIN_SAMPLES completions
-    are daggered; dual-node energy carries the head-node-only caveat.
+    energy. Rows with fewer than MIN_P99_SAMPLES successful requests are
+    daggered because the table includes p99; dual-node energy carries the
+    head-node-only caveat.
     """
     os.makedirs(out, exist_ok=True)
     rows = []
+    tcol = _throughput_col(df)
     energy_present = has(df, ["energy_per_token_j"])
+    gpu_scope = (energy_present and "power_scope" in df.columns
+                 and df["power_scope"].dropna().eq("gpu_devices").all())
     models = models_present(df)
     multi_model = len(models) > 1
     # iterate per (model, config) so multiple models are never merged into one
     # config series; single-model indexes collapse to the original behavior
-    mcol = _model_col(df)
+    model_values = _model_values(df)
     for model in (models or [None]):
-        msub = df if model is None or mcol is None else df[df[mcol].astype(str) == model]
+        msub = (df if model is None or model_values is None
+                else df[model_values == model])
         for cfg in configs_present(msub):
             g, lc, _ = group(msub, cfg)
             s = style_for(cfg, 0)
-            head_only = head_only_power(cfg, g)
             for _, r in g.iterrows():
                 n = r.get("requests_completed", float("nan"))
-                low = pd.notna(n) and n < MIN_SAMPLES
+                n_min = r.get("requests_completed__min", n)
+                # This table includes TTFT p99, so apply the tail-specific
+                # threshold rather than the p50-only cutoff.
+                low = pd.notna(n_min) and n_min < MIN_P99_SAMPLES
                 rows.append({
                     "model": model or "",
                     "cfg": s["label"],
@@ -867,8 +1172,8 @@ def write_summary_table(df, out) -> None:
                     "win": r.get("measure_s", float("nan")),
                     "n": n,
                     "low": low,
-                    "dual": head_only,
-                    "tps": r.get("tok_thru_tps", float("nan")),
+                    "dual": head_only_power(cfg, pd.DataFrame([r])),
+                    "tps": r.get(tcol, float("nan")),
                     "rps": r.get("req_thru_rps", float("nan")),
                     "ttft50": (r.get("ttft_p50", float("nan")) * 1e3),
                     "ttft99": (r.get("ttft_p99", float("nan")) * 1e3),
@@ -890,7 +1195,7 @@ def write_summary_table(df, out) -> None:
     aligns += ["---", "--:", "--:", "--:", "--:", "--:", "--:", "--:", "--:",
                "--:"]
     if energy_present:
-        headers.append("Energy (J/tok)")
+        headers.append("GPU energy (J/tok)" if gpu_scope else "Energy (J/tok)")
         aligns.append("--:")
     md = ["| " + " | ".join(headers) + " |",
           "|" + "|".join(aligns) + "|"]
@@ -911,8 +1216,8 @@ def write_summary_table(df, out) -> None:
             cells.append(f"{_fmt(r['ept'], '.3f')}{'*' if r['dual'] else ''}")
         md.append("| " + " | ".join(cells) + " |")
     md.append("")
-    md.append(f"† fewer than {MIN_SAMPLES} completions in the window; "
-              "percentiles are small-sample noise.")
+    md.append(f"† fewer than {MIN_P99_SAMPLES} requests; p99 is small-sample "
+              "noise.")
     if energy_present and any(r["dual"] for r in rows):
         md.append("* dual-node power sampled on the head node only; per-token "
                   "energy is a lower bound.")
@@ -927,15 +1232,15 @@ def write_summary_table(df, out) -> None:
     # columns reject. \rlap keeps the number right-aligned with the marker hung
     # into the gutter. Only \usepackage{booktabs} is required.
     ecol = "r" if energy_present else ""
-    ehead = " & J/tok" if energy_present else ""
+    ehead = (" & GPU J/tok" if gpu_scope else " & J/tok") if energy_present else ""
     mcolspec = "l " if multi_model else ""
     mhead_tex = "Model & " if multi_model else ""
     lines = [
         r"% Requires \usepackage{booktabs}.",
-        r"\begin{tabular}{" + mcolspec + r"l r r r r r r r r r " + ecol + "}",
+        r"\begin{tabular}{" + mcolspec + r"l " + "r " * 10 + ecol + "}",
         r"\toprule",
         mhead_tex + r"Config & Load & Win (s) & $n$ & Tok/s & Req/s & "
-        r"TTFT$_{50}$ (ms) & ITL$_{50}$ (ms) & E2E$_{50}$ (s) & "
+        r"TTFT$_{50}$ (ms) & TTFT$_{99}$ (ms) & ITL$_{50}$ (ms) & E2E$_{50}$ (s) & "
         r"Goodput" + ehead + r" \\",
         r"\midrule",
     ]
@@ -955,13 +1260,13 @@ def write_summary_table(df, out) -> None:
             f"{mcell}{r['cfg']} & {_fmt(r['load'], '.0f')} & {_fmt(r['win'], '.0f')} & "
             f"{_fmt(r['n'], '.0f')}{dag} & {_fmt(r['tps'], '.0f')} & "
             f"{_fmt(r['rps'], '.2f')} & {_fmt(r['ttft50'], '.0f')} & "
-            f"{_fmt(r['itl50'], '.0f')} & {_fmt(r['e2e50'], '.1f')} & "
+            f"{_fmt(r['ttft99'], '.0f')} & {_fmt(r['itl50'], '.0f')} & "
+            f"{_fmt(r['e2e50'], '.1f')} & "
             f"{_fmt(r['good'], '.2f')}{eic} \\\\")
     lines += [
         r"\bottomrule",
         r"\end{tabular}",
-        rf"% $^\dagger$ fewer than {MIN_SAMPLES} completions in the window "
-        r"(small-sample).",
+        rf"% $^\dagger$ fewer than {MIN_P99_SAMPLES} requests for p99.",
     ]
     if energy_present and any(r["dual"] for r in rows):
         lines.append(r"% $^*$ dual-node power sampled on head node only "
@@ -975,7 +1280,8 @@ def write_summary_table(df, out) -> None:
 _CAP_COLS = ["weight_gb", "kv_cache_gb", "worker_weight_gb",
              "worker_kv_cache_gb", "total_kv_tokens", "gpu_blocks",
              "block_size", "kv_cache_dtype", "gpu_memory_utilization",
-             "max_model_len", "max_concurrency"]
+             "max_model_len", "max_concurrency", "total_kv_tokens_source",
+             "hybrid_cache", "vllm_version"]
 
 
 def write_capacity_table(df, out) -> None:
@@ -990,11 +1296,12 @@ def write_capacity_table(df, out) -> None:
         return
     os.makedirs(out, exist_ok=True)
     models = models_present(df) or [None]
-    mcol = _model_col(df)
+    model_values = _model_values(df)
     multi_model = len([m for m in models if m is not None]) > 1
     rows = []
     for model in models:
-        msub = df if model is None or mcol is None else df[df[mcol].astype(str) == model]
+        msub = (df if model is None or model_values is None
+                else df[model_values == model])
         for cfg in configs_present(msub):
             g, _, _ = group(msub, cfg)
             r = g.iloc[0]
@@ -1004,7 +1311,8 @@ def write_capacity_table(df, out) -> None:
     hdr = (["Model"] if multi_model else []) + [
         "Config", "HF weight (GiB)", "HF KV (GiB)", "Worker weight (GiB)",
         "Worker KV (GiB)", "KV tokens", "GPU blocks", "Block", "KV dtype",
-        "GPU mem util", "max_model_len", "max conc."]
+        "GPU mem util", "max_model_len", "max conc.", "Hybrid cache",
+        "KV token source", "vLLM"]
 
     def cells(model, cfg, cap):
         vals = [
@@ -1016,7 +1324,12 @@ def write_capacity_table(df, out) -> None:
             str(cap["kv_cache_dtype"]) if pd.notna(cap["kv_cache_dtype"]) else "--",
             _fmt(cap["gpu_memory_utilization"], ".2f"),
             _fmt(cap["max_model_len"], ",.0f"),
-            _fmt(cap["max_concurrency"], ".1f")]
+            _fmt(cap["max_concurrency"], ".1f"),
+            _yes_no(cap["hybrid_cache"]),
+            str(cap["total_kv_tokens_source"])
+            if pd.notna(cap["total_kv_tokens_source"]) else "--",
+            str(cap["vllm_version"])
+            if pd.notna(cap["vllm_version"]) else "--"]
         return ([model] if multi_model else []) + [cfg] + vals
 
     md = ["| " + " | ".join(hdr) + " |",
@@ -1063,7 +1376,7 @@ def make_config_figures(df, out, fmts) -> None:
 
 # ---- main --------------------------------------------------------------------
 def main() -> None:
-    global MIN_SAMPLES
+    global MIN_SAMPLES, MIN_P99_SAMPLES
     ap = argparse.ArgumentParser(description="Plot PMBS26 figures from index.csv")
     ap.add_argument("--index", default="results/index.csv")
     ap.add_argument("--out", default="figs")
@@ -1073,26 +1386,35 @@ def main() -> None:
                     help="use a Times-like serif font to match an IEEE paper body")
     ap.add_argument("--table", action="store_true",
                     help="also write summary_table and capacity_table (.tex/.md)")
+    ap.add_argument(
+        "--allow-incomplete", action="store_true",
+        help="diagnostic only: plot missing intended loads/repeats with warnings",
+    )
     ap.add_argument("--model", default=None,
                     help="restrict to one model label (or id); with several "
                          "models the default is a cross-model comparison plus a "
                          "per-model figure set under out/<model>/")
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES,
-                    help="completions below this make a point's percentiles "
+                    help="successful requests below this make median percentiles "
                          "unreliable; such points are circled (default: %(default)s)")
+    ap.add_argument("--min-p99-samples", type=int, default=MIN_P99_SAMPLES,
+                    help="requests below this make p99 unreliable "
+                         "(default: %(default)s)")
     args = ap.parse_args()
 
     MIN_SAMPLES = args.min_samples
+    MIN_P99_SAMPLES = args.min_p99_samples
     LOW_N_PROXY.set_label(f"n < {MIN_SAMPLES} (unreliable)")
+    P99_LOW_N_PROXY.set_label(f"p99 n < {MIN_P99_SAMPLES}")
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
     set_rc(args.dpi, args.serif)
     df = load_index(args.index)
 
     if args.model is not None:
-        col = _model_col(df)
-        if col is None:
+        model_values = _model_values(df)
+        if model_values is None:
             sys.exit("--model given but the index has no model column")
-        df = df[df[col].astype(str) == args.model]
+        df = df[model_values == args.model]
         if not len(df):
             sys.exit(f"no rows for model '{args.model}' in {args.index}")
 
@@ -1100,16 +1422,16 @@ def main() -> None:
     print(f"loaded {len(df)} rows, "
           + (f"models: {', '.join(models)}, " if models else "")
           + f"configs: {', '.join(configs_present(df))}")
-    df = collapse_repeats(df)
+    df = collapse_repeats(df, allow_incomplete=args.allow_incomplete)
     report_quality(df)
     warn_low_n(df)
 
     if len(models) > 1:
         # cross-model summary at the top level, then a full figure set per model
         fig_model_comparison(df, args.out, fmts)
-        col = _model_col(df)
+        model_values = _model_values(df)
         for model in models:
-            sub = df[df[col].astype(str) == model]
+            sub = df[model_values == model]
             make_config_figures(sub, os.path.join(args.out, _slug(model)), fmts)
     else:
         make_config_figures(df, args.out, fmts)

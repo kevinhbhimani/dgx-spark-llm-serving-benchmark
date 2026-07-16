@@ -43,8 +43,12 @@ REPOS=()
 for cfg in "${CONFIGS[@]}"; do
   entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg" 2>/dev/null || true)"
   [[ -z "$entries" ]] && continue
-  while IFS='|' read -r label name maxlen gpu_util quant tok trust; do
+  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust; do
     [[ -z "$name" ]] && continue
+    if [[ -z "$revision" ]]; then
+      echo "[mirror] $label has no pinned revision in $MODELS_YAML" >&2
+      exit 1
+    fi
     if [[ -z "${SEEN[$name]:-}" ]]; then SEEN[$name]=1; REPOS+=("$name"); fi
     if [[ -n "$tok" && -z "${SEEN[$tok]:-}" ]]; then SEEN[$tok]=1; REPOS+=("$tok"); fi
   done <<<"$entries"
@@ -62,6 +66,11 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
+# Refuse to mirror a metadata stub or partial weight set. This validates the
+# exact revisions selected above, not merely the presence of a repo directory.
+CHECK_ONLY=1 MODELS_YAML="$MODELS_YAML" PYTHON="$PYTHON" \
+  "$HERE/predownload.sh" "$CONFIG"
+
 if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
   echo "[mirror] ERROR: Ray cluster is not active in $VLLM_CONTAINER" >&2
   echo "[mirror] Start Ray first: scripts/start_ray.sh head (Diya), worker (Hoedus)" >&2
@@ -69,5 +78,7 @@ if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; th
 fi
 
 docker cp "$HERE/mirror_worker_cache.py" "$VLLM_CONTAINER":/tmp/mirror_worker_cache.py
-docker exec -e MIRROR_MARGIN_GB="${MIRROR_MARGIN_GB:-10}" "$VLLM_CONTAINER" \
+docker exec -e MIRROR_MARGIN_GB="${MIRROR_MARGIN_GB:-10}" \
+  -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
+  "$VLLM_CONTAINER" \
   python3 -u /tmp/mirror_worker_cache.py "${REPOS[@]}"

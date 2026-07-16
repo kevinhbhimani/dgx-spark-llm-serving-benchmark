@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import math
 import tempfile
@@ -7,7 +8,10 @@ from unittest import mock
 
 from bench.config import ExperimentConfig, WorkloadBucket
 from bench.monitors import VLLMMetricsScraper
-from bench.server_info import collect
+from bench.client import (_extract_finish_reason, _extract_token_ids,
+                          _extract_usage_output_tokens, RequestRecord,
+                          send_request)
+from bench.server_info import _cache_config, collect
 from bench.workload import Workload
 import plot_results
 
@@ -24,6 +28,121 @@ class WorkloadValidationTests(unittest.TestCase):
         cfg.buckets = [WorkloadBucket(4, 4, math.inf)]
         with self.assertRaisesRegex(ValueError, "weights"):
             Workload(cfg)
+
+    def test_balanced_bucket_mix_has_bounded_short_window_error(self):
+        cfg = ExperimentConfig(tokenizer="", balanced_workload=True)
+        cfg.buckets = [
+            WorkloadBucket(128, 128, 1.0),
+            WorkloadBucket(1024, 256, 1.0),
+            WorkloadBucket(4096, 256, 1.0),
+            WorkloadBucket(8192, 512, 0.5),
+        ]
+        wl = Workload(cfg)
+        # Start at a non-cycle boundary, as a time-based measurement window does.
+        for _ in range(9):
+            wl.sample()
+        counts = {}
+        for _ in range(35):
+            spec = wl.sample()
+            key = (spec.input_len, spec.output_len)
+            counts[key] = counts.get(key, 0) + 1
+        self.assertEqual(counts, {
+            (128, 128): 10,
+            (1024, 256): 10,
+            (4096, 256): 10,
+            (8192, 512): 5,
+        })
+
+
+class StreamingTokenTests(unittest.TestCase):
+    class _Content:
+        def __init__(self, lines):
+            self.lines = lines
+
+        def __aiter__(self):
+            self._it = iter(self.lines)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._it)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    class _Response:
+        status = 200
+
+        def __init__(self, lines):
+            self.content = StreamingTokenTests._Content(lines)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    class _Session:
+        def __init__(self, lines):
+            self.lines = lines
+            self.body = None
+
+        def post(self, _url, json, **_kwargs):
+            self.body = json
+            return StreamingTokenTests._Response(self.lines)
+
+    @staticmethod
+    def _stream(usage=2):
+        return [
+            b'data: {"choices":[{"text":"x","token_ids":[7,8],'
+            b'"finish_reason":null}]}\n',
+            (f'data: {{"choices":[{{"text":"","token_ids":[],'
+             f'"finish_reason":"length"}}],"usage":'
+             f'{{"completion_tokens":{usage}}}}}\n').encode(),
+            b'data: [DONE]\n',
+        ]
+
+    def test_extracts_exact_delta_ids_usage_and_finish_reason(self):
+        chunk = {
+            "choices": [{"text": "", "token_ids": [7, 8],
+                         "finish_reason": "length"}],
+            "usage": {"completion_tokens": 2},
+        }
+        self.assertEqual(_extract_token_ids(chunk), [7, 8])
+        self.assertEqual(_extract_usage_output_tokens(chunk), 2)
+        self.assertEqual(_extract_finish_reason(chunk), "length")
+
+    def test_empty_decoded_text_does_not_hide_token_ids(self):
+        self.assertEqual(
+            _extract_token_ids({"choices": [{"text": "", "token_ids": [42]}]}),
+            [42],
+        )
+
+    def test_request_requires_exact_ids_and_final_usage(self):
+        from types import SimpleNamespace
+        cfg = ExperimentConfig(model="model")
+        spec = SimpleNamespace(input_len=1, output_len=2, prompt=[1])
+        session = self._Session(self._stream())
+
+        rec = asyncio.run(send_request(session, cfg, spec))
+
+        self.assertTrue(rec.success)
+        self.assertEqual(rec.output_tokens, 2)
+        self.assertEqual(len(rec.token_times), 2)
+        self.assertEqual(rec.token_times[0], rec.token_times[1])
+        self.assertTrue(rec.stream_done)
+        self.assertTrue(session.body["return_token_ids"])
+        self.assertTrue(session.body["stream_options"]["include_usage"])
+
+    def test_usage_mismatch_is_a_failed_request(self):
+        from types import SimpleNamespace
+        cfg = ExperimentConfig(model="model")
+        spec = SimpleNamespace(input_len=1, output_len=2, prompt=[1])
+
+        rec = asyncio.run(send_request(self._Session(self._stream(usage=1)),
+                                       cfg, spec))
+
+        self.assertFalse(rec.success)
+        self.assertIn("does not match final usage", rec.error)
 
 
 class MetricsScraperTests(unittest.TestCase):
@@ -49,13 +168,27 @@ vllm:generation_tokens_total_created{model_name="m"} 999999
         self.assertEqual(summary["vllm:kv_cache_usage_perc"]["max"], 0.4)
 
     def test_counter_reset_returns_missing_delta(self):
-        self.assertEqual(
-            VLLMMetricsScraper._counter_delta([(1.0, 20.0), (2.0, 5.0)], 1.0, 2.0),
-            {"delta": None, "rate_per_s": None},
+        result = VLLMMetricsScraper._counter_delta(
+            [(1.0, 20.0), (2.0, 5.0)], 1.0, 2.0
         )
+        self.assertIsNone(result["delta"])
+        self.assertIsNone(result["rate_per_s"])
 
 
 class ServerInfoTests(unittest.TestCase):
+    def test_live_hybrid_metric_does_not_multiply_physical_blocks(self):
+        metric = (
+            'vllm:cache_config_info{block_size="4176",'
+            'num_gpu_blocks="6293",mamba_page_size_padded="256",'
+            'cache_dtype="auto",gpu_memory_utilization="0.8"} 1\n'
+        )
+        with mock.patch("bench.server_info._get_text", return_value=metric):
+            info = _cache_config("http://server")
+
+        self.assertTrue(info["hybrid_cache"])
+        self.assertIsNone(info["total_kv_tokens"])
+        self.assertIsNone(info["total_kv_tokens_source"])
+
     def test_collect_uses_log_worker_fields_without_hf_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "server.log"
@@ -66,6 +199,8 @@ class ServerInfoTests(unittest.TestCase):
                 "Maximum concurrency for 8,704 tokens per request: 2.3x\n"
             )
             with mock.patch("bench.server_info._max_model_len", return_value=8704), \
+                 mock.patch("bench.server_info._server_version",
+                            return_value="0.11.0"), \
                  mock.patch("bench.server_info._cache_config",
                             return_value={"block_size": 16, "total_kv_tokens": None}), \
                  mock.patch("bench.server_info.compute_weight_gb") as weight:
@@ -78,6 +213,52 @@ class ServerInfoTests(unittest.TestCase):
         self.assertEqual(info["gpu_blocks"], 1234)
         self.assertEqual(info["total_kv_tokens"], 1234 * 16)
         self.assertEqual(info["max_concurrency"], 2.3)
+
+    def test_hybrid_cache_uses_group_aware_startup_token_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "server.log"
+            log.write_text(
+                "GPU KV cache size: 5,253,408 tokens\n"
+                "Maximum concurrency for 8,704 tokens per request: 899.00x\n"
+            )
+            cache = {
+                "block_size": 4176,
+                "gpu_blocks": 6293,
+                "total_kv_tokens": None,
+                "hybrid_cache": True,
+            }
+            with mock.patch("bench.server_info._max_model_len", return_value=8704), \
+                 mock.patch("bench.server_info._server_version",
+                            return_value="0.11.0"), \
+                 mock.patch("bench.server_info._cache_config", return_value=cache):
+                info = collect("http://server", "model/id", str(log),
+                               compute_from_hf=False)
+
+        self.assertEqual(info["total_kv_tokens"], 5_253_408)
+        self.assertEqual(info["total_kv_tokens_source"], "vllm_startup_log")
+        self.assertNotEqual(info["total_kv_tokens"], 4176 * 6293)
+
+    def test_hybrid_log_blocks_without_token_capacity_stays_unknown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "server.log"
+            log.write_text("# GPU blocks: 6,293\n")
+            cache = {
+                "block_size": 4176,
+                "gpu_blocks": None,
+                "total_kv_tokens": None,
+                "total_kv_tokens_source": None,
+                "hybrid_cache": True,
+            }
+            with mock.patch("bench.server_info._max_model_len", return_value=8704), \
+                 mock.patch("bench.server_info._server_version",
+                            return_value="0.11.0"), \
+                 mock.patch("bench.server_info._cache_config", return_value=cache):
+                info = collect("http://server", "model/id", str(log),
+                               compute_from_hf=False)
+
+        self.assertEqual(info["gpu_blocks"], 6293)
+        self.assertIsNone(info["total_kv_tokens"])
+        self.assertIsNone(info["total_kv_tokens_source"])
 
 
 class PlotCompatibilityTests(unittest.TestCase):
@@ -98,6 +279,50 @@ class PlotCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(plot_results.models_present(df), ["Qwen/Qwen3-8B"])
 
+    def test_fresh_index_carries_corrected_methodology_fields(self):
+        from bench.run_benchmark import _append_index, INDEX_FIELDS
+        pct = {"p50": 0.1, "p99": 0.2}
+        summary = {
+            "run_tag": "r1", "methodology_version": "steady-exact-v2",
+            "config_file_sha256": "a" * 64,
+            "experiment_fingerprint": "b" * 64,
+            "harness_source_sha256": "c" * 64,
+            "client_environment_sha256": "d" * 64,
+            "deployment_fingerprint": "e" * 64,
+            "repeat_id": 1, "repeat_count": 1,
+            "config_label": "single", "model_label": "m",
+            "model": "model", "mode": "closed", "concurrency": 1,
+            "target_qps": None, "measure_s": 10.0, "warmup_s": 12.0,
+            "configured_warmup_s": 10.0, "warmup_extension_s": 2.0,
+            "cooldown_s": 3.0, "load_extension_s": 4.0,
+            "requests_started": 12, "requests_completed": 12,
+            "requests_failed": 0, "requests_completed_in_window": 10,
+            "requests_started_and_completed_in_window": 9,
+            "avg_input_tokens": 128.0, "avg_requested_output_tokens": 64.0,
+            "total_output_tokens": 640, "request_throughput_rps": 1.2,
+            "output_token_throughput_tps": 64.0,
+            "completed_token_throughput_tps": 60.0,
+            "goodput_rps": 1.0, "goodput_itl2_rps": 1.1,
+            "ttft_s": pct, "itl_s": pct, "mean_itl_s": pct, "e2e_s": pct,
+            "server_info": {
+                "total_kv_tokens": 1000,
+                "total_kv_tokens_source": "vllm_startup_log",
+                "hybrid_cache": True,
+            },
+            "energy": {"power_scope": "gpu_devices"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            _append_index(tmp, summary)
+            path = Path(tmp) / "index.csv"
+            with path.open(newline="") as f:
+                rows = list(csv.DictReader(f))
+
+        self.assertEqual(list(rows[0]), INDEX_FIELDS)
+        self.assertEqual(rows[0]["requests_started_and_completed_in_window"], "9")
+        self.assertEqual(rows[0]["total_kv_tokens_source"], "vllm_startup_log")
+        self.assertEqual(rows[0]["hybrid_cache"], "True")
+        self.assertEqual(rows[0]["power_scope"], "gpu_devices")
+
 
 class GoodputTierTests(unittest.TestCase):
     """metrics.aggregate scores two ITL goodput tiers against one TTFT bound."""
@@ -107,7 +332,9 @@ class GoodputTierTests(unittest.TestCase):
         from types import SimpleNamespace
         return SimpleNamespace(t_start=0.5, t_end=1.0, success=True,
                                ttft=ttft, mean_itl=itl, e2e=5.0,
-                               output_tokens=10, inter_token_latencies=[itl] * 9)
+                               input_len=128, output_len=10,
+                               output_tokens=10, token_times=[],
+                               inter_token_latencies=[itl] * 9)
 
     def test_strict_and_loose_tiers_count_independently(self):
         from bench.metrics import aggregate
@@ -144,6 +371,7 @@ class WindowAccountingTests(unittest.TestCase):
         gaps = [b - a for a, b in zip(token_times, token_times[1:])]
         return SimpleNamespace(
             t_start=t_start, t_end=t_end, success=success,
+            input_len=128, output_len=len(token_times),
             output_tokens=len(token_times), token_times=token_times,
             ttft=(token_times[0] - t_start) if token_times else float("nan"),
             e2e=t_end - t_start,
@@ -168,6 +396,18 @@ class WindowAccountingTests(unittest.TestCase):
         # completed-only accounting sees just the middle request
         self.assertEqual(s["completed_output_tokens"], 2)
         self.assertEqual(s["requests_completed_in_window"], 1)
+        self.assertEqual(s["requests_started_and_completed_in_window"], 1)
+
+    def test_completion_in_window_and_started_then_completed_are_distinct(self):
+        from bench.metrics import aggregate
+        cfg = ExperimentConfig()
+        warmup_completion = self._rec(1.0, 12.0, [2.0, 11.0])
+        in_window_completion = self._rec(11.0, 13.0, [11.5, 12.5])
+        slow = self._rec(18.0, 30.0, [19.0, 21.0])
+        s = aggregate([warmup_completion, in_window_completion, slow], cfg,
+                      window_start=10.0, window_end=20.0)
+        self.assertEqual(s["requests_completed_in_window"], 2)
+        self.assertEqual(s["requests_started_and_completed_in_window"], 1)
 
     def test_latency_set_is_started_in_window_tracked_to_completion(self):
         from bench.metrics import aggregate
@@ -207,6 +447,43 @@ class WindowAccountingTests(unittest.TestCase):
         s = aggregate([rec], cfg, 10.0, 20.0, power=head, worker_power=dead)
         self.assertEqual(s["energy"]["power_nodes"], 1)
         self.assertAlmostEqual(s["energy"]["mean_power_w"], 10.0)
+
+
+class SteadyBoundaryTests(unittest.TestCase):
+    def test_closed_loop_extends_warmup_and_holds_load_for_measurement_requests(self):
+        from types import SimpleNamespace
+        from bench.runner import _closed_loop
+
+        cfg = ExperimentConfig(mode="closed", concurrency=2, warmup_s=0.0,
+                               measure_s=0.02, cooldown_s=0.0)
+
+        class WL:
+            @staticmethod
+            def sample():
+                return SimpleNamespace(input_len=1, output_len=1, prompt=[1])
+
+        async def fake_send(session, cfg, spec, t_start=None):
+            await asyncio.sleep(0.03)
+            rec = RequestRecord(cfg.config_label, spec.input_len, spec.output_len,
+                                t_start=t_start, t_first_token=t_start + 0.01,
+                                t_end=t_start + 0.03, output_tokens=1,
+                                token_times=[t_start + 0.01],
+                                usage_output_tokens=1, finish_reason="length",
+                                stream_done=True, success=True)
+            return rec
+
+        async def run():
+            records = []
+            start = __import__("time").perf_counter()
+            with mock.patch("bench.runner.send_request", side_effect=fake_send):
+                state = await _closed_loop(cfg, WL(), None, start, records)
+            return state, start
+
+        state, start = asyncio.run(run())
+        self.assertGreaterEqual(state["window_start"] - start, 0.025)
+        self.assertAlmostEqual(state["nominal_stop"] - state["window_start"],
+                               cfg.measure_s, delta=0.005)
+        self.assertGreater(state["load_stop"], state["nominal_stop"])
 
 
 class PromptUniquenessTests(unittest.TestCase):
@@ -266,14 +543,15 @@ class SweptConcurrenciesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             index, cfg = self._write(tmp, [
                 ["qwen3-8b", "single", "closed", 1, 600.0, 35],    # done
-                ["qwen3-8b", "single", "closed", 2, 600.0, 0],     # nothing completed
+                ["qwen3-8b", "single", "closed", 2, 600.0, 0],     # zero-success done
                 ["qwen3-8b", "single", "open",   4, 600.0, 40],    # open mode
                 ["qwen3-8b", "tp2",    "closed", 8, 600.0, 40],    # other config
                 ["qwen3-32b", "single", "closed", 8, 600.0, 40],   # other model
                 ["qwen3-8b", "single", "closed", 16, 60.0, 40],    # stale short window
                 ["qwen3-8b", "single", "closed", 32, 600.0, 40],   # done
             ])
-            self.assertEqual(mod.swept(index, "qwen3-8b", "single", cfg), [1, 32])
+            self.assertEqual(
+                mod.swept(index, "qwen3-8b", "single", cfg), [1, 2, 32])
 
     def test_missing_index_means_nothing_done(self):
         mod = self._load_module()

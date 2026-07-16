@@ -48,11 +48,36 @@ def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None,
     failed = [r for r in started if not r.success]
     completed_in_window = [r for r in records
                            if r.success and window_start <= r.t_end < window_end]
+    started_and_completed_in_window = [
+        r for r in ok if r.t_end < window_end
+    ]
 
     n = len(ok)
     tokens_in_window = _tokens_in_window(records, window_start, window_end)
     completed_tokens = sum(r.output_tokens for r in completed_in_window)
     token_gaps = [gap for r in ok for gap in r.inter_token_latencies]
+    avg_input = (sum(r.input_len for r in started) / len(started)) if started else float("nan")
+    avg_requested_output = (
+        sum(r.output_len for r in started) / len(started)
+        if started else float("nan")
+    )
+
+    bucket_summaries = []
+    for input_len, output_len in sorted(
+            {(r.input_len, r.output_len) for r in started}):
+        bucket_started = [r for r in started
+                          if r.input_len == input_len and r.output_len == output_len]
+        bucket_ok = [r for r in bucket_started if r.success]
+        bucket_summaries.append({
+            "input_len": input_len,
+            "output_len": output_len,
+            "requests_started": len(bucket_started),
+            "requests_completed": len(bucket_ok),
+            "requests_failed": len(bucket_started) - len(bucket_ok),
+            "ttft_s": _pctls([r.ttft for r in bucket_ok]),
+            "mean_itl_s": _pctls([r.mean_itl for r in bucket_ok]),
+            "e2e_s": _pctls([r.e2e for r in bucket_ok]),
+        })
 
     def _goodput(itl_slo):
         # A request is "good" if it met the TTFT bound and its mean ITL cleared
@@ -81,6 +106,11 @@ def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None,
         "requests_completed": n,
         "requests_failed": len(failed),
         "requests_completed_in_window": len(completed_in_window),
+        "requests_started_and_completed_in_window":
+            len(started_and_completed_in_window),
+        "avg_input_tokens": avg_input,
+        "avg_requested_output_tokens": avg_requested_output,
+        "workload_buckets": bucket_summaries,
         "total_output_tokens": tokens_in_window,
         "completed_output_tokens": completed_tokens,
         "request_throughput_rps": n / measure_s,
@@ -103,21 +133,45 @@ def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None,
         if worker_power is not None:
             worker_e = worker_power.energy_joules(window_start, window_end)
             worker_mp = worker_power.mean_power(window_start, window_end)
-        have_worker = not math.isnan(worker_mp)
-        total_mp = head_mp + (worker_mp if have_worker else 0.0)
-        total_e = head_e + (worker_e if have_worker else 0.0)
+        have_head = not math.isnan(head_mp) and not math.isnan(head_e)
+        have_worker = not math.isnan(worker_mp) and not math.isnan(worker_e)
+        total_mp = ((head_mp if have_head else 0.0)
+                    + (worker_mp if have_worker else 0.0))
+        total_e = ((head_e if have_head else 0.0)
+                   + (worker_e if have_worker else 0.0))
+        power_nodes = int(have_head) + int(have_worker)
+        def coverage(sampler):
+            if hasattr(sampler, "coverage"):
+                return sampler.coverage(window_start, window_end)
+            # Compatibility for custom sampler adapters: their energy remains
+            # usable for exploratory summaries, while strict release validation
+            # rejects the missing density metadata.
+            return {"sample_count": 0, "max_gap_s": float("nan")}
+
+        head_coverage = coverage(power)
+        worker_coverage = (coverage(worker_power) if worker_power is not None else
+                           {"sample_count": 0, "max_gap_s": float("nan")})
         summary["energy"] = {
             # totals over every sampled node; head/worker splits alongside so
             # dual-node rows are never silently head-only again
-            "mean_power_w": total_mp,
-            "mean_power_w_head": head_mp,
+            "mean_power_w": total_mp if power_nodes else float("nan"),
+            "mean_power_w_head": head_mp if have_head else float("nan"),
             "mean_power_w_worker": worker_mp if have_worker else float("nan"),
-            "power_nodes": 2 if have_worker else 1,
-            "energy_j": total_e,
+            "power_nodes": power_nodes,
+            "power_samples_head": head_coverage["sample_count"],
+            "power_samples_worker": worker_coverage["sample_count"],
+            "power_max_gap_s_head": head_coverage["max_gap_s"],
+            "power_max_gap_s_worker": worker_coverage["max_gap_s"],
+            "power_scope": {
+                "nvidia_smi": "gpu_devices",
+                "tegrastats": "configured_rails",
+                "sysfs": "configured_sensor",
+            }.get(cfg.power_backend, "configured_sensor"),
+            "energy_j": total_e if power_nodes else float("nan"),
             "energy_per_token_j": (total_e / tokens_in_window)
-            if tokens_in_window else float("nan"),
+            if tokens_in_window and power_nodes else float("nan"),
             "tokens_per_watt": ((tokens_in_window / measure_s) / total_mp)
-            if total_mp and not math.isnan(total_mp) else float("nan"),
+            if total_mp and power_nodes else float("nan"),
         }
     if vmetrics is not None:
         summary["vllm_metrics"] = vmetrics.summary(window_start, window_end)

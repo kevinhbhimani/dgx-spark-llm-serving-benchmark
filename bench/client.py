@@ -1,9 +1,11 @@
 """A single streaming request to the vLLM OpenAI compatible server.
 
-TTFT is the time from request start to the first content bearing chunk. Token
-count uses one streamed chunk per token, which is the vLLM streaming behavior
-under greedy decoding. Output length is forced to exactly output_len by setting
-max_tokens and min_tokens equal with ignore_eos true.
+TTFT is the time from request start to the first returned output token id.
+Requests ask vLLM to include delta ``token_ids`` and final usage in the stream;
+this keeps token counts exact even when decoded text is empty or one HTTP chunk
+contains several tokens. Output length is forced to exactly ``output_len`` by
+setting ``max_tokens`` and ``min_tokens`` equal with ``ignore_eos`` true, and a
+stream is successful only when its token-id count and final usage both match.
 """
 from __future__ import annotations
 import json
@@ -22,6 +24,9 @@ class RequestRecord:
     t_end: float = 0.0
     output_tokens: int = 0
     token_times: list = field(default_factory=list)
+    usage_output_tokens: int | None = None
+    finish_reason: str = ""
+    stream_done: bool = False
     success: bool = False
     error: str = ""
 
@@ -56,6 +61,9 @@ class RequestRecord:
             "t_first_token": self.t_first_token,
             "t_end": self.t_end,
             "token_times": self.token_times,
+            "usage_output_tokens": self.usage_output_tokens,
+            "finish_reason": self.finish_reason,
+            "stream_done": self.stream_done,
             "ttft": self.ttft,
             "e2e": self.e2e,
             "mean_itl": self.mean_itl,
@@ -75,6 +83,41 @@ def _extract_text(chunk):
     return (c0.get("delta", {}) or {}).get("content", "") or ""   # chat endpoint
 
 
+def _first_choice(chunk):
+    choices = chunk.get("choices") or []
+    return choices[0] if choices else {}
+
+
+def _extract_token_ids(chunk):
+    """Return this stream chunk's delta token ids, or None if absent.
+
+    vLLM's completions response puts them on the choice. The alternate lookups
+    make the parser tolerant of chat-compatible response shapes without making
+    decoded text the token-counting fallback again.
+    """
+    choice = _first_choice(chunk)
+    value = choice.get("token_ids")
+    if value is None:
+        value = (choice.get("delta") or {}).get("token_ids")
+    if value is None:
+        value = chunk.get("token_ids")
+    return value if isinstance(value, list) else None
+
+
+def _extract_usage_output_tokens(chunk):
+    usage = chunk.get("usage") or {}
+    value = usage.get("completion_tokens")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_finish_reason(chunk):
+    value = _first_choice(chunk).get("finish_reason")
+    return str(value) if value is not None else ""
+
+
 async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
     """Send one streaming request. t_start, when given, backdates the record to
     the request's intended arrival time so client-side queueing (the open
@@ -89,6 +132,10 @@ async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
         "ignore_eos": True,
         "temperature": 0.0,
         "stream": True,
+        # vLLM extensions. Counting decoded content chunks is not exact: tokens
+        # can decode to empty text and a streamed delta can contain >1 token.
+        "return_token_ids": True,
+        "stream_options": {"include_usage": True},
     }
     headers = {"Authorization": f"Bearer {cfg.api_key}",
                "Content-Type": "application/json"}
@@ -101,6 +148,8 @@ async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
                 rec.t_end = time.perf_counter()
                 return rec
             done = False
+            saw_token_ids = False
+            parse_errors = 0
             async for raw in resp.content:
                 for line in raw.decode("utf-8", "ignore").splitlines():
                     line = line.strip()
@@ -113,19 +162,50 @@ async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
                     try:
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
+                        parse_errors += 1
                         continue
-                    if _extract_text(chunk):
+                    if chunk.get("error"):
+                        rec.error = f"stream error: {str(chunk['error'])[:200]}"
+                    usage_tokens = _extract_usage_output_tokens(chunk)
+                    if usage_tokens is not None:
+                        rec.usage_output_tokens = usage_tokens
+                    finish_reason = _extract_finish_reason(chunk)
+                    if finish_reason:
+                        rec.finish_reason = finish_reason
+                    token_ids = _extract_token_ids(chunk)
+                    if token_ids is not None:
+                        saw_token_ids = True
+                    if token_ids:
                         now = time.perf_counter()
                         if rec.output_tokens == 0:
                             rec.t_first_token = now
-                        rec.output_tokens += 1
-                        rec.token_times.append(now)
+                        rec.output_tokens += len(token_ids)
+                        # Several ids delivered in one network chunk arrived as a
+                        # burst from the client's point of view.
+                        rec.token_times.extend([now] * len(token_ids))
                 if done:
                     break
         rec.t_end = time.perf_counter()
-        rec.success = rec.output_tokens > 0
-        if not rec.success and not rec.error:
-            rec.error = "no tokens returned"
+        rec.stream_done = done
+        if not rec.error and parse_errors:
+            rec.error = f"{parse_errors} malformed SSE JSON chunk(s)"
+        if not rec.error and not done:
+            rec.error = "stream ended without [DONE]"
+        if not rec.error and not saw_token_ids:
+            rec.error = "server did not return delta token_ids"
+        if not rec.error and rec.usage_output_tokens is None:
+            rec.error = "server did not return final completion token usage"
+        if (not rec.error
+                and rec.usage_output_tokens != rec.output_tokens):
+            rec.error = ("stream token-id count does not match final usage: "
+                         f"{rec.output_tokens} != {rec.usage_output_tokens}")
+        if not rec.error and rec.output_tokens != spec.output_len:
+            rec.error = ("incomplete generation: expected "
+                         f"{spec.output_len} tokens, received {rec.output_tokens}")
+        if not rec.error and rec.finish_reason != "length":
+            rec.error = ("unexpected finish_reason: "
+                         f"{rec.finish_reason or 'missing'}")
+        rec.success = not rec.error
     except Exception as e:  # network, timeout, parse
         rec.t_end = time.perf_counter()
         rec.error = f"{type(e).__name__}: {e}"

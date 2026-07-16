@@ -199,12 +199,16 @@ def main() -> int:
 
     ray.init(address="auto", log_to_driver=False)
     head_ip = ray.util.get_node_ip_address()
-    worker_ips = sorted(
-        node["NodeManagerAddress"] for node in ray.nodes()
-        if node.get("Alive") and node["NodeManagerAddress"] != head_ip)
-    if not worker_ips:
-        print("[mirror] no alive worker nodes in the Ray cluster", file=sys.stderr)
+    alive = sorted(node["NodeManagerAddress"] for node in ray.nodes()
+                   if node.get("Alive"))
+    expected_head = os.environ.get("EXPECTED_HEAD", head_ip)
+    expected_worker = os.environ.get("EXPECTED_WORKER", "")
+    expected = sorted([expected_head, expected_worker])
+    if not expected_worker or alive != expected:
+        print(f"[mirror] expected exactly Ray nodes {expected}, got {alive}",
+              file=sys.stderr)
         return 1
+    worker_ips = [expected_worker]
 
     # smallest first so quick wins land before a long transfer can fail
     sizes = {r: sum(manifest(repo_dir(r))[0].values())

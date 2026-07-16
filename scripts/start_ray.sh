@@ -17,6 +17,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
 
 ROLE="${1:-head}"
+TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
 
 maybe_drop_caches() {
   if [[ "${DROP_CACHES:-0}" == "1" ]]; then
@@ -35,9 +36,14 @@ RAY_SETUP="pip install -q 'ray[default]==$RAY_VERSION'"
 docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
+  -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE"
+  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1
+  -e BENCH_VLLM_IMAGE="$VLLM_IMAGE" -e BENCH_RAY_VERSION="$RAY_VERSION"
   --entrypoint /bin/bash
   -v "$HF_CACHE":/root/.cache/huggingface )
-if [[ -n "${HF_TOKEN:-}" ]]; then docker_common+=( -e HF_TOKEN="$HF_TOKEN" ); fi
+if [[ -n "$CONTAINER_DNS" ]]; then docker_common+=( --dns "$CONTAINER_DNS" ); fi
+# Ray workers serve exclusively from the preflighted, mounted cache.  Do not
+# pass registry credentials into these long-lived offline containers.
 
 show_container_logs() {
   echo "[ray] $VLLM_CONTAINER is not running; recent container logs:"

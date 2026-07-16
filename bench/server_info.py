@@ -11,8 +11,10 @@ measurement window:
   ``num_cpu_blocks``, ``enable_prefix_caching``, and sometimes
   ``kv_cache_memory_bytes``.
 
-From those, ``total_kv_tokens = num_gpu_blocks * block_size`` is the server's KV
-capacity in tokens. Two memory footprints a reader also wants -- model weights
+For ordinary attention caches, ``num_gpu_blocks * block_size`` is the token
+capacity. Hybrid cache groups need vLLM's group-aware ``kv_cache_size_tokens``
+or the startup log's ``GPU KV cache size`` instead; multiplying the physical
+hybrid block size is incorrect. Two memory footprints a reader also wants -- model weights
 in GiB and KV cache in GiB -- are not always in ``/metrics`` (this vLLM build
 reports ``kv_cache_memory_bytes="None"``), so this module records two sources:
 
@@ -56,6 +58,14 @@ def _max_model_len(base_url: str, model: str | None) -> int | None:
     return int(val) if val is not None else None
 
 
+def _server_version(base_url: str) -> str | None:
+    try:
+        value = _get_json(base_url.rstrip("/") + "/version").get("version")
+        return str(value) if value is not None else None
+    except Exception:
+        return None
+
+
 _LABEL_RE = re.compile(r'(\w+)="([^"]*)"')
 
 
@@ -96,9 +106,24 @@ def _cache_config(base_url: str) -> dict:
                 "kv_cache_dtype": lab.get("cache_dtype"),
                 "gpu_memory_utilization": _as_float(lab.get("gpu_memory_utilization")),
                 "enable_prefix_caching": lab.get("enable_prefix_caching"),
-                "total_kv_tokens": (blocks * bsize)
-                if (blocks is not None and bsize is not None) else None,
+                "mamba_page_size_padded": lab.get("mamba_page_size_padded"),
             }
+            mamba_page = lab.get("mamba_page_size_padded")
+            is_hybrid = mamba_page not in (None, "", "None")
+            group_tokens = _as_int(lab.get("kv_cache_size_tokens"))
+            group_concurrency = _as_float(lab.get("kv_cache_max_concurrency"))
+            info["hybrid_cache"] = is_hybrid
+            if group_tokens is not None:
+                info["total_kv_tokens"] = group_tokens
+                info["total_kv_tokens_source"] = "vllm_group_aware_metric"
+            elif not is_hybrid and blocks is not None and bsize is not None:
+                info["total_kv_tokens"] = blocks * bsize
+                info["total_kv_tokens_source"] = "gpu_blocks_x_block_size"
+            else:
+                info["total_kv_tokens"] = None
+                info["total_kv_tokens_source"] = None
+            if group_concurrency is not None:
+                info["max_concurrency"] = group_concurrency
             kv_bytes = _as_int(lab.get("kv_cache_memory_bytes"))
             if kv_bytes:
                 info["kv_cache_gb"] = kv_bytes / 1024 ** 3
@@ -198,7 +223,10 @@ def compute_weight_gb(model_id: str,
 # vLLM phrases these slightly differently across versions; match flexibly and
 # keep whatever is found. Sizes are normalized to GiB.
 _LOG_PATTERNS = {
-    "weight_gb": re.compile(r"[Mm]odel weights take\s*([\d.]+)\s*GiB"),
+    "weight_gb": re.compile(
+        r"(?:[Mm]odel weights take|[Mm]odel loading took)\s*"
+        r"([\d.]+)\s*GiB(?:\s+memory)?"
+    ),
     "kv_cache_gb": re.compile(
         r"(?:Available KV cache memory|GPU KV cache size \(memory\))[:\s]*"
         r"([\d.]+)\s*GiB"),
@@ -236,7 +264,11 @@ def collect(base_url: str, model: str | None = None, server_log: str = "",
     config and the live KV cache configuration. Every field is optional.
     """
     logged = parse_server_log(server_log) if server_log else {}
-    info: dict = {"model": model, "max_model_len": _max_model_len(base_url, model)}
+    info: dict = {
+        "model": model,
+        "vllm_version": _server_version(base_url),
+        "max_model_len": _max_model_len(base_url, model),
+    }
     info.update(_cache_config(base_url))
 
     if "weight_gb" in logged:
@@ -247,13 +279,18 @@ def collect(base_url: str, model: str | None = None, server_log: str = "",
         info["max_concurrency"] = logged["max_concurrency"]
     if logged.get("gpu_blocks") and not info.get("gpu_blocks"):
         info["gpu_blocks"] = logged["gpu_blocks"]
-        if info.get("block_size") and info.get("total_kv_tokens") is None:
+        if (info.get("block_size") and info.get("total_kv_tokens") is None
+                and not info.get("hybrid_cache")):
             info["total_kv_tokens"] = logged["gpu_blocks"] * info["block_size"]
-    if logged.get("kv_cache_tokens") and info.get("total_kv_tokens") is None:
+            info["total_kv_tokens_source"] = "gpu_blocks_x_block_size"
+    # The startup line is already group-aware and is authoritative for both
+    # ordinary and hybrid models. It must override a naive metric derivation.
+    if logged.get("kv_cache_tokens"):
         info["total_kv_tokens"] = logged["kv_cache_tokens"]
+        info["total_kv_tokens_source"] = "vllm_startup_log"
 
     if compute_from_hf and model:
-        if info.get("kv_cache_gb") is None:
+        if info.get("kv_cache_gb") is None and not info.get("hybrid_cache"):
             info["kv_cache_gb"] = compute_kv_cache_gb(
                 model, info.get("gpu_blocks"), info.get("block_size"),
                 info.get("kv_cache_dtype"), trust_remote_code)

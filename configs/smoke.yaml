@@ -8,6 +8,7 @@ use_token_ids: false
 buckets:
   - {input_len: 32, output_len: 16, weight: 1.0}
 seed: 1234
+balanced_workload: true
 
 mode: "closed"
 concurrency: 1
@@ -25,6 +26,9 @@ power_sysfs_path: ""
 power_rails: []
 power_interval_ms: 100
 scrape_vllm_metrics: true
+require_power_data: false
+require_vllm_metrics_data: false
+require_provenance: false
 
 config_label: "smoke"
 collect_hf_metadata: false

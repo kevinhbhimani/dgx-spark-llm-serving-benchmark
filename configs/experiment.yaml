@@ -13,29 +13,42 @@ buckets:
   - {input_len: 4096, output_len: 256, weight: 1.0}
   - {input_len: 8192, output_len: 512, weight: 0.5}
 seed: 1234
+# Smooth weighted round robin instead of independent random bucket draws. Every
+# short contiguous request slice stays close to the configured proportions, so
+# slow c=1 points see the same mix as high-throughput points.
+balanced_workload: true
 
 mode: "closed"            # closed for fixed concurrency, open for Poisson arrivals
 concurrency: 16
 qps: 4.0
 max_inflight: 512
-# Warmup, measure, and cooldown run as ONE continuous phase; the aggregation
-# slices [warmup, warmup+measure) out of it, so load is never dropped around
-# the window boundaries. Sizing rationale for this long-context workload:
-#   warmup_s   >= the worst single-request lifetime observed at c=128 on the
-#                 slowest dense model (~550s), so the window opens with a
-#                 steady running/queue mix rather than mid first-wave;
-#   measure_s  ~2x that lifetime; with token-in-window accounting the rate
-#                 converges quickly once the composition is steady;
-#   cooldown_s keeps offered load up while requests started near the window's
-#                 end finish, so their latency is measured under load, not on
-#                 a draining server (>= ~p50 e2e at the heaviest point).
-warmup_s: 600.0
-measure_s: 1200.0
-cooldown_s: 300.0
+# Warmup, measure, and cooldown run as ONE continuous phase. These are minimum
+# boundary durations, not assumptions about request lifetime:
+#   - in closed-loop mode the window does not open until warmup_s has elapsed
+#     AND every worker has completed its initial request, eliminating a surviving
+#     synchronized first wave;
+#   - after the minimum cooldown, replacement load continues until every request
+#     started in the measurement window finishes, so its latency is never
+#     flattered by a draining server;
+#   - only non-measurement replacement requests then drain.
+# The summary records warmup_extension_s, load_extension_s, and drain_s.
+# Minimums only, per the extension rules above: at high concurrency on slow
+# models the first-wave rule stretches warmup to the worst request lifetime
+# (~550s at c=128 on dense 70B) regardless of this value, and the cooldown
+# extends until the last measurement request finishes.
+warmup_s: 120.0
+# 25 minutes of measurement plus the 120s/180s minimum warmup/cooldown is
+# 30 minutes per point. The active 23 model/config combinations x 8 loads x 3
+# repeats therefore require at least 276 GPU-hours (11.5 wall-clock days)
+# sequentially, before model loads and automatic extensions. At c=1 on the
+# slowest models this yields only ~30-50 completions, so those p99 points are
+# flagged by the plots' MIN_P99_SAMPLES rule rather than reported as reliable.
+measure_s: 1500.0
+cooldown_s: 180.0
 # Must comfortably exceed the worst-case e2e (queueing + full stream) at the
 # highest concurrency in the sweep, or slow-but-successful requests are
 # recorded as timeout failures.
-request_timeout_s: 3600.0
+request_timeout_s: 14400.0
 
 # service level objective used for goodput. Two ITL tiers are scored against the
 # same TTFT bound: itl_slo_s is the strict interactive target (10 tok/s/stream),
@@ -52,6 +65,11 @@ power_sysfs_path: ""
 power_rails: []
 power_interval_ms: 100
 scrape_vllm_metrics: true
+# Paper runs must not silently accept a dead power sampler or metrics scrape.
+require_power_data: true
+require_vllm_metrics_data: true
+# Paper rows must identify exact HF commits and the complete serving policy.
+require_provenance: true
 
 config_label: "single"
 collect_hf_metadata: false

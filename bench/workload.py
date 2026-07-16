@@ -6,6 +6,11 @@ import random
 from dataclasses import dataclass
 
 
+# Reserve enough leading tokens for a cache-defeating request id. Even a small
+# 16-token tag alphabet then supports 16**8 (>4 billion) distinct prefixes.
+PREFIX_TAG_TOKENS = 8
+
+
 @dataclass
 class RequestSpec:
     input_len: int
@@ -24,10 +29,19 @@ class Workload:
         self._tag_vocab = sorted(set(self._base_ids)) if self._base_ids else []
         self._uid = 0
         self.specs = self._load_trace(cfg.trace_path) if cfg.trace_path else None
+        self._trace_order = []
+        self._trace_pos = 0
         if self.specs is not None and not self.specs:
             raise ValueError(f"trace is empty: {cfg.trace_path}")
         if self.specs is None:
             self._validate_buckets()
+            # Smooth weighted round robin: unlike independent random choices,
+            # every short contiguous slice stays close to the target mix. Seeded
+            # tie ranks avoid making equal-weight buckets depend on YAML order.
+            self._bucket_credit = [0.0] * len(cfg.buckets)
+            order = list(range(len(cfg.buckets)))
+            self.rng.shuffle(order)
+            self._bucket_tie_rank = {idx: rank for rank, idx in enumerate(order)}
 
     def _validate_buckets(self):
         if not self.cfg.buckets:
@@ -64,10 +78,12 @@ class Workload:
         # with caching disabled did it all -- an unusable cross-model confound.
         # The launcher now disables prefix caching, and this tag makes the
         # workload itself cache-defeating: the leading tokens encode a
-        # per-request counter in base len(tag_vocab) (unique token sequences
-        # for len(tag_vocab)^2 requests), which breaks any block-aligned
-        # prefix match at block 0. Deterministic given the seed; the counter
-        # restarts per run, which is safe with server-side caching disabled.
+        # per-request counter in base len(tag_vocab), which breaks any
+        # block-aligned prefix match at block 0. Eight tag positions avoid the
+        # old two-token wrap at request 257 for tokenizers whose generated base
+        # buffer happened to contain only 16 distinct ids. Deterministic given
+        # the seed; the counter restarts per run, which is safe with server-side
+        # caching disabled.
         self._uid += 1
         if self.tok is not None and self._base_ids:
             ids = self._base_ids
@@ -77,7 +93,13 @@ class Workload:
             start = self.rng.randint(0, start_max) if start_max else 0
             prompt_ids = ids[start:start + input_len]
             vocab = self._tag_vocab
-            k = min(2, input_len)
+            k = min(PREFIX_TAG_TOKENS, input_len)
+            capacity = len(vocab) ** k
+            if self._uid >= capacity:
+                raise RuntimeError(
+                    f"request prefix id space exhausted after {capacity - 1} "
+                    "unique prompts; increase PREFIX_TAG_TOKENS"
+                )
             tag = [vocab[(self._uid // (len(vocab) ** j)) % len(vocab)]
                    for j in range(k)]
             prompt_ids = tag + prompt_ids[k:]
@@ -111,8 +133,28 @@ class Workload:
 
     def sample(self) -> RequestSpec:
         if self.specs is not None:
-            return self.rng.choice(self.specs)
+            if not self.cfg.balanced_workload:
+                return self.rng.choice(self.specs)
+            if self._trace_pos >= len(self._trace_order):
+                self._trace_order = list(range(len(self.specs)))
+                self.rng.shuffle(self._trace_order)
+                self._trace_pos = 0
+            spec = self.specs[self._trace_order[self._trace_pos]]
+            self._trace_pos += 1
+            return spec
         buckets = self.cfg.buckets
         weights = [b.weight for b in buckets]
-        b = self.rng.choices(buckets, weights=weights, k=1)[0]
+        if self.cfg.balanced_workload:
+            total = sum(weights)
+            for i, weight in enumerate(weights):
+                self._bucket_credit[i] += weight
+            idx = max(
+                (i for i, weight in enumerate(weights) if weight > 0),
+                key=lambda i: (self._bucket_credit[i],
+                               -self._bucket_tie_rank[i]),
+            )
+            self._bucket_credit[idx] -= total
+            b = buckets[idx]
+        else:
+            b = self.rng.choices(buckets, weights=weights, k=1)[0]
         return RequestSpec(b.input_len, b.output_len, self._make_prompt(b.input_len))

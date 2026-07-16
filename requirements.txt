@@ -1,10 +1,14 @@
 # Client-side harness and plotting dependencies. PyTorch is intentionally not
 # required: transformers is used only for tokenizers and model configs, and
 # vLLM/PyTorch run inside the serving container.
-aiohttp>=3.9
-numpy>=1.24
-transformers>=4.44
-huggingface_hub>=0.23
-pyyaml>=6.0
-pandas>=2.0
-matplotlib>=3.7
+# Exact versions validated by the release tests and GPU canaries. The benchmark
+# also records a client-environment hash in every row, so an intentional upgrade
+# cannot be resumed into results from this environment.
+aiohttp==3.14.1
+numpy==2.5.0
+transformers==5.12.1
+tokenizers==0.22.2
+huggingface_hub==1.21.0
+pyyaml==6.0.3
+pandas==3.0.3
+matplotlib==3.11.0

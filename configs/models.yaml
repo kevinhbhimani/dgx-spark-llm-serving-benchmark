@@ -48,18 +48,21 @@ models:
   # Baseline dense 8B.
   - name: Qwen/Qwen3-8B
     label: qwen3-8b
+    revision: b968826d9c46dd6066d109eabc6255188de91218
     configs: [single, tp2, pp2]
     max_model_len: 8704
 
   # Dense 32B reference.
   - name: Qwen/Qwen3-32B
     label: qwen3-32b
+    revision: 9216db5781bf21249d130ec9da846c4624c16137
     configs: [single, tp2, pp2]
     max_model_len: 8704
 
   # BF16 MoE counterpart to Qwen3-32B.
   - name: Qwen/Qwen3-30B-A3B
     label: qwen3-30b-a3b
+    revision: ad44e777bcd18fa416d9da3bd8f70d33ebb85d39
     configs: [single, tp2, pp2]
     max_model_len: 8704
 
@@ -67,6 +70,7 @@ models:
   # BF16 exceeds a single GB10 (~140 GB weights), so benchmark only on two nodes.
   - name: meta-llama/Llama-3.3-70B-Instruct
     label: llama3.3-70b
+    revision: 6f6073b423013f6a7d4d9f39144961bfbfbc386b
     configs: [tp2, pp2]
     max_model_len: 8704
 
@@ -74,6 +78,7 @@ models:
   # quantization ladder on the same weights.
   - name: meta-llama/Llama-3.3-70B-Instruct
     label: llama3.3-70b-fp8
+    revision: 6f6073b423013f6a7d4d9f39144961bfbfbc386b
     configs: [single, tp2, pp2]
     max_model_len: 8704
     quant: fp8
@@ -84,24 +89,28 @@ models:
   # quantization method from this checkpoint's config, so no quant field.
   - name: nvidia/Llama-3.3-70B-Instruct-NVFP4
     label: llama3.3-70b-nvfp4
+    revision: f792b707002f2c613e0729c6b37bbcedc4efa94e
     configs: [single, tp2, pp2]
     max_model_len: 8704
 
   # NVIDIA-optimized sparse model. Pre-quantized NVFP4 checkpoint: the config
   # declares its method as modelopt_fp4, so passing --quantization nvfp4 aborts
   # the launch with a method mismatch; let vLLM auto-detect instead.
-  # pp2 is speculative for the hybrid (mamba) architecture; if vLLM refuses the
-  # pipeline split, run_models.sh logs the failure and moves on.
+  # The pinned vLLM NemotronH implementation explicitly supports pipeline
+  # parallelism; the mandatory distributed canary still validates the real path.
   - name: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
     label: nemotron3-nano-30b-a3b-nvfp4
+    revision: ce1b118ae66ec705d02c241525192832eb045fd3
     configs: [single, tp2, pp2]
     max_model_len: 8704
     trust_remote_code: true
 
   # NVIDIA flagship LatentMoE. Pre-quantized NVFP4 checkpoint; no quant field
-  # (auto-detected, see the nano entry above). pp2 speculative as for the nano.
+  # (auto-detected, see the nano entry above). The same pinned NemotronH
+  # pipeline-parallel implementation is used here.
   - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
     label: nemotron3-super-120b-a12b-nvfp4
+    revision: 4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6
     configs: [single, tp2, pp2]
     max_model_len: 8704
     trust_remote_code: true

@@ -9,8 +9,8 @@ ConnectX link for sizes from 8 B to 1 GiB. The numbers feed the paper's
 communication model for TP2 (per-layer all-reduce latency) and PP2 (per-stage
 activation transfer bandwidth).
 
-Run it while NO model is being served: it does not reserve the GPU through Ray,
-and a busy GPU would contaminate both the microbenchmark and the serving run.
+Run it while NO model is being served. Each task reserves its node's GPU through
+Ray, and the shell wrapper also rejects a live vLLM process.
 
 Prints one CSV row per size:  bytes,avg_s,min_s,algbw_GBps,busbw_GBps
 (busbw equals algbw for all-reduce at world size 2: 2(n-1)/n = 1).
@@ -75,7 +75,8 @@ def main() -> int:
     ray.init(address="auto", log_to_driver=True)
     remotes = []
     for rank, ip in enumerate([head_ip, worker_ip]):
-        fn = ray.remote(num_cpus=0, resources={f"node:{ip}": 0.001})(_worker)
+        fn = ray.remote(num_cpus=0, num_gpus=1,
+                        resources={f"node:{ip}": 0.001})(_worker)
         remotes.append(fn.remote(rank, 2, head_ip, iface, port,
                                  sizes, iters, warmup))
     results = ray.get(remotes, timeout=1800)[0]   # rank 0's timings

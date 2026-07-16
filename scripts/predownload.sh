@@ -3,7 +3,7 @@
 # `vllm serve` does not spend its readiness budget pulling weights.
 #
 # Why: scripts/run_models.sh gives each server READY_TIMEOUT seconds (default
-# 1200) to come up, then tears it down. On a cold cache the largest checkpoints
+# 1800) to come up, then tears it down. On a cold cache the largest checkpoints
 # spend most of that window just downloading (llama3.3-70b-fp8 took 803s and
 # nemotron3-super-120b-a12b-nvfp4 took 1103s to download alone), so they were
 # killed mid-load before ever serving. Warming the cache first removes that race.
@@ -20,12 +20,17 @@
 # repos (meta-llama) use HF_TOKEN from .env. Redundant PyTorch/GGUF copies
 # (e.g. meta-llama's original/*.pth) are skipped; vLLM loads the safetensors.
 #
-# The download is idempotent and resumable: re-running skips files already
-# present and continues any partial download.
+# Downloads are pinned to the revisions in models.yaml and are idempotent and
+# resumable. CHECK_ONLY=1 performs the same local-only completeness validation
+# that run_models.sh uses before it commits any GPU time.
 #
 # Env: MODELS_YAML, HF_CACHE, HF_TOKEN, VLLM_IMAGE (all via connectx_env.sh),
 #      PYTHON (host interpreter for the YAML parse, default python3),
-#      DRY_RUN=1 (list the repos it would fetch, then exit without downloading).
+#      DRY_RUN=1 (list the repos it would fetch, then exit without downloading),
+#      CHECK_ONLY=1 (validate pinned snapshots locally; never use the network),
+#      MODEL_LABELS (optional space-separated label allowlist),
+#      DOWNLOAD_DNS (Docker DNS for downloads, default 8.8.8.8; empty disables),
+#      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_IMAGE, HF_CACHE, HF_TOKEN, and .env
@@ -37,35 +42,66 @@ esac
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 PYTHON="${PYTHON:-python3}"
+CHECK_ONLY="${CHECK_ONLY:-0}"
+MODEL_LABELS="${MODEL_LABELS:-}"
+DOWNLOAD_DNS="${DOWNLOAD_DNS-$CONTAINER_DNS}"
+DOWNLOAD_WORKERS="${DOWNLOAD_WORKERS:-1}"
 
 # Which serving configs to cover. "all" unions every config so a shared repo is
 # still fetched once.
 CONFIGS=("$CONFIG")
 if [[ "$CONFIG" == "all" ]]; then CONFIGS=(single tp2 pp2); fi
 
-# Collect unique repos (model names, plus any explicit tokenizer repos) in
-# first-seen order. models_for_config.py emits:
-#   label|name|max_model_len|gpu_util|quant|tokenizer|trust_remote_code
+# Collect unique repo/revision pairs (model names, plus any explicit tokenizer
+# repos) in first-seen order. The kind is retained so the local check can require
+# model weights while allowing a tokenizer-only repository to contain no weights.
 declare -A SEEN
-REPOS=()
+SPECS=()
+add_spec() {
+  local repo="$1" revision="$2" kind="$3" key="$1|$2"
+  if [[ -z "${SEEN[$key]:-}" ]]; then
+    SEEN[$key]="$kind"
+    SPECS+=("$repo|$revision|$kind")
+  elif [[ "$kind" == "model" ]]; then
+    SEEN[$key]="model"
+  fi
+}
 for cfg in "${CONFIGS[@]}"; do
   # exits 1 when no model requests a config; tolerate that under "all"
   entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg" 2>/dev/null || true)"
   [[ -z "$entries" ]] && continue
-  while IFS='|' read -r label name maxlen gpu_util quant tok trust; do
+  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust; do
     [[ -z "$name" ]] && continue
-    if [[ -z "${SEEN[$name]:-}" ]]; then SEEN[$name]=1; REPOS+=("$name"); fi
-    if [[ -n "$tok" && -z "${SEEN[$tok]:-}" ]]; then SEEN[$tok]=1; REPOS+=("$tok"); fi
+    if [[ -n "$MODEL_LABELS" ]]; then
+      selected=0
+      for wanted in $MODEL_LABELS; do
+        [[ "$label" == "$wanted" ]] && selected=1
+      done
+      [[ "$selected" == "0" ]] && continue
+    fi
+    if [[ -z "$revision" ]]; then
+      echo "[predownload] $label has no pinned revision in $MODELS_YAML" >&2
+      exit 1
+    fi
+    add_spec "$name" "$revision" model
+    if [[ -n "$tok" ]]; then
+      if [[ -z "$tokrev" && "$tok" == "$name" ]]; then tokrev="$revision"; fi
+      if [[ -z "$tokrev" ]]; then
+        echo "[predownload] $label uses tokenizer $tok without tokenizer_revision" >&2
+        exit 1
+      fi
+      add_spec "$tok" "$tokrev" tokenizer
+    fi
   done <<<"$entries"
 done
 
-if [[ "${#REPOS[@]}" -eq 0 ]]; then
+if [[ "${#SPECS[@]}" -eq 0 ]]; then
   echo "[predownload] no models request config '$CONFIG' in $MODELS_YAML" >&2
   exit 1
 fi
 
-echo "[predownload] ${#REPOS[@]} unique repo(s) for '$CONFIG' -> $HF_CACHE"
-printf '  %s\n' "${REPOS[@]}"
+echo "[predownload] ${#SPECS[@]} pinned snapshot(s) for '$CONFIG' -> $HF_CACHE"
+printf '  %s\n' "${SPECS[@]}"
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
   echo "[predownload] DRY_RUN=1, nothing downloaded"
   exit 0
@@ -79,21 +115,85 @@ fi
 mkdir -p "$HF_CACHE"
 
 run_env=()
-if [[ -n "${HF_TOKEN:-}" ]]; then run_env+=( -e HF_TOKEN="$HF_TOKEN" ); fi
+dns_args=()
+if [[ -n "$DOWNLOAD_DNS" ]]; then dns_args=( --dns "$DOWNLOAD_DNS" ); fi
+
+if [[ "$CHECK_ONLY" == "1" ]]; then
+  check_args=()
+  for spec in "${SPECS[@]}"; do
+    IFS='|' read -r repo revision kind <<<"$spec"
+    # Upgrade a tokenizer duplicate to the stronger model check.
+    kind="${SEEN["$repo|$revision"]}"
+    check_args+=("$repo" "$revision" "$kind")
+  done
+  echo "[predownload] CHECK_ONLY=1: validating local pinned snapshots"
+  docker run --rm "${run_env[@]}" \
+    -v "$HF_CACHE":/root/.cache/huggingface "$VLLM_IMAGE" \
+    python3 -c 'import json, sys
+from pathlib import Path
+from huggingface_hub import snapshot_download
+
+errors = []
+args = sys.argv[1:]
+for i in range(0, len(args), 3):
+    repo, revision, kind = args[i:i + 3]
+    try:
+        path = Path(snapshot_download(repo, revision=revision or None,
+                                      local_files_only=True))
+        broken = [str(p.relative_to(path)) for p in path.rglob("*")
+                  if p.is_symlink() and not p.exists()]
+        repo_root = path.parents[1]
+        partial = list((repo_root / "blobs").glob("*.incomplete"))
+        missing = []
+        if kind == "model":
+            indexes = list(path.glob("*.safetensors.index.json"))
+            indexes += list(path.glob("*.bin.index.json"))
+            for index in indexes:
+                weight_map = json.loads(index.read_text()).get("weight_map", {})
+                missing.extend(name for name in set(weight_map.values())
+                               if not (path / name).is_file())
+            if not indexes and not (list(path.glob("*.safetensors"))
+                                    or list(path.glob("*.bin"))):
+                missing.append("no model weight files found")
+        if broken or partial or missing:
+            detail = []
+            if broken: detail.append("broken links: " + ", ".join(broken[:5]))
+            if partial: detail.append(f"{len(partial)} incomplete blob(s)")
+            if missing: detail.append("missing weights: " + ", ".join(missing[:5]))
+            raise RuntimeError("; ".join(detail))
+        print(f"[predownload] OK {repo}@{revision or 'main'} -> {path}")
+    except Exception as exc:
+        errors.append(f"{repo}@{revision or 'main'}: {type(exc).__name__}: {exc}")
+if errors:
+    print("[predownload] CACHE PREFLIGHT FAILED:", file=sys.stderr)
+    for error in errors:
+        print("  " + error, file=sys.stderr)
+    raise SystemExit(1)' "${check_args[@]}"
+  echo "[predownload] all pinned snapshots for '$CONFIG' are complete"
+  exit 0
+fi
+
+# Only the network download needs credentials. Forward the variable by name so
+# its value is not embedded in the docker CLI argv (and therefore visible in
+# host process listings); the local-only cache preflight above receives none.
+if [[ -n "${HF_TOKEN:-}" ]]; then run_env+=( -e HF_TOKEN ); fi
 
 FAILURES=0
-for repo in "${REPOS[@]}"; do
-  echo "[predownload] === $repo ==="
-  if docker run --rm --network host \
+for spec in "${SPECS[@]}"; do
+  IFS='|' read -r repo revision kind <<<"$spec"
+  echo "[predownload] === $repo@$revision ==="
+  if docker run --rm "${dns_args[@]}" \
        "${run_env[@]}" -v "$HF_CACHE":/root/.cache/huggingface \
        "$VLLM_IMAGE" \
        python3 -c 'import sys
 from huggingface_hub import snapshot_download
-repo = sys.argv[1]
-path = snapshot_download(repo, ignore_patterns=["original/*", "*.pth", "*.gguf"])
-print("[predownload] cached", repo, "->", path)' \
-       "$repo"; then
-    echo "[predownload] done $repo"
+repo, revision, workers = sys.argv[1:4]
+path = snapshot_download(repo, revision=revision or None,
+                         max_workers=int(workers),
+                         ignore_patterns=["original/*", "*.pth", "*.gguf"])
+print("[predownload] cached", repo, revision or "main", "->", path)' \
+       "$repo" "$revision" "$DOWNLOAD_WORKERS"; then
+    echo "[predownload] done $repo@$revision"
   else
     echo "[predownload] FAILED $repo (gated repo without HF_TOKEN, or bad name?)" >&2
     FAILURES=$((FAILURES + 1))
@@ -104,5 +204,6 @@ if (( FAILURES > 0 )); then
   echo "[predownload] $FAILURES repo(s) failed; see output above" >&2
   exit 1
 fi
-echo "[predownload] all repos for '$CONFIG' cached under $HF_CACHE"
+CHECK_ONLY=1 "$0" "$CONFIG"
+echo "[predownload] all pinned snapshots for '$CONFIG' cached under $HF_CACHE"
 echo "[predownload] now run: scripts/run_models.sh $([[ "$CONFIG" == all ]] && echo single || echo "$CONFIG")"

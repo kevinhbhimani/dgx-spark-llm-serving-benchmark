@@ -4,7 +4,8 @@
 Used by scripts/run_models.sh to iterate models in the shell. Prints one
 pipe-delimited line per selected model:
 
-    label|name|max_model_len|gpu_util|quant|tokenizer|trust_remote_code
+    label|name|revision|max_model_len|gpu_util|quant|tokenizer|
+    tokenizer_revision|trust_remote_code
 
 The trust_remote_code field is emitted as "1" when truthy, else empty.
 gpu_util may be a scalar (applies to every config) or a mapping keyed by
@@ -61,10 +62,12 @@ def main() -> int:
             gpu_util = gpu_util.get(want, "")
         # a pipe in any field would corrupt the shell split; reject early
         fields = [label, name,
+                  str(m.get("revision", "") or ""),
                   str(m.get("max_model_len", "") or ""),
                   str(gpu_util or ""),
                   str(m.get("quant", "") or ""),
                   str(m.get("tokenizer", "") or ""),
+                  str(m.get("tokenizer_revision", "") or ""),
                   "1" if m.get("trust_remote_code") else ""]
         if any("|" in f for f in fields):
             sys.stderr.write(f"{path}: '|' is not allowed in model fields\n")
