@@ -210,7 +210,7 @@ if [[ -n "$REPEAT_CONCS" ]]; then
 fi
 
 leg "plots + summary table" \
-  python3 plot_results.py --index "$OUT_DIR/index.csv" --out figs \
+  "${PYTHON:-python3}" plot_results.py --index "$OUT_DIR/index.csv" --out figs \
     --format both --table
 
 if (( ${#FAILED[@]} )); then
