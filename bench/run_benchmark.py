@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 import platform
 import re
+import site
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -26,19 +28,46 @@ from .metrics import aggregate
 from . import server_info
 
 
-METHODOLOGY_VERSION = "steady-exact-v2"
+METHODOLOGY_VERSION = "steady-exact-v3"
 
 
 INDEX_FIELDS = [
     "run_tag",
+    "raw_path",
+    "raw_sha256",
+    "raw_bytes",
+    "summary_path",
+    "summary_sha256",
+    "summary_bytes",
+    "power_samples_path",
+    "power_samples_sha256",
+    "power_samples_bytes",
+    "vllm_samples_path",
+    "vllm_samples_sha256",
+    "vllm_samples_bytes",
+    "serving_policy_path",
+    "serving_policy_sha256",
+    "serving_policy_bytes",
     "methodology_version",
     "config_file_sha256",
+    "trace_sha256",
     "experiment_fingerprint",
     "harness_source_sha256",
     "client_environment_sha256",
     "harness_git_commit",
     "serving_fingerprint",
     "deployment_fingerprint",
+    "model_revision",
+    "tokenizer",
+    "tokenizer_revision",
+    "vllm_image",
+    "dtype",
+    "quantization",
+    "tensor_parallel_size",
+    "pipeline_parallel_size",
+    "prefix_caching",
+    "generation_config",
+    "runtime_fingerprint",
     "repeat_id",
     "repeat_count",
     "config_label",
@@ -132,7 +161,11 @@ def _sha256_json(value) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def client_environment() -> dict[str, str]:
+def _normalized_distribution_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def client_environment() -> dict:
     """Return the result-affecting client runtime in a stable form.
 
     Source hashes alone do not protect a resumed campaign from tokenizer,
@@ -141,7 +174,7 @@ def client_environment() -> dict[str, str]:
     """
     packages = (
         "aiohttp", "numpy", "transformers", "tokenizers",
-        "huggingface-hub", "PyYAML",
+        "huggingface-hub", "PyYAML", "pandas", "matplotlib",
     )
     versions = {}
     for name in packages:
@@ -149,15 +182,33 @@ def client_environment() -> dict[str, str]:
             versions[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             versions[name] = "<missing>"
+    installed = {}
+    for dist in importlib.metadata.distributions():
+        name = dist.metadata.get("Name")
+        if name:
+            installed[_normalized_distribution_name(name)] = dist.version
     return {
         "python_implementation": platform.python_implementation(),
         "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "virtual_environment": sys.prefix != sys.base_prefix,
+        "user_site_enabled": bool(site.ENABLE_USER_SITE),
+        "installed_distributions": [
+            f"{name}=={version}" for name, version in sorted(installed.items())
+        ],
         **versions,
     }
 
 
+def _capture_client_environment() -> tuple[dict, str]:
+    """Capture one environment object and hash those exact contents."""
+    environment = client_environment()
+    return environment, _sha256_json(environment)
+
+
 def client_environment_fingerprint() -> str:
-    return _sha256_json(client_environment())
+    return _capture_client_environment()[1]
 
 
 DEPLOYMENT_INFO_FIELDS = (
@@ -187,6 +238,29 @@ def deployment_fingerprint(serving_fingerprint: str, info: dict) -> str:
     """Hash launch policy plus the capacity/runtime observed after startup."""
     return _sha256_json({
         "serving_fingerprint": serving_fingerprint,
+        "deployment_state": deployment_state(info),
+    })
+
+
+_EXPERIMENT_FINGERPRINT_TRANSIENT_FIELDS = frozenset((
+    "repeat_id",
+    "repeat_count",
+    "server_log",
+))
+
+
+def _experiment_fingerprint(resolved_config: dict,
+                            harness_source_sha256: str,
+                            info: dict) -> str:
+    """Hash measurement identity without per-launch bookkeeping paths."""
+    stable_config = {
+        key: value for key, value in resolved_config.items()
+        if key not in _EXPERIMENT_FINGERPRINT_TRANSIENT_FIELDS
+    }
+    return _sha256_json({
+        "methodology_version": METHODOLOGY_VERSION,
+        "harness_source_sha256": harness_source_sha256,
+        "resolved_config": stable_config,
         "deployment_state": deployment_state(info),
     })
 
@@ -227,6 +301,7 @@ def config_file_fingerprint(path: str | None,
         if not hasattr(cfg, key):
             raise ValueError(f"unknown ExperimentConfig override {key!r}")
         setattr(cfg, key, value)
+    cfg.validate()
     return _sha256_json(cfg.to_dict())
 
 
@@ -262,6 +337,13 @@ _INDEX_COUNT_FIELDS = (
     "requests_started_and_completed_in_window", "total_output_tokens",
     "server_metric_samples", "kv_metric_samples", "power_samples_head",
     "power_samples_worker", "power_nodes",
+)
+_ARTIFACT_FIELDS = (
+    ("raw_path", "raw_sha256", "raw_bytes", True),
+    ("summary_path", "summary_sha256", "summary_bytes", True),
+    ("power_samples_path", "power_samples_sha256", "power_samples_bytes", False),
+    ("vllm_samples_path", "vllm_samples_sha256", "vllm_samples_bytes", False),
+    ("serving_policy_path", "serving_policy_sha256", "serving_policy_bytes", False),
 )
 
 
@@ -327,6 +409,78 @@ def _validate_index_rows(rows: list[dict], idx: str) -> None:
             raise RuntimeError(
                 f"index row {row_number} in {idx} is missing required values: "
                 + ", ".join(missing)
+            )
+        for path_field, hash_field, bytes_field, required_artifact in _ARTIFACT_FIELDS:
+            artifact_path = row.get(path_field) or ""
+            artifact_hash = row.get(hash_field) or ""
+            artifact_bytes = row.get(bytes_field)
+            if required_artifact and not artifact_path:
+                raise RuntimeError(
+                    f"index row {row_number} has no value for {path_field}"
+                )
+            if not artifact_path:
+                if artifact_hash or artifact_bytes not in (None, ""):
+                    raise RuntimeError(
+                        f"index row {row_number} has partial artifact metadata "
+                        f"for {path_field}"
+                    )
+                continue
+            if Path(artifact_path).name != artifact_path:
+                raise RuntimeError(
+                    f"index row {row_number} has unsafe artifact path "
+                    f"{artifact_path!r}"
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", artifact_hash):
+                raise RuntimeError(
+                    f"index row {row_number} has invalid {hash_field}"
+                )
+            expected_size = _integral_field(row, bytes_field, row_number)
+            artifact = Path(idx).parent / artifact_path
+            try:
+                if artifact.is_symlink() or not artifact.is_file():
+                    raise OSError("artifact is not a regular, non-symlink file")
+                actual_size = artifact.stat().st_size
+            except OSError as exc:
+                raise RuntimeError(
+                    f"index row {row_number} artifact is missing: {artifact}"
+                ) from exc
+            if actual_size != expected_size:
+                raise RuntimeError(
+                    f"index row {row_number} artifact size mismatch for "
+                    f"{artifact}: {actual_size} != {expected_size}"
+                )
+            # Policy files are tiny, immutable, and consulted during resume;
+            # verify their content on every schema check. The final campaign
+            # verifier streams and hashes every artifact, including large raw
+            # request traces, without making each point append quadratic.
+            if path_field == "serving_policy_path":
+                actual_hash = hashlib.sha256(artifact.read_bytes()).hexdigest()
+                if actual_hash != artifact_hash:
+                    raise RuntimeError(
+                        f"index row {row_number} artifact hash mismatch for "
+                        f"{artifact}"
+                    )
+        if row.get("serving_policy_path"):
+            policy_required = (
+                "model_revision", "tokenizer", "tokenizer_revision",
+                "vllm_image", "dtype", "tensor_parallel_size",
+                "pipeline_parallel_size", "prefix_caching",
+                "generation_config", "runtime_fingerprint",
+            )
+            missing_policy = [
+                field for field in policy_required
+                if row.get(field) in (None, "")
+            ]
+            if missing_policy:
+                raise RuntimeError(
+                    f"index row {row_number} is missing serving-policy "
+                    "values: " + ", ".join(missing_policy)
+                )
+            _integral_field(
+                row, "tensor_parallel_size", row_number, positive=True
+            )
+            _integral_field(
+                row, "pipeline_parallel_size", row_number, positive=True
             )
         repeat_id = _integral_field(
             row, "repeat_id", row_number, positive=True
@@ -486,6 +640,14 @@ def _validate_observability(summary, cfg) -> None:
 
         for name, stat in VLLMMetricsScraper.REQUIRED_RELEASE_STATS.items():
             series = metrics.get(name) or {}
+            # Custom/test scraper adapters predating series identities are
+            # treated as one series; the built-in scraper always reports it.
+            if series.get("series_count", 1) != 1:
+                raise RuntimeError(
+                    f"required vLLM metric {name} has "
+                    f"{series.get('series_count', 0)} label series; release "
+                    "aggregation requires exactly one"
+                )
             value = series.get(stat)
             if not finite_number(value):
                 raise RuntimeError(
@@ -516,6 +678,72 @@ def _validate_observability(summary, cfg) -> None:
                 "did not advance"
             )
 
+
+def _validate_result_quality(summary, cfg) -> None:
+    """Reject unusable release measurements before publishing any artifact."""
+    started = summary.get("requests_started")
+    completed = summary.get("requests_completed")
+    failed = summary.get("requests_failed")
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0
+           for value in (started, completed, failed)):
+        raise RuntimeError("request accounting contains invalid counts")
+    if started != completed + failed:
+        raise RuntimeError(
+            "request accounting mismatch: requests_started must equal "
+            "requests_completed + requests_failed"
+        )
+    if not cfg.require_zero_request_failures:
+        return
+    if failed:
+        raise RuntimeError(
+            f"release point has {failed} failed request(s); no row was published"
+        )
+    if completed < cfg.min_successful_requests:
+        raise RuntimeError(
+            f"release point has {completed} successful request(s), fewer than "
+            f"min_successful_requests={cfg.min_successful_requests}"
+        )
+    if summary.get("total_output_tokens", 0) <= 0:
+        raise RuntimeError("release point received no output tokens in the window")
+
+
+def _preflight_observability(power, worker_power, vmetrics, cfg) -> None:
+    """Fail in seconds when a required sampler is dead or misidentified."""
+    if cfg.require_power_data:
+        if not power.wait_for_samples(minimum=2, timeout_s=10.0):
+            raise RuntimeError(
+                f"power preflight failed for backend {cfg.power_backend!r}: "
+                "fewer than two live samples"
+            )
+        if cfg.config_label in {"tp2", "pp2"}:
+            if worker_power is None:
+                raise RuntimeError("dual-node power preflight has no worker sampler")
+            if not worker_power.wait_for_identity(timeout_s=10.0):
+                raise RuntimeError(
+                    "worker power preflight did not receive a Ray node identity"
+                )
+            if worker_power.identity_ip != cfg.worker_power_node_ip:
+                raise RuntimeError(
+                    "worker power sampler ran on the wrong Ray node: expected "
+                    f"{cfg.worker_power_node_ip}, got {worker_power.identity_ip}"
+                )
+            if (cfg.head_node_ip
+                    and worker_power.identity_ip == cfg.head_node_ip):
+                raise RuntimeError(
+                    "worker power sampler resolved to the head node; refusing "
+                    "to double-count head power"
+                )
+            if not worker_power.wait_for_samples(minimum=2, timeout_s=10.0):
+                raise RuntimeError(
+                    "worker power preflight returned fewer than two live samples"
+                )
+    if cfg.require_vllm_metrics_data:
+        if vmetrics is None or not vmetrics.wait_for_release_metrics(10.0):
+            raise RuntimeError(
+                "vLLM metrics preflight did not expose every required metric"
+            )
+
+
 def _validate_monitor_config(cfg) -> None:
     """Reject impossible required-monitor policies before starting a phase."""
     if cfg.require_power_data and cfg.power_backend == "none":
@@ -524,6 +752,13 @@ def _validate_monitor_config(cfg) -> None:
         raise RuntimeError(
             "require_vllm_metrics_data is true but scraping is disabled"
         )
+    if cfg.config_label in {"tp2", "pp2"} and cfg.require_power_data:
+        if not cfg.head_node_ip:
+            raise RuntimeError("dual-node release power requires head_node_ip")
+        if cfg.worker_power_node_ip == cfg.head_node_ip:
+            raise RuntimeError(
+                "worker_power_node_ip must be distinct from head_node_ip"
+            )
 
 
 def _validate_provenance(cfg) -> None:
@@ -602,10 +837,10 @@ def _model_slug(model: str) -> str:
     -> "llama-3.1-70b-instruct".
     """
     base = (model or "").rsplit("/", 1)[-1].lower()
-    slug = "".join(c if (c.isalnum() or c in "-.") else "-" for c in base)
+    slug = re.sub(r"[^a-z0-9._-]", "-", base)
     while "--" in slug:
         slug = slug.replace("--", "-")
-    return slug.strip("-") or "model"
+    return slug.strip("._-") or "model"
 
 
 def _json_safe(obj):
@@ -622,6 +857,166 @@ def _json_safe(obj):
     if isinstance(obj, list):
         return [_json_safe(v) for v in obj]
     return obj
+
+
+def _atomic_write(path: str, data: bytes) -> None:
+    """Durably publish one artifact with write/fsync/replace semantics."""
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _artifact_metadata(name: str, data: bytes) -> dict:
+    return {
+        "path": name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
+
+
+def _load_serving_policy(path: str | None, cfg) -> tuple[dict | None, dict | None]:
+    """Load and cross-check the immutable launch policy before measurement."""
+    if not path:
+        if cfg.require_provenance:
+            raise RuntimeError(
+                "release provenance requires --serving-policy-file"
+            )
+        return None, None
+
+    supplied = Path(path)
+    source = supplied.resolve()
+    output = Path(cfg.out_dir).resolve()
+    if source.parent != output:
+        raise RuntimeError(
+            "serving policy must be a direct child of the benchmark OUT_DIR"
+        )
+    if supplied.is_symlink() or source.is_symlink() or not source.is_file():
+        raise RuntimeError(
+            f"serving policy is not a regular, non-symlink file: {source}"
+        )
+    data = source.read_bytes()
+    if not data:
+        raise RuntimeError(f"serving policy is empty: {source}")
+
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        policy = json.loads(data, object_pairs_hook=reject_duplicate_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(f"invalid serving policy {source}: {exc}") from exc
+    if not isinstance(policy, dict):
+        raise RuntimeError(f"serving policy {source} must contain an object")
+
+    legacy_fields = (
+        "schema", "config", "image", "model", "revision", "tokenizer",
+        "tokenizer_revision", "dtype", "quant", "max_model_len",
+        "gpu_util", "prefix_caching", "generation_config",
+        "torchinductor_autograd_cache", "hf_hub_offline",
+        "trust_remote_code", "ray_version", "connectx_iface",
+        "nccl_ib_disable", "head_ip", "worker_ip", "power_backend",
+        "runtime_facts", "runtime_facts_sha256", "serving_fingerprint",
+    )
+    missing = [field for field in legacy_fields if field not in policy]
+    if missing:
+        raise RuntimeError(
+            f"serving policy {source} is missing: " + ", ".join(missing)
+        )
+    if policy["schema"] != "serving-v1":
+        raise RuntimeError(
+            f"unsupported serving policy schema {policy['schema']!r}"
+        )
+    fingerprint = str(policy["serving_fingerprint"])
+    runtime_hash = str(policy["runtime_facts_sha256"])
+    if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        raise RuntimeError("serving policy fingerprint is not a SHA-256 digest")
+    if not re.fullmatch(r"[0-9a-f]{64}", runtime_hash):
+        raise RuntimeError("serving runtime fingerprint is not a SHA-256 digest")
+    if not re.fullmatch(r".+@sha256:[0-9a-fA-F]{64}", str(policy["image"])):
+        raise RuntimeError("serving policy image is not pinned by digest")
+
+    runtime_canonical = json.dumps(
+        policy["runtime_facts"], sort_keys=True, separators=(",", ":")
+    ).encode()
+    if hashlib.sha256(runtime_canonical).hexdigest() != runtime_hash:
+        raise RuntimeError("serving policy runtime facts do not match their hash")
+    if str(policy.get("cluster_runtime")) != runtime_hash:
+        raise RuntimeError("serving policy cluster_runtime hash is inconsistent")
+
+    legacy_input = "".join((
+        f"schema={policy['schema']}\n",
+        f"config={policy['config']}\n",
+        f"image={policy['image']}\n",
+        f"model={policy['model']}\nrevision={policy['revision']}\n",
+        f"tokenizer={policy['tokenizer']}\n"
+        f"tokenizer_revision={policy['tokenizer_revision']}\n",
+        f"dtype={policy['dtype']}\nquant={policy['quant']}\n",
+        f"max_model_len={policy['max_model_len']}\n"
+        f"gpu_util={policy['gpu_util']}\n",
+        f"prefix_caching={policy['prefix_caching']}\n"
+        f"generation_config={policy['generation_config']}\n",
+        "torchinductor_autograd_cache="
+        f"{policy['torchinductor_autograd_cache']}\n"
+        f"hf_hub_offline={policy['hf_hub_offline']}\n",
+        f"trust_remote_code={policy['trust_remote_code']}\n"
+        f"ray_version={policy['ray_version']}\n",
+        f"connectx_iface={policy['connectx_iface']}\n"
+        f"nccl_ib_disable={policy['nccl_ib_disable']}\n",
+        f"head_ip={policy['head_ip']}\nworker_ip={policy['worker_ip']}\n"
+        f"power_backend={policy['power_backend']}\n",
+        f"cluster_runtime={runtime_hash}\n",
+    ))
+    if hashlib.sha256(legacy_input.encode()).hexdigest() != fingerprint:
+        raise RuntimeError(
+            "serving policy fields do not reproduce serving_fingerprint"
+        )
+
+    expected = {
+        "config": cfg.config_label,
+        "model": cfg.model,
+        "revision": cfg.model_revision,
+        "tokenizer": cfg.tokenizer,
+        "tokenizer_revision": cfg.tokenizer_revision,
+        "serving_fingerprint": cfg.serving_fingerprint,
+    }
+    mismatches = [
+        f"{field}: {policy.get(field)!r} != {value!r}"
+        for field, value in expected.items()
+        if str(policy.get(field, "")) != str(value or "")
+    ]
+    policy_trust = str(policy["trust_remote_code"]).strip().lower()
+    policy_trust_bool = policy_trust in {"1", "true", "yes", "on"}
+    if policy_trust_bool != bool(cfg.trust_remote_code):
+        mismatches.append(
+            "trust_remote_code: "
+            f"{policy['trust_remote_code']!r} != {cfg.trust_remote_code!r}"
+        )
+    if mismatches:
+        raise RuntimeError(
+            "serving policy does not match benchmark arguments: "
+            + "; ".join(mismatches)
+        )
+    return policy, _artifact_metadata(source.name, data)
 
 
 def _commit_index_row(out_dir: str, idx: str, row: dict) -> None:
@@ -674,6 +1069,17 @@ def _append_index(out_dir, s):
     vllm = s.get("vllm_metrics", {})
     energy = s.get("energy", {})
     info = s.get("server_info", {})
+    artifacts = s.get("artifacts", {})
+    policy = s.get("serving_policy") or {}
+    config = s.get("config") or {}
+    parallel_sizes = {
+        "single": (1, 1),
+        "tp2": (2, 1),
+        "pp2": (1, 2),
+    }
+    tensor_parallel_size, pipeline_parallel_size = parallel_sizes.get(
+        s.get("config_label"), (None, None)
+    )
 
     def vmetric(name, stat):
         return vllm.get(name, {}).get(stat)
@@ -681,18 +1087,52 @@ def _append_index(out_dir, s):
     def vcounter(name, stat="delta"):
         return vllm.get(name, {}).get(stat)
 
+    def artifact(kind, field):
+        return (artifacts.get(kind) or {}).get(field)
+
     gen_delta = vcounter("vllm:generation_tokens_total")
     measure_s = s["measure_s"]
     row = {
         "run_tag": s["run_tag"],
+        "raw_path": artifact("raw", "path"),
+        "raw_sha256": artifact("raw", "sha256"),
+        "raw_bytes": artifact("raw", "bytes"),
+        "summary_path": artifact("summary", "path"),
+        "summary_sha256": artifact("summary", "sha256"),
+        "summary_bytes": artifact("summary", "bytes"),
+        "power_samples_path": artifact("power_samples", "path"),
+        "power_samples_sha256": artifact("power_samples", "sha256"),
+        "power_samples_bytes": artifact("power_samples", "bytes"),
+        "vllm_samples_path": artifact("vllm_samples", "path"),
+        "vllm_samples_sha256": artifact("vllm_samples", "sha256"),
+        "vllm_samples_bytes": artifact("vllm_samples", "bytes"),
+        "serving_policy_path": artifact("serving_policy", "path"),
+        "serving_policy_sha256": artifact("serving_policy", "sha256"),
+        "serving_policy_bytes": artifact("serving_policy", "bytes"),
         "methodology_version": s.get("methodology_version"),
         "config_file_sha256": s.get("config_file_sha256"),
+        "trace_sha256": s.get("trace_sha256"),
         "experiment_fingerprint": s.get("experiment_fingerprint"),
         "harness_source_sha256": s.get("harness_source_sha256"),
         "client_environment_sha256": s.get("client_environment_sha256"),
         "harness_git_commit": s.get("harness_git_commit"),
         "serving_fingerprint": s.get("serving_fingerprint"),
         "deployment_fingerprint": s.get("deployment_fingerprint"),
+        "model_revision": policy.get("revision", config.get("model_revision")),
+        "tokenizer": policy.get("tokenizer", config.get("tokenizer")),
+        "tokenizer_revision": policy.get(
+            "tokenizer_revision", config.get("tokenizer_revision")
+        ),
+        "vllm_image": policy.get("image"),
+        "dtype": policy.get("dtype"),
+        "quantization": policy.get("quant"),
+        "tensor_parallel_size": tensor_parallel_size,
+        "pipeline_parallel_size": pipeline_parallel_size,
+        "prefix_caching": policy.get("prefix_caching"),
+        "generation_config": policy.get("generation_config"),
+        "runtime_fingerprint": policy.get(
+            "runtime_facts_sha256", policy.get("cluster_runtime")
+        ),
         "repeat_id": s.get("repeat_id"),
         "repeat_count": s.get("repeat_count", s.get("repeat_id", 1)),
         "config_label": s["config_label"],
@@ -805,6 +1245,10 @@ def main():
     ap.add_argument("--tokenizer-revision", help="pinned tokenizer commit")
     ap.add_argument("--serving-fingerprint",
                     help="hash of the server image and launch policy")
+    ap.add_argument(
+        "--serving-policy-file",
+        help="immutable canonical launch-policy JSON (required for release runs)",
+    )
     ap.add_argument("--deployment-fingerprint",
                     help="expected hash of the live server runtime/capacity")
     ap.add_argument("--repeat-id", type=int,
@@ -832,6 +1276,9 @@ def main():
                     "power so dual-node energy covers both nodes")
     ap.add_argument("--worker-power-node-ip",
                     help="Ray node IP of the worker to sample (e.g. 10.10.10.2)")
+    ap.add_argument("--head-node-ip",
+                    help="Ray/head node IP; required with release-grade dual "
+                    "power sampling to prove the worker is distinct")
     args = ap.parse_args()
 
     cfg = ExperimentConfig.from_yaml(args.config) if args.config else ExperimentConfig()
@@ -879,6 +1326,8 @@ def main():
         cfg.worker_power_container = args.worker_power_container
     if args.worker_power_node_ip:
         cfg.worker_power_node_ip = args.worker_power_node_ip
+    if args.head_node_ip:
+        cfg.head_node_ip = args.head_node_ip
     if args.model_label is not None:
         cfg.model_label = args.model_label
     if args.server_log is not None:
@@ -905,12 +1354,14 @@ def main():
         raise SystemExit("--repeat-count must be at least 1")
     if cfg.repeat_id > cfg.repeat_count:
         raise SystemExit("--repeat-id cannot exceed --repeat-count")
+    cfg.validate()
     _validate_monitor_config(cfg)
     if (cfg.require_power_data and cfg.config_label in {"tp2", "pp2"}
             and not (cfg.worker_power_container and cfg.worker_power_node_ip)):
         raise SystemExit(
             "dual-node require_power_data needs both worker power arguments"
         )
+    os.makedirs(cfg.out_dir, exist_ok=True)
     validate_index_schema(cfg.out_dir)
     config_file_sha256 = config_file_fingerprint(
         args.config,
@@ -923,7 +1374,6 @@ def main():
         },
     )
     harness_source_sha256 = _source_fingerprint()
-    client_environment_sha256 = client_environment_fingerprint()
     harness_git_commit = _git_commit()
 
     cfg.model = _resolve_model(cfg)
@@ -931,6 +1381,9 @@ def main():
             and cfg.tokenizer == cfg.model):
         cfg.tokenizer_revision = cfg.model_revision
     _validate_provenance(cfg)
+    serving_policy, serving_policy_artifact = _load_serving_policy(
+        args.serving_policy_file, cfg
+    )
     if cfg.tokenizer and cfg.use_token_ids and cfg.tokenizer != cfg.model:
         print(f"[bench] WARNING: tokenizer '{cfg.tokenizer}' differs from the "
               f"served model '{cfg.model}'. Token-id prompts are only exact "
@@ -943,16 +1396,26 @@ def main():
     explicit_label = bool(cfg.model_label)
     if not cfg.model_label:
         cfg.model_label = _model_slug(cfg.model)
+    # Explicit labels were checked before any output-directory work. Validate
+    # the derived model slug too, immediately before it can enter a run tag.
+    cfg.validate()
+    captured_client_environment, client_environment_sha256 = (
+        _capture_client_environment()
+    )
     # Before the first transformers/huggingface_hub import reads the HF env.
     if cfg.tokenizer or cfg.collect_hf_metadata:
         _ensure_writable_hf_cache()
     workload = Workload(cfg, _load_tokenizer(cfg))
 
-    os.makedirs(cfg.out_dir, exist_ok=True)
     point = cfg.concurrency if cfg.mode == "closed" else cfg.qps
     prefix = f"{cfg.model_label}_" if explicit_label else ""
+    now_ns = time.time_ns()
+    timestamp = (
+        time.strftime("%Y%m%d-%H%M%S", time.localtime(now_ns // 1_000_000_000))
+        + f"-{now_ns % 1_000_000_000:09d}"
+    )
     tag = (f"{prefix}{cfg.config_label}_{cfg.mode}_{point}_r{cfg.repeat_id}_"
-           f"{time.strftime('%Y%m%d-%H%M%S')}")
+           f"{timestamp}")
     print(f"[bench] model={cfg.model} config={cfg.config_label} "
           f"mode={cfg.mode} point={point}")
 
@@ -964,15 +1427,6 @@ def main():
         wpower = WorkerPowerSampler(cfg.worker_power_container,
                                     cfg.worker_power_node_ip)
     vmet = VLLMMetricsScraper(cfg.base_url) if cfg.scrape_vllm_metrics else None
-    power.start()
-    if wpower:
-        wpower.start()
-    if vmet:
-        vmet.start()
-        # Seed a baseline before window_start; the background thread interval is
-        # one second, which is longer than some smoke-test windows.
-        vmet.scrape_once()
-
     # One continuous phase. Closed-loop warmup is automatically extended until
     # every worker's initial request has completed. Cooldown is a minimum: load
     # remains at its configured level until every measurement request finishes,
@@ -981,9 +1435,18 @@ def main():
     print(f"[bench] continuous phase: minimum warmup {cfg.warmup_s:g}s + "
           f"measure {cfg.measure_s:g}s + minimum cooldown {cfg.cooldown_s:g}s "
           f"= {minimum_s:g}s, with automatic steady-state extensions")
-    wall_anchor = time.time()
-    perf_anchor = time.perf_counter()
     try:
+        power.start()
+        if wpower:
+            wpower.start()
+        if vmet:
+            vmet.start()
+            # Seed a baseline before window_start; the background thread interval
+            # is longer than some smoke-test windows.
+            vmet.scrape_once()
+        _preflight_observability(power, wpower, vmet, cfg)
+        wall_anchor = time.time()
+        perf_anchor = time.perf_counter()
         records, phase = asyncio.run(run_phase(cfg, workload))
     finally:
         # Sampler subprocesses must not survive a failed/aborted phase and
@@ -1030,14 +1493,18 @@ def main():
                         power if cfg.power_backend != "none" else None, vmet,
                         worker_power=wpower)
     _validate_observability(summary, cfg)
+    _validate_result_quality(summary, cfg)
     summary["run_tag"] = tag
     summary["methodology_version"] = METHODOLOGY_VERSION
     summary["config_file_sha256"] = config_file_sha256
+    summary["trace_sha256"] = cfg.trace_sha256
     summary["harness_source_sha256"] = harness_source_sha256
     summary["client_environment_sha256"] = client_environment_sha256
-    summary["client_environment"] = client_environment()
+    summary["client_environment"] = captured_client_environment
     summary["harness_git_commit"] = harness_git_commit
     summary["serving_fingerprint"] = cfg.serving_fingerprint
+    if serving_policy is not None:
+        summary["serving_policy"] = serving_policy
     summary["deployment_fingerprint"] = actual_deployment_fingerprint
     summary["repeat_id"] = cfg.repeat_id
     summary["repeat_count"] = cfg.repeat_count
@@ -1053,25 +1520,92 @@ def main():
     # re-aggregated post hoc and cross-referenced with server logs.
     summary["window_start_unix"] = window_start_unix
     summary["server_info"] = info
+    if wpower:
+        summary["worker_power_identity"] = {
+            "requested_ip": cfg.worker_power_node_ip,
+            "observed_ip": wpower.identity_ip,
+            "ray_node_id": wpower.identity_node_id,
+        }
     summary["config"] = cfg.to_dict()
     summary["drain_s"] = drain_s
-    fingerprint_config = dict(summary["config"])
-    fingerprint_config.pop("repeat_id", None)
-    fingerprint_config.pop("repeat_count", None)
-    summary["experiment_fingerprint"] = _sha256_json({
-        "methodology_version": METHODOLOGY_VERSION,
-        "harness_source_sha256": harness_source_sha256,
-        "resolved_config": fingerprint_config,
-        "deployment_state": deployment_state(info),
-    })
-    # NaN -> null for the files; the console print below keeps the raw values.
-    safe_summary = _json_safe(summary)
+    summary["experiment_fingerprint"] = _experiment_fingerprint(
+        summary["config"], harness_source_sha256, info
+    )
+    # Build every artifact in memory, then fsync+rename it before the index row
+    # can make the point resumable.
+    raw_name = f"{tag}.raw.jsonl"
+    summary_name = f"{tag}.summary.json"
+    raw_data = "".join(
+        json.dumps(_json_safe(record.to_json()), sort_keys=True) + "\n"
+        for record in records
+    ).encode()
+    artifacts = {"raw": _artifact_metadata(raw_name, raw_data)}
+    if serving_policy_artifact is not None:
+        artifacts["serving_policy"] = serving_policy_artifact
 
-    with open(os.path.join(cfg.out_dir, f"{tag}.raw.jsonl"), "w") as f:
-        for r in records:
-            f.write(json.dumps(_json_safe(r.to_json())) + "\n")
-    with open(os.path.join(cfg.out_dir, f"{tag}.summary.json"), "w") as f:
-        json.dump(safe_summary, f, indent=2)
+    power_data = b""
+    if cfg.power_backend != "none":
+        power_name = f"{tag}.power.jsonl"
+        power_rows = [
+            {"source": "head", "t_perf": t, "watts": watts}
+            for t, watts in power.samples()
+        ]
+        if wpower:
+            power_rows.extend(
+                {"source": "worker", "t_perf": t, "watts": watts,
+                 "node_ip": wpower.identity_ip,
+                 "ray_node_id": wpower.identity_node_id}
+                for t, watts in wpower.samples()
+            )
+        power_rows.sort(key=lambda row: (row["t_perf"], row["source"]))
+        power_data = "".join(
+            json.dumps(_json_safe(row), sort_keys=True) + "\n"
+            for row in power_rows
+        ).encode()
+        artifacts["power_samples"] = _artifact_metadata(power_name, power_data)
+
+    vllm_data = b""
+    if vmet is not None:
+        vllm_name = f"{tag}.vllm_metrics.jsonl"
+        metric_rows = []
+        for metric, payload in vmet.raw_samples().items():
+            for t, value in payload["samples"]:
+                metric_rows.append({
+                    "metric": metric,
+                    "labels": payload["labels"],
+                    "t_perf": t,
+                    "value": value,
+                })
+        metric_rows.sort(key=lambda row: (row["t_perf"], row["metric"]))
+        vllm_data = "".join(
+            json.dumps(_json_safe(row), sort_keys=True) + "\n"
+            for row in metric_rows
+        ).encode()
+        artifacts["vllm_samples"] = _artifact_metadata(vllm_name, vllm_data)
+
+    summary["artifacts"] = artifacts
+    safe_summary = _json_safe(summary)
+    summary_data = (
+        json.dumps(safe_summary, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    ).encode()
+    summary_artifact = _artifact_metadata(summary_name, summary_data)
+
+    _atomic_write(os.path.join(cfg.out_dir, raw_name), raw_data)
+    if "power_samples" in artifacts:
+        _atomic_write(
+            os.path.join(cfg.out_dir, artifacts["power_samples"]["path"]),
+            power_data,
+        )
+    if "vllm_samples" in artifacts:
+        _atomic_write(
+            os.path.join(cfg.out_dir, artifacts["vllm_samples"]["path"]),
+            vllm_data,
+        )
+    _atomic_write(os.path.join(cfg.out_dir, summary_name), summary_data)
+
+    # The summary cannot contain its own digest without becoming circular; add
+    # that final metadata only to the in-memory index representation.
+    safe_summary["artifacts"]["summary"] = summary_artifact
     _append_index(cfg.out_dir, safe_summary)
 
     print(f"[bench] tok_thru={summary['output_token_throughput_tps']:.1f} tok/s  "

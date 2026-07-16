@@ -16,12 +16,13 @@
 # this script cycles only the `vllm serve` process between models and leaves the
 # Ray cluster running. For single it launches and removes a standalone container.
 #
-# Each model's server stdout is teed to $OUT_DIR/server_<label>_<config>.log,
-# which is passed to the benchmark so exact capacity figures (max concurrency,
-# GPU blocks) are captured alongside the HTTP-derived ones. Results append to
+# Each actual launch writes a new no-clobber server log whose name includes the
+# serving-fingerprint prefix and UTC launch timestamp. The log and an immutable
+# canonical serving-policy JSON are passed to the benchmark so runtime identity
+# and exact capacity figures remain auditable. Results append to
 # $OUT_DIR/index.csv tagged with the model label. Use a fresh OUT_DIR when the
-# index schema has changed between versions (the benchmark refuses to append to a
-# mismatched header).
+# index schema has changed between versions (the benchmark refuses to append to
+# a mismatched header).
 #
 # Env: MODELS_YAML BASE_URL OUT_DIR POWER_BACKEND CONCURRENCIES CONFIG_YAML
 #      REPEATS (fixed-workload repeated windows for spread, default 3)
@@ -193,27 +194,112 @@ if [[ "$CACHE_PREFLIGHT" == "1" ]]; then
     PYTHON="$PYTHON" "$HERE/predownload.sh" "$CONFIG"
 fi
 
-# Dual runs execute model code on both containers. Verify and hash the actual
-# per-node Python/Ray/vLLM/torch/CUDA/driver/GPU/power-limit environment rather
-# than assuming Hoedus sourced the same .env as Diya. The hash becomes part of
-# every dual serving fingerprint, so a dependency change cannot be resumed into
-# an older curve.
-CLUSTER_RUNTIME_FINGERPRINT="standalone"
-if [[ "$CONFIG" != "single" ]]; then
+# Runtime identity is collected before any resume decision. Dual runs execute
+# model code on both containers, so their existing canonical two-node snapshot
+# remains unchanged. Single runs hash stable host facts instead of the former
+# literal "standalone" marker, preventing a curve from spanning GPU, driver,
+# clock-policy, or power-limit changes.
+RUNTIME_SCOPE="single-host"
+RUNTIME_FACTS_JSON=""
+CLUSTER_RUNTIME_FINGERPRINT=""
+if [[ "$CONFIG" == "single" ]]; then
+  if ! RUNTIME_FACTS_JSON="$("$PYTHON" - <<'PY'
+import csv
+import json
+import subprocess
+import sys
+
+query = (
+    ("gpu_name", "name"),
+    ("gpu_uuid", "uuid"),
+    ("driver", "driver_version"),
+    ("power_limit_w", "power.limit"),
+    ("compute_capability", "compute_cap"),
+    ("max_graphics_clock_mhz", "clocks.max.graphics"),
+    ("application_graphics_clock_mhz", "clocks.applications.graphics"),
+    (
+        "default_application_graphics_clock_mhz",
+        "clocks.default_applications.graphics",
+    ),
+)
+command = [
+    "nvidia-smi",
+    "--query-gpu=" + ",".join(field for _, field in query),
+    "--format=csv,noheader,nounits",
+]
+try:
+    completed = subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    print(f"[models] single-host nvidia-smi identity query failed: {exc}",
+          file=sys.stderr)
+    raise SystemExit(1)
+
+lines = [line for line in completed.stdout.splitlines() if line.strip()]
+if len(lines) != 1:
+    print(
+        f"[models] expected exactly one host GPU, nvidia-smi returned {len(lines)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+values = [value.strip() for value in next(csv.reader([lines[0]]))]
+if len(values) != len(query):
+    print(
+        f"[models] nvidia-smi returned {len(values)} fields, expected {len(query)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+unavailable = {"", "n/a", "[n/a]", "not supported", "[not supported]", "unknown"}
+# GB10 legitimately reports N/A for some policy telemetry (notably the power
+# limit). Preserve those exact values in the immutable runtime record while
+# still failing closed on the fields needed to identify the GPU and driver.
+required = {
+    "gpu_name",
+    "gpu_uuid",
+    "driver",
+    "compute_capability",
+    "max_graphics_clock_mhz",
+}
+for (name, _), value in zip(query, values):
+    if name in required and value.casefold() in unavailable:
+        print(f"[models] required nvidia-smi field {name} is unavailable: {value!r}",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+facts = {
+    "gpus": [dict((name, value) for (name, _), value in zip(query, values))],
+    "query_fields": [field for _, field in query],
+    "source": "host-nvidia-smi",
+}
+print(json.dumps(facts, sort_keys=True, separators=(",", ":")))
+PY
+)"; then
+    echo "[models] single-host runtime identity preflight failed" >&2
+    exit 1
+  fi
+else
+  RUNTIME_SCOPE="dual-cluster"
   if ! cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" \
       python3 - "$HEAD_IP" "$HOEDUS_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
       < "$HERE/cluster_runtime_fingerprint.py")"; then
     echo "[models] dual-node runtime identity preflight failed" >&2
     exit 1
   fi
-  CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$cluster_runtime_json" \
-    | sha256sum | awk '{print $1}')"
-  echo "[models] cluster runtime fingerprint: $CLUSTER_RUNTIME_FINGERPRINT"
-  echo "[models] cluster runtime facts: $cluster_runtime_json"
+  RUNTIME_FACTS_JSON="$cluster_runtime_json"
 fi
+CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$RUNTIME_FACTS_JSON" \
+  | sha256sum | awk '{print $1}')"
+echo "[models] $RUNTIME_SCOPE runtime fingerprint: $CLUSTER_RUNTIME_FINGERPRINT"
+echo "[models] $RUNTIME_SCOPE runtime facts: $RUNTIME_FACTS_JSON"
 
 LAUNCH_PID=""
 ACTIVE_CHILD=""
+LAST_SERVER_LOG=""
 
 server_ready() {
   # 200 from /v1/models AND the requested model id is being served
@@ -411,18 +497,179 @@ serving_fingerprint() {
   } | sha256sum | awk '{print $1}'
 }
 
+
+write_serving_policy() {
+  local destination="$1" fingerprint="$2" name="$3" revision="$4"
+  local tokenizer="$5" tokrev="$6" maxlen="$7" gpu_util="$8"
+  local quant="$9" trust="${10}"
+  "$PYTHON" - "$destination" "$fingerprint" "serving-v1" "$CONFIG" \
+    "$VLLM_IMAGE" "$name" "$revision" "$tokenizer" "$tokrev" \
+    "${DTYPE:-auto}" "$quant" "$maxlen" "$gpu_util" \
+    "${PREFIX_CACHING:-0}" "${GENERATION_CONFIG:-vllm}" \
+    "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" "${HF_HUB_OFFLINE:-1}" \
+    "$trust" "$RAY_VERSION" "$CX_IFACE" "$NCCL_IB_DISABLE" \
+    "$HEAD_IP" "$HOEDUS_IP" "$EFFECTIVE_POWER_BACKEND" \
+    "$CLUSTER_RUNTIME_FINGERPRINT" "$RUNTIME_SCOPE" \
+    "$RUNTIME_FACTS_JSON" <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+(
+    destination_text,
+    fingerprint,
+    schema,
+    config,
+    image,
+    model,
+    revision,
+    tokenizer,
+    tokenizer_revision,
+    dtype,
+    quant,
+    max_model_len,
+    gpu_util,
+    prefix_caching,
+    generation_config,
+    torchinductor_autograd_cache,
+    hf_hub_offline,
+    trust_remote_code,
+    ray_version,
+    connectx_iface,
+    nccl_ib_disable,
+    head_ip,
+    worker_ip,
+    power_backend,
+    runtime_hash,
+    runtime_scope,
+    runtime_json,
+) = sys.argv[1:]
+
+try:
+    runtime_facts = json.loads(runtime_json)
+except (TypeError, ValueError) as exc:
+    raise SystemExit(f"[models] invalid canonical runtime JSON: {exc}")
+runtime_canonical = json.dumps(
+    runtime_facts, sort_keys=True, separators=(",", ":")
+)
+computed_runtime_hash = hashlib.sha256(runtime_canonical.encode()).hexdigest()
+if computed_runtime_hash != runtime_hash:
+    raise SystemExit(
+        "[models] runtime JSON is not canonical or its hash changed: "
+        f"{computed_runtime_hash} != {runtime_hash}"
+    )
+
+# This is the existing serving-v1 line serialization. Keeping it here as an
+# assertion prevents the human-readable policy and resume fingerprint from
+# silently drifting apart; dual-node fingerprints remain backward-compatible.
+legacy_input = "".join((
+    f"schema={schema}\n",
+    f"config={config}\n",
+    f"image={image}\n",
+    f"model={model}\nrevision={revision}\n",
+    f"tokenizer={tokenizer}\ntokenizer_revision={tokenizer_revision}\n",
+    f"dtype={dtype}\nquant={quant}\n",
+    f"max_model_len={max_model_len}\ngpu_util={gpu_util}\n",
+    f"prefix_caching={prefix_caching}\ngeneration_config={generation_config}\n",
+    "torchinductor_autograd_cache="
+    f"{torchinductor_autograd_cache}\nhf_hub_offline={hf_hub_offline}\n",
+    f"trust_remote_code={trust_remote_code}\nray_version={ray_version}\n",
+    f"connectx_iface={connectx_iface}\nnccl_ib_disable={nccl_ib_disable}\n",
+    f"head_ip={head_ip}\nworker_ip={worker_ip}\npower_backend={power_backend}\n",
+    f"cluster_runtime={runtime_hash}\n",
+))
+computed_fingerprint = hashlib.sha256(legacy_input.encode()).hexdigest()
+if computed_fingerprint != fingerprint:
+    raise SystemExit(
+        "[models] serving policy fields do not reproduce fingerprint: "
+        f"{computed_fingerprint} != {fingerprint}"
+    )
+
+policy = {
+    "cluster_runtime": runtime_hash,
+    "config": config,
+    "connectx_iface": connectx_iface,
+    "dtype": dtype,
+    "generation_config": generation_config,
+    "gpu_util": gpu_util,
+    "head_ip": head_ip,
+    "hf_hub_offline": hf_hub_offline,
+    "image": image,
+    "max_model_len": max_model_len,
+    "model": model,
+    "nccl_ib_disable": nccl_ib_disable,
+    "power_backend": power_backend,
+    "prefix_caching": prefix_caching,
+    "quant": quant,
+    "ray_version": ray_version,
+    "revision": revision,
+    "runtime_facts": runtime_facts,
+    "runtime_facts_sha256": runtime_hash,
+    "runtime_scope": runtime_scope,
+    "schema": schema,
+    "serving_fingerprint": fingerprint,
+    "tokenizer": tokenizer,
+    "tokenizer_revision": tokenizer_revision,
+    "torchinductor_autograd_cache": torchinductor_autograd_cache,
+    "trust_remote_code": trust_remote_code,
+    "worker_ip": worker_ip,
+}
+encoded = (
+    json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+).encode()
+destination = Path(destination_text).absolute()
+if not destination.parent.is_dir():
+    raise SystemExit(
+        f"[models] serving policy parent does not exist: {destination.parent}"
+    )
+
+descriptor, temporary_name = tempfile.mkstemp(
+    dir=destination.parent,
+    prefix=f".{destination.name}.",
+    suffix=".tmp",
+)
+temporary = Path(temporary_name)
+try:
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        os.link(temporary, destination)
+    except FileExistsError:
+        if destination.is_symlink() or not destination.is_file():
+            raise SystemExit(
+                f"[models] refusing non-regular serving policy: {destination}"
+            )
+        if destination.read_bytes() != encoded:
+            raise SystemExit(
+                f"[models] immutable serving policy conflicts with {destination}"
+            )
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+}
+
 run_one() {
   local label="$1" name="$2" revision="$3" maxlen="$4" gpu_util="$5"
   local quant="$6" tok="$7" tokrev="$8" trust="$9"
-  local log="$OUT_DIR/server_${label}_${CONFIG}.log"
+  local log="" policy_file="" launch_timestamp="" fingerprint_prefix=""
   local tokenizer="${tok:-$name}"
   local tokenizer_revision="$tokrev"
   local actual_maxlen="${maxlen:-8704}"
   local actual_gpu_util="${gpu_util:-0.80}"
   local fingerprint deployment="" schedule=""
   local status=0
+  LAST_SERVER_LOG=""
   echo "[models] === $label ($name) config=$CONFIG ==="
 
+  if [[ ! "$label" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "[models] unsafe model label for provenance filenames: $label" >&2
+    return 1
+  fi
   if [[ -z "$revision" ]]; then
     echo "[models] $label has no pinned model revision" >&2
     return 1
@@ -437,6 +684,16 @@ run_one() {
                     "$tokenizer_revision" "$actual_maxlen" "$actual_gpu_util" \
                     "$quant" "$trust")"
   echo "[models] serving fingerprint: $fingerprint"
+  fingerprint_prefix="${fingerprint:0:16}"
+
+  policy_file="$OUT_DIR/serving_policy_${label}_${CONFIG}_${fingerprint}.json"
+  if ! write_serving_policy "$policy_file" "$fingerprint" "$name" \
+      "$revision" "$tokenizer" "$tokenizer_revision" "$actual_maxlen" \
+      "$actual_gpu_util" "$quant" "$trust"; then
+    echo "[models] failed to persist serving policy for $label" >&2
+    return 1
+  fi
+  echo "[models] serving policy: $policy_file"
 
   # Resume at exact (repeat, concurrency) granularity. Only rows produced by
   # the current methodology/config/source/server identity count as complete.
@@ -468,7 +725,25 @@ run_one() {
                     GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
                     TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
                     HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}")
+  teardown
+  wait_endpoint_down || return 1
+
+  if ! launch_timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"; then
+    echo "[models] could not obtain a UTC launch timestamp for $label" >&2
+    return 1
+  fi
+  log="$OUT_DIR/server_${label}_${CONFIG}_${fingerprint_prefix}_${launch_timestamp}_pid$$.log"
+  # Exclusive creation makes a collision a hard failure. The launcher appends
+  # only to this newly allocated path, so prior server evidence is never
+  # truncated or reused by a later launch.
+  if ! (set -o noclobber; : >"$log") 2>/dev/null; then
+    echo "[models] refusing to overwrite existing server log: $log" >&2
+    return 1
+  fi
+  LAST_SERVER_LOG="$log"
+
   local sweep_env=(MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log"
+                   SERVING_POLICY_FILE="$policy_file"
                    MODEL_REVISION="$revision"
                    TOKENIZER="$tokenizer" TRUST_REMOTE_CODE="$trust"
                    TOKENIZER_REVISION="$tokenizer_revision"
@@ -484,12 +759,10 @@ run_one() {
                    HF_MODULES_CACHE="${HF_MODULES_CACHE:-$HOME/.cache/huggingface-client/modules}"
                    PYTHON="$PYTHON")
 
-  teardown
-  wait_endpoint_down || return 1
-
-  # Launch the server in the background, teeing its log. launch_server.sh reads
-  # MODEL/MAXLEN/GPU_UTIL/QUANT/TOKENIZER from the environment.
-  env "${launch_env[@]}" "$HERE/launch_server.sh" "$CONFIG" >"$log" 2>&1 &
+  echo "[models] immutable server log: $log"
+  # launch_server.sh reads MODEL/MAXLEN/GPU_UTIL/QUANT/TOKENIZER from the
+  # environment. Append to the exclusively created per-launch log.
+  env "${launch_env[@]}" "$HERE/launch_server.sh" "$CONFIG" >>"$log" 2>&1 &
   LAUNCH_PID=$!
 
   if ! wait_ready "$name"; then
@@ -546,8 +819,9 @@ PY
     return 0
   fi
 
-  # Sweep this model. run_all.sh passes the model, label, and server log through
-  # to the benchmark so rows are tagged and capacity figures captured.
+  # Sweep this model. run_all.sh receives the model, label, immutable server log,
+  # and canonical serving-policy path so rows can retain the complete launch
+  # provenance while recording capacity figures.
   env "${sweep_env[@]}" "$HERE/run_all.sh" "$CONFIG" &
   ACTIVE_CHILD=$!
   if ! wait "$ACTIVE_CHILD"; then
@@ -574,7 +848,8 @@ for entry in "${ENTRIES[@]}"; do
     FAILURES=$((FAILURES + 1))
     # A failed launcher preflight means a node is short on memory; every later
     # model would fail the same way, so stop instead of cycling through them.
-    if grep -q "PREFLIGHT FAILED" "$OUT_DIR/server_${label}_${CONFIG}.log" 2>/dev/null; then
+    if [[ -n "$LAST_SERVER_LOG" ]] && \
+        grep -q "PREFLIGHT FAILED" "$LAST_SERVER_LOG" 2>/dev/null; then
       echo "[models] cluster memory preflight failed for $label; aborting the" \
            "sweep. Free memory on the low node (see the log), then rerun" \
            "with --skip-done." >&2

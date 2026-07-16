@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import hashlib
 import math
 import tempfile
 import unittest
@@ -280,10 +281,12 @@ class PlotCompatibilityTests(unittest.TestCase):
         self.assertEqual(plot_results.models_present(df), ["Qwen/Qwen3-8B"])
 
     def test_fresh_index_carries_corrected_methodology_fields(self):
-        from bench.run_benchmark import _append_index, INDEX_FIELDS
+        from bench.run_benchmark import (
+            _append_index, INDEX_FIELDS, METHODOLOGY_VERSION,
+        )
         pct = {"p50": 0.1, "p99": 0.2}
         summary = {
-            "run_tag": "r1", "methodology_version": "steady-exact-v2",
+            "run_tag": "r1", "methodology_version": METHODOLOGY_VERSION,
             "config_file_sha256": "a" * 64,
             "experiment_fingerprint": "b" * 64,
             "harness_source_sha256": "c" * 64,
@@ -312,6 +315,22 @@ class PlotCompatibilityTests(unittest.TestCase):
             "energy": {"power_scope": "gpu_devices"},
         }
         with tempfile.TemporaryDirectory() as tmp:
+            raw = b"{}\n"
+            summary_file = b"{}\n"
+            (Path(tmp) / "r1.raw.jsonl").write_bytes(raw)
+            (Path(tmp) / "r1.summary.json").write_bytes(summary_file)
+            summary["artifacts"] = {
+                "raw": {
+                    "path": "r1.raw.jsonl",
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "bytes": len(raw),
+                },
+                "summary": {
+                    "path": "r1.summary.json",
+                    "sha256": hashlib.sha256(summary_file).hexdigest(),
+                    "bytes": len(summary_file),
+                },
+            }
             _append_index(tmp, summary)
             path = Path(tmp) / "index.csv"
             with path.open(newline="") as f:
