@@ -8,7 +8,7 @@ from unittest import mock
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from bench.monitors import PowerSampler, VLLMMetricsScraper
+from bench.monitors import PowerSampler, VLLMMetricsScraper, WorkerPowerSampler
 import plot_results
 
 
@@ -61,6 +61,19 @@ class VLLMCounterTests(unittest.TestCase):
 
         self.assertEqual(scraper._series["vllm:generation_tokens_total"], [])
         self.assertEqual(scraper._series["vllm:kv_cache_usage_perc"], [])
+
+
+class WorkerPowerFreshnessTests(unittest.TestCase):
+    def test_duplicate_stale_and_nonfinite_worker_samples_are_rejected(self):
+        sampler = WorkerPowerSampler("container", "10.0.0.2", interval_ms=1000)
+
+        self.assertTrue(sampler._consume_line("1 0.1 25.0"))
+        self.assertFalse(sampler._consume_line("1 0.2 30.0"))
+        self.assertFalse(sampler._consume_line("2 4.0 30.0"))
+        self.assertFalse(sampler._consume_line("3 0.1 NaN"))
+        self.assertTrue(sampler._consume_line("4 0.1 26.0"))
+
+        self.assertEqual([watts for _, watts in sampler._samples], [25.0, 26.0])
 
 
 class RepeatAggregationTests(unittest.TestCase):
@@ -199,7 +212,9 @@ class RepeatAggregationTests(unittest.TestCase):
         stderr = io.StringIO()
 
         with mock.patch("sys.stderr", stderr):
-            result = plot_results.collapse_repeats(pd.DataFrame(rows))
+            result = plot_results.collapse_repeats(
+                pd.DataFrame(rows), allow_incomplete=True
+            )
 
         self.assertEqual(result.iloc[0]["repeat_count"], 3)
         self.assertIn("incomplete repeat rectangle", stderr.getvalue())

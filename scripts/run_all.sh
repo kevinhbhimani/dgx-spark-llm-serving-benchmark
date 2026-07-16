@@ -5,6 +5,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+require_local_connectx_ip "$HEAD_IP" "benchmark head role" || exit 1
+acquire_campaign_lock || exit 1
 
 LABEL="${1:-single}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
@@ -34,19 +36,35 @@ if [[ ! "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
   echo "[sweep] REPEATS must be a positive integer, got '$REPEATS'" >&2
   exit 1
 fi
-for list_name in CONCURRENCIES EXPECTED_CONCURRENCIES; do
-  value="${!list_name}"
-  if [[ -z "${value//[[:space:]]/}" ]]; then
-    echo "[sweep] $list_name must not be empty" >&2
+declare -A EXPECTED_SET=()
+for c in $EXPECTED_CONCURRENCIES; do
+  if [[ ! "$c" =~ ^[1-9][0-9]*$ || -n "${EXPECTED_SET[$c]:-}" ]]; then
+    echo "[sweep] invalid or duplicate expected concurrency '$c'" >&2
     exit 1
   fi
-  for c in $value; do
-    if [[ ! "$c" =~ ^[1-9][0-9]*$ ]]; then
-      echo "[sweep] $list_name contains invalid concurrency '$c'" >&2
-      exit 1
-    fi
-  done
+  EXPECTED_SET[$c]=1
 done
+if [[ "${#EXPECTED_SET[@]}" -eq 0 ]]; then
+  echo "[sweep] EXPECTED_CONCURRENCIES must not be empty" >&2
+  exit 1
+fi
+
+declare -A REQUESTED_SET=()
+for c in $CONCURRENCIES; do
+  if [[ ! "$c" =~ ^[1-9][0-9]*$ || -n "${REQUESTED_SET[$c]:-}" ]]; then
+    echo "[sweep] invalid or duplicate requested concurrency '$c'" >&2
+    exit 1
+  fi
+  if [[ -z "${EXPECTED_SET[$c]:-}" ]]; then
+    echo "[sweep] requested concurrency $c is outside EXPECTED_CONCURRENCIES" >&2
+    exit 1
+  fi
+  REQUESTED_SET[$c]=1
+done
+if [[ "${#REQUESTED_SET[@]}" -eq 0 ]]; then
+  echo "[sweep] CONCURRENCIES must not be empty" >&2
+  exit 1
+fi
 
 # Dual-node labels: sample the worker's GPU power too, through a Ray actor in
 # the serving container, so per-token energy covers both nodes. Set
@@ -105,7 +123,17 @@ if [[ -n "$SWEEP_SCHEDULE" ]]; then
       echo "[sweep] invalid SWEEP_SCHEDULE item '$item' (expected repeat:concurrency)" >&2
       exit 1
     fi
-    run_point "${item%%:*}" "${item#*:}"
+    rep="${item%%:*}"
+    c="${item#*:}"
+    if (( rep > REPEATS )); then
+      echo "[sweep] schedule repeat $rep exceeds REPEATS=$REPEATS" >&2
+      exit 1
+    fi
+    if [[ -z "${EXPECTED_SET[$c]:-}" ]]; then
+      echo "[sweep] schedule concurrency $c is outside EXPECTED_CONCURRENCIES" >&2
+      exit 1
+    fi
+    run_point "$rep" "$c"
   done
 else
   for rep in $(seq 1 "$REPEATS"); do

@@ -83,6 +83,7 @@ if [[ -n "$TOKENIZER_REVISION" ]]; then
 fi
 if [[ -n "$TRUST_REMOTE_CODE" ]]; then common+=( --trust-remote-code ); fi
 
+require_local_connectx_ip "$HEAD_IP" "serving head role" || exit 1
 echo "[launch] $CONFIG  model=$MODEL  image=$VLLM_IMAGE  iface=$CX_IFACE  head=$HEAD_IP"
 
 # Optionally flush stale page cache before large model loads.

@@ -415,18 +415,6 @@ def collapse_repeats(df: pd.DataFrame, *,
                 intended = (expected_repeat_count if expected_repeat_count is not None
                             else max(observed) if observed else 0)
                 expected = set(range(1, intended + 1))
-                # A campaign may raise repeat_count mid-flight (top-up repeats
-                # resumed with --skip-done). Rows then declare mixed counts;
-                # as long as every load is complete up to the smallest declared
-                # count, the extra intended windows are pending work, not lost
-                # data, and the curve stays plottable with a warning.
-                floor_count = (int(raw_counts.min()) if has_repeat_counts
-                               else intended)
-                floor_expected = set(range(1, floor_count + 1))
-                topping_up = (
-                    floor_count != intended
-                    and all(ids >= floor_expected for _, ids in repeat_sets)
-                )
                 if any(ids != expected for _, ids in repeat_sets):
                     detail = ", ".join(
                         f"{load:g}={{{','.join(map(str, sorted(ids)))}}}"
@@ -437,7 +425,7 @@ def collapse_repeats(df: pd.DataFrame, *,
                         f"({load_col}:repeat_ids {detail}; intended "
                         f"{{{','.join(map(str, sorted(expected)))}}})"
                     )
-                    if not (allow_incomplete or topping_up):
+                    if not allow_incomplete:
                         sys.exit(
                             message + "; rerun the missing windows or pass "
                             "--allow-incomplete for diagnostic plots"

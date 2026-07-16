@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+from decimal import Decimal, InvalidOperation
 import fcntl
 import hashlib
 import importlib.metadata
@@ -211,23 +212,22 @@ def collect_deployment_info(base_url: str, model: str, server_log: str,
 
 def config_file_fingerprint(path: str | None,
                             overrides: dict | None = None) -> str:
-    """Hash base config plus any result-affecting CLI-only overrides.
+    """Hash the canonical effective campaign configuration.
 
-    Resume scheduling knows the canonical YAML. Rows created with ad-hoc timing,
-    metadata, or power overrides intentionally receive a different hash and are
-    therefore never mistaken for completed points in a base-config campaign.
+    Applying overrides to the parsed dataclass makes an explicit override equal
+    to the YAML value hash identically, while a genuinely different timing,
+    metadata, or power policy cannot be resumed into the base campaign.
     """
     cfg = ExperimentConfig.from_yaml(path) if path else ExperimentConfig()
     effective_overrides = {
         key: value for key, value in (overrides or {}).items()
         if value is not None
     }
-    if not effective_overrides:
-        return _sha256_json(cfg.to_dict())
-    return _sha256_json({
-        "base_config": cfg.to_dict(),
-        "cli_overrides": effective_overrides,
-    })
+    for key, value in effective_overrides.items():
+        if not hasattr(cfg, key):
+            raise ValueError(f"unknown ExperimentConfig override {key!r}")
+        setattr(cfg, key, value)
+    return _sha256_json(cfg.to_dict())
 
 
 def _source_fingerprint() -> str:
@@ -294,11 +294,14 @@ def _integral_field(row: dict, field: str, row_number: int, *,
             )
         return None
     try:
-        number = float(raw)
-    except (TypeError, ValueError):
-        number = float("nan")
-    minimum_ok = number > 0 if positive else number >= 0
-    if not math.isfinite(number) or not number.is_integer() or not minimum_ok:
+        number = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError):
+        number = Decimal("NaN")
+    integral = (number.is_finite()
+                and number == number.to_integral_value())
+    minimum_ok = (integral
+                  and (number > 0 if positive else number >= 0))
+    if not minimum_ok:
         qualifier = "positive " if positive else "non-negative "
         raise RuntimeError(
             f"index row {row_number} has invalid {field}={raw!r}; "
@@ -417,9 +420,17 @@ def validate_index_schema(out_dir: str) -> None:
 
 def _validate_observability(summary, cfg) -> None:
     """Reject paper runs whose required monitor data is incomplete."""
+
+    def finite_number(value) -> bool:
+        return (not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and math.isfinite(value))
+
     if cfg.require_power_data:
         if cfg.power_backend == "none":
-            raise RuntimeError("require_power_data is true but power_backend is none")
+            raise RuntimeError(
+                "require_power_data is true but power_backend is none"
+            )
         energy = summary.get("energy") or {}
         expected_nodes = 2 if cfg.config_label in {"tp2", "pp2"} else 1
         if energy.get("power_nodes") != expected_nodes:
@@ -427,54 +438,83 @@ def _validate_observability(summary, cfg) -> None:
                 f"required power coverage is incomplete: expected "
                 f"{expected_nodes} node(s), got {energy.get('power_nodes', 0)}"
             )
-        if not math.isfinite(energy.get("energy_per_token_j", float("nan"))):
-            raise RuntimeError("required power samples do not bracket the window")
-        allowed_power_gap = max(5.0, 10.0 * cfg.power_interval_ms / 1000.0)
+
+        energy_per_token = energy.get("energy_per_token_j")
+        if not finite_number(energy_per_token) or energy_per_token <= 0:
+            raise RuntimeError(
+                "required power samples do not produce positive window energy"
+            )
+
+        allowed_power_gap = max(
+            5.0, 10.0 * cfg.power_interval_ms / 1000.0
+        )
         gaps = [energy.get("power_max_gap_s_head")]
         counts = [energy.get("power_samples_head")]
+        node_fields = ["mean_power_w_head"]
         if expected_nodes == 2:
             gaps.append(energy.get("power_max_gap_s_worker"))
             counts.append(energy.get("power_samples_worker"))
-        if any((count or 0) < 2 for count in counts):
-            raise RuntimeError("required power sampler has fewer than two window samples")
-        if any(not isinstance(gap, (int, float)) or not math.isfinite(gap)
-               or gap > allowed_power_gap for gap in gaps):
+            node_fields.append("mean_power_w_worker")
+
+        if any(not finite_number(count) or count < 2 for count in counts):
+            raise RuntimeError(
+                "required power sampler has fewer than two window samples"
+            )
+        if any(not finite_number(gap) or gap > allowed_power_gap
+               for gap in gaps):
             raise RuntimeError(
                 f"required power sampler gap exceeds {allowed_power_gap:g}s"
             )
-        if summary.get("total_output_tokens", 0) > 0:
-            mean_power = energy.get("mean_power_w", float("nan"))
-            if not math.isfinite(mean_power) or mean_power <= 0:
-                raise RuntimeError("required power sampler reported non-positive power")
+        for field in node_fields:
+            mean_power = energy.get(field)
+            if not finite_number(mean_power) or mean_power <= 0:
+                raise RuntimeError(
+                    f"required power sampler reported invalid "
+                    f"{field}={mean_power!r}"
+                )
+
     if cfg.require_vllm_metrics_data:
         if not cfg.scrape_vllm_metrics:
             raise RuntimeError(
                 "require_vllm_metrics_data is true but scraping is disabled"
             )
         metrics = summary.get("vllm_metrics") or {}
-        generation = metrics.get("vllm:generation_tokens_total") or {}
-        kv = metrics.get("vllm:kv_cache_usage_perc") or {}
-        if generation.get("delta") is None or kv.get("mean") is None:
-            raise RuntimeError(
-                "required vLLM counter/gauge samples are missing for the window"
-            )
-        if (generation.get("sample_count") or 0) < 2 or (kv.get("sample_count") or 0) < 2:
-            raise RuntimeError("required vLLM metrics have too few window samples")
         allowed_metric_gap = 5.0
-        if any(not isinstance(gap, (int, float)) or not math.isfinite(gap)
-               or gap > allowed_metric_gap
-               for gap in (generation.get("max_gap_s"), kv.get("max_gap_s"))):
-            raise RuntimeError("required vLLM metric scrape gap exceeds 5s")
-        min_span = max(0.0, summary.get("measure_s", 0.0) - allowed_metric_gap)
-        if ((generation.get("sample_span_s") or 0.0) < min_span
-                or (kv.get("sample_span_s") or 0.0) < min_span):
-            raise RuntimeError("required vLLM metric samples do not span the window")
+        min_span = max(
+            0.0, summary.get("measure_s", 0.0) - allowed_metric_gap
+        )
+
+        for name, stat in VLLMMetricsScraper.REQUIRED_RELEASE_STATS.items():
+            series = metrics.get(name) or {}
+            value = series.get(stat)
+            if not finite_number(value):
+                raise RuntimeError(
+                    f"required vLLM metric {name}.{stat} is missing or "
+                    "non-finite for the measurement window"
+                )
+            count = series.get("sample_count")
+            if not finite_number(count) or count < 2:
+                raise RuntimeError(
+                    f"required vLLM metric {name} has too few window samples"
+                )
+            gap = series.get("max_gap_s")
+            if not finite_number(gap) or gap > allowed_metric_gap:
+                raise RuntimeError(
+                    f"required vLLM metric {name} scrape gap exceeds 5s"
+                )
+            span = series.get("sample_span_s")
+            if not finite_number(span) or span < min_span:
+                raise RuntimeError(
+                    f"required vLLM metric {name} samples do not span the window"
+                )
+
+        generation = metrics["vllm:generation_tokens_total"]
         if (summary.get("total_output_tokens", 0) > 0
                 and generation.get("delta", 0.0) <= 0):
             raise RuntimeError(
-                "client received tokens but required server generation counter did not advance"
+                "client received tokens but the server generation counter "
+                "did not advance"
             )
-
 
 def _validate_monitor_config(cfg) -> None:
     """Reject impossible required-monitor policies before starting a phase."""
@@ -582,6 +622,51 @@ def _json_safe(obj):
     if isinstance(obj, list):
         return [_json_safe(v) for v in obj]
     return obj
+
+
+def _commit_index_row(out_dir: str, idx: str, row: dict) -> None:
+    """Validate and atomically append one row while holding a writer lock.
+
+    The lock covers the read/validate/replace transaction, so two benchmark
+    processes cannot both read the same index and silently lose one append.
+    """
+    lock_path = os.path.join(out_dir, ".index.lock")
+    with open(lock_path, "a+") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            existing = []
+            if os.path.exists(idx) and os.path.getsize(idx) > 0:
+                validate_index_schema(out_dir)
+                with open(idx, "r", newline="") as handle:
+                    existing = list(csv.DictReader(handle))
+            candidate = existing + [row]
+            _validate_index_rows(candidate, idx)
+
+            # Rewrite in the same directory and atomically replace the index. A
+            # killed process can leave an unreferenced tmp file, never a partial CSV.
+            fd, tmp = tempfile.mkstemp(
+                prefix=".index.", suffix=".tmp", dir=out_dir, text=True
+            )
+            try:
+                with os.fdopen(fd, "w", newline="") as handle:
+                    writer = csv.DictWriter(
+                        handle, fieldnames=INDEX_FIELDS, extrasaction="ignore"
+                    )
+                    writer.writeheader()
+                    writer.writerows(candidate)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, idx)
+                directory_fd = os.open(out_dir, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def _append_index(out_dir, s):
@@ -697,37 +782,7 @@ def _append_index(out_dir, s):
         "energy_per_token_j": energy.get("energy_per_token_j"),
         "tokens_per_watt": energy.get("tokens_per_watt"),
     }
-    existing = []
-    if os.path.exists(idx) and os.path.getsize(idx) > 0:
-        validate_index_schema(out_dir)
-        with open(idx, "r", newline="") as handle:
-            existing = list(csv.DictReader(handle))
-    candidate = existing + [row]
-    _validate_index_rows(candidate, idx)
-
-    # Rewrite in the same directory and atomically replace the index. A killed
-    # process can leave an unreferenced .tmp file, but never a truncated CSV.
-    fd, tmp = tempfile.mkstemp(
-        prefix=".index.", suffix=".tmp", dir=out_dir, text=True
-    )
-    try:
-        with os.fdopen(fd, "w", newline="") as handle:
-            writer = csv.DictWriter(
-                handle, fieldnames=INDEX_FIELDS, extrasaction="ignore"
-            )
-            writer.writeheader()
-            writer.writerows(candidate)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, idx)
-        directory_fd = os.open(out_dir, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+    _commit_index_row(out_dir, idx, row)
 
 
 def main():
@@ -986,6 +1041,7 @@ def main():
     summary["deployment_fingerprint"] = actual_deployment_fingerprint
     summary["repeat_id"] = cfg.repeat_id
     summary["repeat_count"] = cfg.repeat_count
+    summary["expected_concurrencies"] = cfg.expected_concurrencies
     summary["model"] = cfg.model
     summary["model_label"] = cfg.model_label
     summary["warmup_s"] = actual_warmup_s

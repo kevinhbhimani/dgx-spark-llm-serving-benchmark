@@ -37,6 +37,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 source scripts/connectx_env.sh    # VLLM_CONTAINER, HEAD_IP, HOEDUS_IP, .env
+require_local_connectx_ip "$HEAD_IP" "paper campaign head role" || exit 1
+acquire_campaign_lock || exit 1
 
 export OUT_DIR="${OUT_DIR:-results}"
 CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
@@ -52,12 +54,40 @@ exec > >(tee -a "$LOG") 2>&1
 
 log() { echo "[job $(date '+%F %T')] $*"; }
 FAILED=()
+ACTIVE_CHILD=""
+
+run_child() {
+  local status=0
+  "$@" &
+  ACTIVE_CHILD=$!
+  wait "$ACTIVE_CHILD" || status=$?
+  ACTIVE_CHILD=""
+  return "$status"
+}
+
+handle_signal() {
+  local status="$1" i
+  trap - INT TERM
+  if [[ -n "$ACTIVE_CHILD" ]] && kill -0 "$ACTIVE_CHILD" 2>/dev/null; then
+    kill -TERM "$ACTIVE_CHILD" 2>/dev/null || true
+    for i in $(seq 1 30); do
+      kill -0 "$ACTIVE_CHILD" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL "$ACTIVE_CHILD" 2>/dev/null || true
+    wait "$ACTIVE_CHILD" 2>/dev/null || true
+    ACTIVE_CHILD=""
+  fi
+  # Fallback if a forcibly killed model wrapper could not run its own trap.
+  docker exec "$VLLM_CONTAINER" pkill -f "vllm serve" >/dev/null 2>&1 || true
+  exit "$status"
+}
 
 # A prep failure means the campaign would waste GPU-days: stop immediately.
 prep() {
   local name="$1"; shift
   log "=== prep: $name ==="
-  if "$@"; then log "prep OK: $name"; else
+  if run_child "$@"; then log "prep OK: $name"; else
     log "PREP FAILED: $name -- aborting before any measurement"; exit 1
   fi
 }
@@ -67,7 +97,7 @@ prep() {
 leg() {
   local name="$1"; shift
   log "=== leg: $name ==="
-  if "$@"; then log "leg OK: $name"; else
+  if run_child "$@"; then log "leg OK: $name"; else
     log "leg FAILED (rc=$?): $name -- continuing"; FAILED+=("$name")
   fi
 }
@@ -131,6 +161,9 @@ raise SystemExit(0 if valid else 1)' "$artifact"; then
   scripts/ray_allreduce_bench.sh
 }
 
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
 log "campaign start; log: $LOG"
 log "OUT_DIR=$OUT_DIR FULL_REPEATS=$FULL_REPEATS REPEAT_CONCS='$REPEAT_CONCS'" \
     "REPEAT_TOTAL=$REPEAT_TOTAL CONCURRENCIES='$CONCURRENCIES'"
@@ -143,9 +176,9 @@ prep "allreduce interconnect microbench"      allreduce_once
 
 if [[ "$CANARY_FIRST" == "1" ]]; then
   prep "tp2 canaries (launch + stream contract)" \
-    env CANARY_ONLY=1 scripts/run_models.sh tp2
+    env CANARY_ONLY=1 SKIP_DONE=0 scripts/run_models.sh tp2
   prep "pp2 canaries (launch + stream contract)" \
-    env CANARY_ONLY=1 scripts/run_models.sh pp2
+    env CANARY_ONLY=1 SKIP_DONE=0 scripts/run_models.sh pp2
 fi
 
 leg "tp2 full pass (REPEATS=$FULL_REPEATS)" \

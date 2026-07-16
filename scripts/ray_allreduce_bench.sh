@@ -9,9 +9,30 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+require_local_connectx_ip "$HEAD_IP" "all-reduce benchmark head role" || exit 1
+acquire_campaign_lock || exit 1
 
 OUT_DIR="${OUT_DIR:-results}"
 PORT="${ALLREDUCE_PORT:-29517}"
+MIN_1G_BUSBW="${ALLREDUCE_MIN_1G_BUSBW_GBPS:-5.0}"
+MAX_8B_LATENCY="${ALLREDUCE_MAX_8B_LATENCY_S:-0.005}"
+if ! python3 - "$PORT" "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" <<'PY_VALIDATE'
+import math
+import sys
+
+try:
+    port = int(sys.argv[1])
+    values = [float(value) for value in sys.argv[2:]]
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if 1 <= port <= 65535
+                 and all(math.isfinite(value) and value > 0 for value in values)
+                 else 1)
+PY_VALIDATE
+then
+  echo "[microbench] invalid port or acceptance threshold" >&2
+  exit 2
+fi
 
 if [[ -z "${CLUSTER_RUNTIME_FINGERPRINT:-}" ]]; then
   cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" python3 - \
@@ -22,8 +43,9 @@ if [[ -z "${CLUSTER_RUNTIME_FINGERPRINT:-}" ]]; then
 fi
 SOURCE_FINGERPRINT="$(sha256sum "$HERE/ray_allreduce_bench.py" \
   "$HERE/ray_allreduce_bench.sh" | sha256sum | awk '{print $1}')"
-ARTIFACT_FINGERPRINT="$(printf '%s\n%s\n' "$CLUSTER_RUNTIME_FINGERPRINT" \
-  "$SOURCE_FINGERPRINT" | sha256sum | awk '{print $1}')"
+ARTIFACT_FINGERPRINT="$(printf '%s\n' "$CLUSTER_RUNTIME_FINGERPRINT" \
+  "$SOURCE_FINGERPRINT" "$PORT" "$CX_IFACE" "$NCCL_IB_DISABLE" \
+  "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" | sha256sum | awk '{print $1}')"
 if [[ "${1:-}" == "--fingerprint-only" ]]; then
   printf '%s\n' "$ARTIFACT_FINGERPRINT"
   exit 0
@@ -43,6 +65,7 @@ docker exec -i \
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" \
   "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" "$PORT" \
+  "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" \
   < "$HERE/ray_allreduce_bench.py" | tee "$TMP"
 
 # Only a successful complete pipeline becomes a resumable campaign artifact.
@@ -52,4 +75,5 @@ mv "$TMP" "$LOG"
 trap - EXIT
 
 echo "[microbench] wrote $LOG"
-echo "[microbench] busbw at 1GiB ~ sustained link bandwidth; min_s at 8B ~ per-collective latency floor (feeds the TP2 per-layer cost model)"
+echo "[microbench] accepted: 1GiB busbw >= $MIN_1G_BUSBW GB/s and 8B min_s <= $MAX_8B_LATENCY s"
+echo "[microbench] busbw at 1GiB approximates sustained link bandwidth; 8B min_s is the collective latency floor"

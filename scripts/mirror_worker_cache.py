@@ -1,30 +1,21 @@
 #!/usr/bin/env python3
-"""Mirror HF model repos from the head node's cache into each worker's cache.
+"""Mirror exact pinned HF snapshots from the head cache to the Ray worker.
 
-Runs INSIDE the head's vLLM container (docker exec'd by mirror_worker_cache.sh),
-where /root/.cache/huggingface is the head's cache mount and Ray reaches every
-node. The worker (Hoedus) cannot download from huggingface.co (no DNS) and
-there is no SSH from head to worker, so this is the only path that populates
-its cache. With HF_HUB_OFFLINE=1 the head hands remote Ray workers a resolved
-local snapshot path, so a tp2/pp2 launch needs the exact same snapshot revision
-present on every node; a miss surfaces as HFValidationError from RayWorkerWrapper.
+Runs inside the head vLLM container. Control goes over Ray and bytes go over a
+raw ConnectX TCP stream. Only the requested ``snapshots/<commit>`` tree and the
+blobs referenced by that tree are considered; stale revisions, refs, and
+unrelated blobs in the same repository are never copied.
 
-Control goes over Ray; the bytes go over a raw TCP stream on the cluster
-network (GNU tar at both ends), which the object store cannot match for
-hundreds of GiB. Per repo, only files missing or size-mismatched on the worker
-are sent, so reruns after an interrupted transfer resume at file granularity.
+Received files are fsync'd and dropped from the worker page cache so model
+weights do not consume Grace unified memory before vLLM starts.
 
-Received files are fsync'd and then dropped from the worker's page cache
-(POSIX_FADV_DONTNEED): on Grace unified memory CUDA free tracks MemFree, so
-leaving hundreds of GiB in page cache would make the next vLLM launch refuse
-to start (see launch_server.sh preflight).
-
-Usage: mirror_worker_cache.py REPO [REPO...]     # e.g. Qwen/Qwen3-32B
-Env:   MIRROR_MARGIN_GB  free disk to keep on the worker (default 10)
+Usage: mirror_worker_cache.py REPO|REVISION|KIND [...]
+KIND is ``model`` (weights required) or ``tokenizer``.
 """
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -32,32 +23,91 @@ import tempfile
 import time
 
 import ray
+from ray.exceptions import GetTimeoutError
 
 HUB = "/root/.cache/huggingface/hub"
 MARGIN = int(os.environ.get("MIRROR_MARGIN_GB", "10")) << 30
-CHUNK = 4 << 20  # sendall unit; big enough to keep the NIC busy
+CHUNK = 4 << 20
+REVISION_RE = re.compile(r"[0-9a-f]{40}")
+RPC_SHORT_S = 120
+RECEIVER_TRANSFER_S = 3600
+# finish() can legitimately wait for the full receiver deadline. Give the
+# outer Ray RPC enough headroom to return its structured failure instead of
+# racing that same deadline and surfacing an opaque GetTimeoutError.
+RPC_FINISH_S = RECEIVER_TRANSFER_S + 120
+SOCKET_TIMEOUT_S = 120
 
 
 def repo_dir(repo: str) -> str:
     return "models--" + repo.replace("/", "--")
 
 
-def manifest(dirname: str) -> tuple[dict[str, int], dict[str, str]]:
-    """Regular files (rel path -> size) and symlinks (rel path -> target)."""
+def parse_spec(raw: str) -> tuple[str, str, str]:
+    parts = raw.split("|")
+    if len(parts) != 3:
+        raise ValueError(f"invalid mirror spec {raw!r}; expected REPO|REVISION|KIND")
+    repo, revision, kind = (part.strip() for part in parts)
+    if not repo or not REVISION_RE.fullmatch(revision):
+        raise ValueError(f"invalid pinned repo/revision in mirror spec {raw!r}")
+    if kind not in {"model", "tokenizer"}:
+        raise ValueError(f"invalid mirror kind {kind!r} in {raw!r}")
+    return repo, revision, kind
+
+
+def snapshot_manifest(repo: str, revision: str) -> tuple[dict[str, int], dict[str, str]]:
+    """Return only a pinned snapshot tree and the blobs its symlinks reference."""
+    dirname = repo_dir(repo)
+    repo_root = os.path.join(HUB, dirname)
+    snapshot = os.path.join(repo_root, "snapshots", revision)
+    blob_root = os.path.realpath(os.path.join(repo_root, "blobs"))
+    if not os.path.isdir(snapshot):
+        raise FileNotFoundError(
+            f"{repo}@{revision} is not in the head cache; run predownload first"
+        )
+
     files: dict[str, int] = {}
     links: dict[str, str] = {}
-    base = os.path.join(HUB, dirname)
-    for root, _dirs, names in os.walk(base):
+    for root, dirs, names in os.walk(snapshot, followlinks=False):
+        linked_dirs = [name for name in dirs if os.path.islink(os.path.join(root, name))]
+        if linked_dirs:
+            raise RuntimeError(
+                f"{repo}@{revision} contains unsupported directory symlink(s): "
+                + ", ".join(linked_dirs[:3])
+            )
         for name in names:
-            if name.endswith((".incomplete", ".lock")):
-                continue
             path = os.path.join(root, name)
+            if name.endswith((".incomplete", ".lock")):
+                raise RuntimeError(f"partial cache file in pinned snapshot: {path}")
             rel = os.path.relpath(path, HUB)
+            if "\n" in rel:
+                raise RuntimeError(f"newline in cache path is unsupported: {rel!r}")
             if os.path.islink(path):
-                links[rel] = os.readlink(path)
-            else:
+                target = os.readlink(path)
+                resolved = os.path.realpath(path)
+                try:
+                    inside_blobs = os.path.commonpath([resolved, blob_root]) == blob_root
+                except ValueError:
+                    inside_blobs = False
+                if not inside_blobs or not os.path.isfile(resolved):
+                    raise RuntimeError(f"broken or unsafe snapshot link: {rel} -> {target}")
+                links[rel] = target
+                blob_rel = os.path.relpath(resolved, HUB)
+                files[blob_rel] = os.path.getsize(resolved)
+            elif os.path.isfile(path):
                 files[rel] = os.path.getsize(path)
+            else:
+                raise RuntimeError(f"unsupported cache entry: {path}")
+    if not files and not links:
+        raise RuntimeError(f"pinned snapshot is empty: {repo}@{revision}")
     return files, links
+
+
+def ray_get(ref, timeout: int, context: str):
+    try:
+        return ray.get(ref, timeout=timeout)
+    except GetTimeoutError as exc:
+        ray.cancel(ref)
+        raise RuntimeError(f"{context} timed out after {timeout}s") from exc
 
 
 def drop_from_page_cache(paths: list[str]) -> None:
@@ -66,7 +116,7 @@ def drop_from_page_cache(paths: list[str]) -> None:
             continue
         fd = os.open(path, os.O_RDONLY)
         try:
-            os.fsync(fd)  # DONTNEED only evicts clean pages
+            os.fsync(fd)
             os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         finally:
             os.close(fd)
@@ -74,20 +124,20 @@ def drop_from_page_cache(paths: list[str]) -> None:
 
 @ray.remote(num_cpus=0)
 class Receiver:
-    """Runs on a worker node; unpacks one tar stream per transfer."""
+    """Runs on the worker node and unpacks one bounded tar stream."""
 
     def missing(self, files: dict[str, int], links: dict[str, str]) -> list[str]:
         need = []
         for rel, size in files.items():
             path = os.path.join(HUB, rel)
-            if os.path.islink(path) or not os.path.isfile(path) \
-                    or os.path.getsize(path) != size:
+            if (os.path.islink(path) or not os.path.isfile(path)
+                    or os.path.getsize(path) != size):
                 need.append(rel)
         for rel, target in links.items():
             path = os.path.join(HUB, rel)
             if not os.path.islink(path) or os.readlink(path) != target:
                 need.append(rel)
-        return sorted(need)
+        return sorted(set(need))
 
     def disk_free(self) -> int:
         os.makedirs(HUB, exist_ok=True)
@@ -100,64 +150,94 @@ class Receiver:
         self.result: dict = {}
         self.sock = socket.socket()
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.settimeout(SOCKET_TIMEOUT_S)
         self.sock.bind(("0.0.0.0", 0))
         self.sock.listen(1)
 
         def pump() -> None:
+            proc = None
+            conn = None
             try:
                 conn, _ = self.sock.accept()
-                # --overwrite: a rerun may be replacing a truncated file
                 proc = subprocess.Popen(
                     ["tar", "-C", HUB, "-xf", "-", "--overwrite"],
-                    stdin=conn.fileno())
-                self.result["rc"] = proc.wait()
-                conn.close()
-            except Exception as exc:  # surfaced via finish()
+                    stdin=conn.fileno(),
+                )
+                self.result["rc"] = proc.wait(timeout=RECEIVER_TRANSFER_S)
+            except Exception as exc:
                 self.result["error"] = repr(exc)
+            finally:
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                if conn is not None:
+                    conn.close()
 
         self.thread = threading.Thread(target=pump, daemon=True)
         self.thread.start()
         return self.sock.getsockname()[1]
 
     def finish(self, sent: list[str]) -> dict:
-        self.thread.join(timeout=600)
+        self.thread.join(timeout=RECEIVER_TRANSFER_S + 30)
         self.sock.close()
-        drop_from_page_cache([os.path.join(HUB, rel) for rel in sent])
+        if self.thread.is_alive():
+            self.result["error"] = "worker receiver did not finish before deadline"
+        elif self.result.get("rc") == 0:
+            drop_from_page_cache([os.path.join(HUB, rel) for rel in sent])
         return self.result
 
 
-def mirror_repo(repo: str, receiver, ip: str) -> tuple[bool, str]:
-    dirname = repo_dir(repo)
-    base = os.path.join(HUB, dirname)
-    if not os.path.isdir(base):
-        return False, f"not in the head cache; run scripts/predownload.sh first"
-    files, links = manifest(dirname)
+def mirror_snapshot(repo: str, revision: str, kind: str, receiver, ip: str) -> tuple[bool, str]:
+    try:
+        files, links = snapshot_manifest(repo, revision)
+    except Exception as exc:
+        return False, str(exc)
+
+    snapshot_prefix = f"{repo_dir(repo)}/snapshots/{revision}/"
+    visible = [rel for rel in (*files, *links) if rel.startswith(snapshot_prefix)]
     weights = (".safetensors", ".gguf", ".bin", ".pth")
-    if not any(rel.endswith(weights) for rel in files) \
-            and not any(rel.endswith(weights) for rel in links):
-        return False, "head cache has no weights (metadata-only stub); predownload it"
+    if kind == "model" and not any(rel.endswith(weights) for rel in visible):
+        return False, "pinned head snapshot has no model weights"
 
-    need = ray.get(receiver.missing.remote(files, links))
-    if not need:
-        return True, "already complete on worker; skipped"
+    try:
+        need = ray_get(
+            receiver.missing.remote(files, links), RPC_SHORT_S,
+            f"worker manifest check for {repo}@{revision}",
+        )
+        if not need:
+            return True, "exact pinned snapshot already complete on worker; skipped"
 
-    need_bytes = sum(files.get(rel, 0) for rel in need)
-    free = ray.get(receiver.disk_free.remote())
-    if free < need_bytes + MARGIN:
-        return False, (f"worker disk too low: {free / 2**30:.1f} GiB free, "
-                       f"need {need_bytes / 2**30:.1f} + {MARGIN / 2**30:.0f} margin")
+        need_bytes = sum(files.get(rel, 0) for rel in need)
+        free = ray_get(receiver.disk_free.remote(), 60, "worker free-space check")
+        if free < need_bytes + MARGIN:
+            return False, (
+                f"worker disk too low: {free / 2**30:.1f} GiB free, need "
+                f"{need_bytes / 2**30:.1f} + {MARGIN / 2**30:.0f} margin"
+            )
+        port = ray_get(receiver.start.remote(), 60, "worker receiver startup")
+    except Exception as exc:
+        return False, str(exc)
 
-    port = ray.get(receiver.start.remote())
-    with tempfile.NamedTemporaryFile("w", suffix=".list", delete=False) as tmp:
-        tmp.write("\n".join(need) + "\n")
-        listfile = tmp.name
-    tar = subprocess.Popen(
-        ["tar", "-C", HUB, "-cf", "-", "--verbatim-files-from", "-T", listfile],
-        stdout=subprocess.PIPE)
-    sock = socket.create_connection((ip, port), timeout=60)
+    listfile = None
+    tar = None
+    sock = None
     sent = 0
     t0 = last = time.monotonic()
     try:
+        with tempfile.NamedTemporaryFile("w", suffix=".list", delete=False) as tmp:
+            tmp.write("\n".join(need) + "\n")
+            listfile = tmp.name
+        tar = subprocess.Popen(
+            ["tar", "-C", HUB, "-cf", "-", "--verbatim-files-from", "-T", listfile],
+            stdout=subprocess.PIPE,
+        )
+        sock = socket.create_connection((ip, port), timeout=60)
+        sock.settimeout(SOCKET_TIMEOUT_S)
+        assert tar.stdout is not None
         while True:
             chunk = tar.stdout.read(CHUNK)
             if not chunk:
@@ -167,70 +247,111 @@ def mirror_repo(repo: str, receiver, ip: str) -> tuple[bool, str]:
             now = time.monotonic()
             if now - last >= 10:
                 rate = sent / (now - t0) / 2**20
-                print(f"[mirror]   ... {sent / 2**30:.1f} GiB sent "
-                      f"({rate:.0f} MiB/s)", flush=True)
+                print(
+                    f"[mirror]   ... {sent / 2**30:.1f} GiB sent "
+                    f"({rate:.0f} MiB/s)", flush=True,
+                )
                 last = now
         sock.shutdown(socket.SHUT_WR)
+        if tar.wait(timeout=60) != 0:
+            return False, f"head tar exited {tar.returncode}"
+        result = ray_get(
+            receiver.finish.remote(need), RPC_FINISH_S,
+            f"worker extraction for {repo}@{revision}",
+        )
+        if result.get("error") or result.get("rc") != 0:
+            return False, f"worker-side tar failed: {result}"
+        left = ray_get(
+            receiver.missing.remote(files, links), RPC_SHORT_S,
+            f"final worker verification for {repo}@{revision}",
+        )
+        if left:
+            return False, f"{len(left)} file(s) still missing: {left[:3]}"
+        secs = max(time.monotonic() - t0, 1e-9)
+        return True, (
+            f"sent {sent / 2**30:.1f} GiB in {secs:.0f}s "
+            f"({sent / secs / 2**20:.0f} MiB/s), verified"
+        )
+    except Exception as exc:
+        return False, f"transfer failed: {type(exc).__name__}: {exc}"
     finally:
-        sock.close()
-        os.unlink(listfile)
-    if tar.wait() != 0:
-        ray.get(receiver.finish.remote([]), timeout=900)
-        return False, f"tar -c exited {tar.returncode} on the head"
-
-    result = ray.get(receiver.finish.remote(need), timeout=900)
-    drop_from_page_cache([os.path.join(HUB, rel) for rel in need])  # head side
-    if result.get("error") or result.get("rc") != 0:
-        return False, f"worker-side tar failed: {result}"
-
-    left = ray.get(receiver.missing.remote(files, links))
-    if left:
-        return False, f"{len(left)} file(s) still missing after transfer: {left[:3]}"
-    secs = time.monotonic() - t0
-    return True, (f"sent {sent / 2**30:.1f} GiB in {secs:.0f}s "
-                  f"({sent / secs / 2**20:.0f} MiB/s), verified")
+        if sock is not None:
+            sock.close()
+        if tar is not None and tar.poll() is None:
+            tar.terminate()
+            try:
+                tar.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                tar.kill()
+                tar.wait()
+        if listfile is not None and os.path.exists(listfile):
+            os.unlink(listfile)
+        drop_from_page_cache([os.path.join(HUB, rel) for rel in need])
 
 
 def main() -> int:
-    repos = sys.argv[1:]
-    if not repos:
-        print("usage: mirror_worker_cache.py REPO [REPO...]", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("usage: mirror_worker_cache.py REPO|REVISION|KIND [...]", file=sys.stderr)
         return 2
+    try:
+        parsed = [parse_spec(raw) for raw in sys.argv[1:]]
+    except ValueError as exc:
+        print(f"[mirror] {exc}", file=sys.stderr)
+        return 2
+
+    merged: dict[tuple[str, str], str] = {}
+    for repo, revision, kind in parsed:
+        key = (repo, revision)
+        if key not in merged or kind == "model":
+            merged[key] = kind
+    specs = [(repo, revision, kind) for (repo, revision), kind in merged.items()]
 
     ray.init(address="auto", log_to_driver=False)
     head_ip = ray.util.get_node_ip_address()
-    alive = sorted(node["NodeManagerAddress"] for node in ray.nodes()
-                   if node.get("Alive"))
+    alive = sorted(
+        node["NodeManagerAddress"] for node in ray.nodes() if node.get("Alive")
+    )
     expected_head = os.environ.get("EXPECTED_HEAD", head_ip)
     expected_worker = os.environ.get("EXPECTED_WORKER", "")
     expected = sorted([expected_head, expected_worker])
     if not expected_worker or alive != expected:
-        print(f"[mirror] expected exactly Ray nodes {expected}, got {alive}",
-              file=sys.stderr)
+        print(f"[mirror] expected exactly Ray nodes {expected}, got {alive}", file=sys.stderr)
         return 1
-    worker_ips = [expected_worker]
 
-    # smallest first so quick wins land before a long transfer can fail
-    sizes = {r: sum(manifest(repo_dir(r))[0].values())
-             if os.path.isdir(os.path.join(HUB, repo_dir(r))) else 0
-             for r in repos}
-    repos = sorted(repos, key=lambda r: sizes[r])
-
+    plans = []
     failures = 0
-    for ip in worker_ips:
-        print(f"[mirror] worker {ip}")
+    for repo, revision, kind in specs:
+        try:
+            files, _ = snapshot_manifest(repo, revision)
+            plans.append((sum(files.values()), repo, revision, kind))
+        except Exception as exc:
+            print(f"[mirror] FAILED {repo}@{revision}: {exc}", file=sys.stderr)
+            failures += 1
+    if failures:
+        return 1
+    plans.sort()
+
+    ip = expected_worker
+    print(f"[mirror] worker {ip}")
+    for size, repo, revision, kind in plans:
+        print(
+            f"[mirror] === {repo}@{revision} ({size / 2**30:.1f} GiB) ===",
+            flush=True,
+        )
         receiver = Receiver.options(resources={f"node:{ip}": 0.001}).remote()
-        for repo in repos:
-            print(f"[mirror] === {repo} ({sizes[repo] / 2**30:.1f} GiB) ===", flush=True)
-            ok, msg = mirror_repo(repo, receiver, ip)
-            print(f"[mirror] {'done' if ok else 'FAILED'} {repo}: {msg}", flush=True)
-            failures += 0 if ok else 1
-        ray.kill(receiver)
+        try:
+            ok, msg = mirror_snapshot(repo, revision, kind, receiver, ip)
+        except Exception as exc:
+            ok, msg = False, f"unexpected failure: {type(exc).__name__}: {exc}"
+        finally:
+            ray.kill(receiver, no_restart=True)
+        print(f"[mirror] {'done' if ok else 'FAILED'} {repo}@{revision}: {msg}", flush=True)
+        failures += 0 if ok else 1
 
     if failures:
-        print(f"[mirror] {failures} repo(s) failed; see above", file=sys.stderr)
+        print(f"[mirror] {failures} snapshot(s) failed; see above", file=sys.stderr)
         return 1
-    print("[mirror] all repos mirrored and verified")
+    print("[mirror] all exact pinned snapshots mirrored and verified")
     return 0
 
 

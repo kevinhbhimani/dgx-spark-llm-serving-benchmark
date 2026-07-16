@@ -4,10 +4,10 @@
 #
 # Why: each node mounts its OWN local HF cache into the container
 # (start_ray.sh); scripts/predownload.sh only ever warms the node it runs on,
-# and the worker (Hoedus) can neither download from huggingface.co (no DNS)
-# nor be reached over SSH. With HF_HUB_OFFLINE=1 the head resolves the model
-# to a local snapshot path and ships it to the remote Ray worker, so a repo
-# missing on the worker kills the launch with HFValidationError.
+# and the worker (Hoedus) cannot download from huggingface.co (no DNS).
+# With HF_HUB_OFFLINE=1 the head resolves the model to a local snapshot path
+# and ships the exact pinned snapshot to the remote Ray worker over Ray, so the
+# transfer does not depend on a separately configured SSH path.
 #
 #   scripts/mirror_worker_cache.sh tp2    # every model whose configs include tp2 (default)
 #   scripts/mirror_worker_cache.sh pp2
@@ -39,7 +39,17 @@ CONFIGS=("$CONFIG")
 if [[ "$CONFIG" == "all" ]]; then CONFIGS=(tp2 pp2); fi
 
 declare -A SEEN
-REPOS=()
+SPECS=()
+add_spec() {
+  local repo="$1" revision="$2" kind="$3" key="$1|$2"
+  if [[ -z "${SEEN[$key]:-}" ]]; then
+    SEEN[$key]="$kind"
+    SPECS+=("$repo|$revision|$kind")
+  elif [[ "$kind" == "model" ]]; then
+    # A repo used as both tokenizer and model needs the stronger weight check.
+    SEEN[$key]="model"
+  fi
+}
 for cfg in "${CONFIGS[@]}"; do
   entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg" 2>/dev/null || true)"
   [[ -z "$entries" ]] && continue
@@ -49,18 +59,30 @@ for cfg in "${CONFIGS[@]}"; do
       echo "[mirror] $label has no pinned revision in $MODELS_YAML" >&2
       exit 1
     fi
-    if [[ -z "${SEEN[$name]:-}" ]]; then SEEN[$name]=1; REPOS+=("$name"); fi
-    if [[ -n "$tok" && -z "${SEEN[$tok]:-}" ]]; then SEEN[$tok]=1; REPOS+=("$tok"); fi
+    add_spec "$name" "$revision" model
+    if [[ -n "$tok" ]]; then
+      if [[ -z "$tokrev" && "$tok" == "$name" ]]; then tokrev="$revision"; fi
+      if [[ -z "$tokrev" ]]; then
+        echo "[mirror] $label uses tokenizer $tok without tokenizer_revision" >&2
+        exit 1
+      fi
+      add_spec "$tok" "$tokrev" tokenizer
+    fi
   done <<<"$entries"
 done
 
-if [[ "${#REPOS[@]}" -eq 0 ]]; then
+if [[ "${#SPECS[@]}" -eq 0 ]]; then
   echo "[mirror] no models request config '$CONFIG' in $MODELS_YAML" >&2
   exit 1
 fi
 
-echo "[mirror] ${#REPOS[@]} unique repo(s) for '$CONFIG' -> worker cache"
-printf '  %s\n' "${REPOS[@]}"
+MIRROR_SPECS=()
+for spec in "${SPECS[@]}"; do
+  IFS='|' read -r repo revision kind <<<"$spec"
+  MIRROR_SPECS+=("$repo|$revision|${SEEN["$repo|$revision"]}")
+done
+echo "[mirror] ${#MIRROR_SPECS[@]} pinned snapshot(s) for '$CONFIG' -> worker cache"
+printf '  %s\n' "${MIRROR_SPECS[@]}"
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
   echo "[mirror] DRY_RUN=1, nothing transferred"
   exit 0
@@ -81,4 +103,4 @@ docker cp "$HERE/mirror_worker_cache.py" "$VLLM_CONTAINER":/tmp/mirror_worker_ca
 docker exec -e MIRROR_MARGIN_GB="${MIRROR_MARGIN_GB:-10}" \
   -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
   "$VLLM_CONTAINER" \
-  python3 -u /tmp/mirror_worker_cache.py "${REPOS[@]}"
+  python3 -u /tmp/mirror_worker_cache.py "${MIRROR_SPECS[@]}"

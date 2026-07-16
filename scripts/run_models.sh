@@ -47,6 +47,9 @@ case "$CONFIG" in single|tp2|pp2) ;; *)
   echo "usage: run_models.sh [single|tp2|pp2] [--skip-done]" >&2; exit 1 ;;
 esac
 
+require_local_connectx_ip "$HEAD_IP" "model benchmark head role" || exit 1
+acquire_campaign_lock || exit 1
+
 SKIP_DONE="${SKIP_DONE:-0}"
 for arg in "${@:2}"; do
   case "$arg" in
@@ -70,6 +73,58 @@ CACHE_PREFLIGHT="${CACHE_PREFLIGHT:-1}"
 CANARY_ONLY="${CANARY_ONLY:-0}"
 MODEL_LABELS="${MODEL_LABELS:-}"
 PYTHON="${PYTHON:-python3}"
+
+for flag_name in SKIP_DONE CACHE_PREFLIGHT CANARY_ONLY; do
+  flag_value="${!flag_name}"
+  if [[ "$flag_value" != "0" && "$flag_value" != "1" ]]; then
+    echo "[models] $flag_name must be 0 or 1, got '$flag_value'" >&2
+    exit 1
+  fi
+done
+# A canary is a real launch/contract check, never a resume query. An inherited
+# SKIP_DONE=1 must not turn it into a no-op.
+if [[ "$CANARY_ONLY" == "1" ]]; then
+  SKIP_DONE=0
+fi
+if [[ ! "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[models] REPEATS must be a positive integer, got '$REPEATS'" >&2
+  exit 1
+fi
+for timeout_name in READY_TIMEOUT PROBE_TIMEOUT; do
+  timeout_value="${!timeout_name}"
+  if [[ ! "$timeout_value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[models] $timeout_name must be a positive integer, got '$timeout_value'" >&2
+    exit 1
+  fi
+done
+declare -A EXPECTED_SET=()
+for c in $EXPECTED_CONCURRENCIES; do
+  if [[ ! "$c" =~ ^[1-9][0-9]*$ || -n "${EXPECTED_SET[$c]:-}" ]]; then
+    echo "[models] invalid or duplicate expected concurrency '$c'" >&2
+    exit 1
+  fi
+  EXPECTED_SET[$c]=1
+done
+if [[ "${#EXPECTED_SET[@]}" -eq 0 ]]; then
+  echo "[models] EXPECTED_CONCURRENCIES must not be empty" >&2
+  exit 1
+fi
+declare -A REQUESTED_SET=()
+for c in $CONCURRENCIES; do
+  if [[ ! "$c" =~ ^[1-9][0-9]*$ || -n "${REQUESTED_SET[$c]:-}" ]]; then
+    echo "[models] invalid or duplicate requested concurrency '$c'" >&2
+    exit 1
+  fi
+  if [[ -z "${EXPECTED_SET[$c]:-}" ]]; then
+    echo "[models] requested concurrency $c is outside EXPECTED_CONCURRENCIES" >&2
+    exit 1
+  fi
+  REQUESTED_SET[$c]=1
+done
+if [[ "${#REQUESTED_SET[@]}" -eq 0 ]]; then
+  echo "[models] CONCURRENCIES must not be empty" >&2
+  exit 1
+fi
 
 if [[ ! "$VLLM_IMAGE" =~ @sha256:[0-9a-fA-F]{64}$ ]]; then
   echo "[models] VLLM_IMAGE must be pinned by @sha256 for a resumable sweep: $VLLM_IMAGE" >&2
@@ -158,6 +213,7 @@ if [[ "$CONFIG" != "single" ]]; then
 fi
 
 LAUNCH_PID=""
+ACTIVE_CHILD=""
 
 server_ready() {
   # 200 from /v1/models AND the requested model id is being served
@@ -303,6 +359,22 @@ teardown() {
     LAUNCH_PID=""
   fi
 }
+handle_signal() {
+  local status="$1" i
+  trap - INT TERM
+  if [[ -n "$ACTIVE_CHILD" ]] && kill -0 "$ACTIVE_CHILD" 2>/dev/null; then
+    kill -TERM "$ACTIVE_CHILD" 2>/dev/null || true
+    for i in $(seq 1 30); do
+      kill -0 "$ACTIVE_CHILD" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL "$ACTIVE_CHILD" 2>/dev/null || true
+    wait "$ACTIVE_CHILD" 2>/dev/null || true
+    ACTIVE_CHILD=""
+  fi
+  teardown
+  exit "$status"
+}
 
 wait_endpoint_down() {
   local i
@@ -369,7 +441,9 @@ run_one() {
   # Resume at exact (repeat, concurrency) granularity. Only rows produced by
   # the current methodology/config/source/server identity count as complete.
   if [[ "$SKIP_DONE" == "1" ]]; then
-    if ! schedule="$(DEPLOYMENT_FINGERPRINT= \
+    if ! schedule="$(POWER_BACKEND="$POWER_BACKEND" \
+                       EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES" \
+                       DEPLOYMENT_FINGERPRINT= \
                        "$PYTHON" "$HERE/swept_concurrencies.py" \
                           "$OUT_DIR/index.csv" "$label" "$CONFIG" "$CONFIG_YAML" \
                           "$fingerprint" "$REPEATS" $CONCURRENCIES)"; then
@@ -445,7 +519,9 @@ PY
   echo "[models] deployment fingerprint: $deployment"
 
   if [[ "$SKIP_DONE" == "1" ]]; then
-    if ! schedule="$(DEPLOYMENT_FINGERPRINT="$deployment" \
+    if ! schedule="$(POWER_BACKEND="$POWER_BACKEND" \
+                       EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES" \
+                       DEPLOYMENT_FINGERPRINT="$deployment" \
                        "$PYTHON" "$HERE/swept_concurrencies.py" \
                           "$OUT_DIR/index.csv" "$label" "$CONFIG" "$CONFIG_YAML" \
                           "$fingerprint" "$REPEATS" $CONCURRENCIES)"; then
@@ -472,8 +548,13 @@ PY
 
   # Sweep this model. run_all.sh passes the model, label, and server log through
   # to the benchmark so rows are tagged and capacity figures captured.
-  env "${sweep_env[@]}" "$HERE/run_all.sh" "$CONFIG" \
-    || { echo "[models] sweep for $label returned an error" >&2; status=1; }
+  env "${sweep_env[@]}" "$HERE/run_all.sh" "$CONFIG" &
+  ACTIVE_CHILD=$!
+  if ! wait "$ACTIVE_CHILD"; then
+    echo "[models] sweep for $label returned an error" >&2
+    status=1
+  fi
+  ACTIVE_CHILD=""
 
   teardown
   echo "[models] done $label"
@@ -482,6 +563,8 @@ PY
 }
 
 trap 'teardown' EXIT
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
 
 FAILURES=0
 for entry in "${ENTRIES[@]}"; do

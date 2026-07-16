@@ -296,15 +296,16 @@ class WorkerPowerSampler(PowerSampler):
 
     A helper process is docker-exec'ed into the head node's serving container;
     it pins an actor to the worker node (Ray's node:<ip> custom resource), polls
-    nvidia-smi there, and prints one watts value per line. Each line is
-    timestamped on receipt with the head's perf_counter, so the samples share
-    the request records' clock; staleness is bounded by the sampling interval,
-    which is negligible against a multi-hundred-second window.
+    nvidia-smi there, and prints a source sequence, source age, and watts. Each
+    source observation is accepted at most once and only while fresh, then is
+    timestamped on receipt with the head's perf_counter so it aligns with the
+    request records' clock. A stopped remote producer therefore creates a gap
+    instead of replaying its final value as fabricated coverage.
 
-    Best effort by design: if Ray, the container, or the worker is unreachable,
-    the sampler yields no samples and mean_power/energy_joules return NaN, which
-    metrics.aggregate reports as head-node-only power rather than failing the
-    run.
+    If Ray, the container, or the worker is unreachable, the sampler yields no
+    samples and mean_power/energy_joules return NaN. Exploratory summaries can
+    retain that missing value; release configurations reject incomplete power
+    coverage before writing a paper result.
     """
 
     def __init__(self, container, node_ip, interval_ms=1000):
@@ -400,6 +401,19 @@ class VLLMMetricsScraper:
         "vllm:num_preemptions_total",
     ]
     KEYS = GAUGE_KEYS + COUNTER_KEYS
+    # Every series copied into release index columns is mandatory except cached
+    # prompt tokens, which some vLLM builds omit when prefix caching is disabled.
+    # Keeping this policy next to the scrape list prevents the strict validator
+    # and index schema from drifting apart.
+    REQUIRED_RELEASE_STATS = {
+        "vllm:num_requests_running": "mean",
+        "vllm:num_requests_waiting": "mean",
+        "vllm:kv_cache_usage_perc": "mean",
+        "vllm:prompt_tokens_total": "delta",
+        "vllm:generation_tokens_total": "delta",
+        "vllm:num_preemptions_total": "delta",
+    }
+    OPTIONAL_RELEASE_KEYS = {"vllm:prompt_tokens_cached_total"}
     METRIC_ALIASES = {
         # Older vLLM builds exposed this as gpu_cache_usage_perc. Keep summaries
         # stable by normalizing it to the current index/summary field.

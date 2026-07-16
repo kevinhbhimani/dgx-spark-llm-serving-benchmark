@@ -38,13 +38,49 @@ export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
-# The campus system resolver can be unavailable while direct DNS still works.
-# Docker launchers use this resolver explicitly; set empty only when local DNS
-# is known healthy and policy requires it.
-export CONTAINER_DNS="${CONTAINER_DNS-8.8.8.8}"
+# Use Docker's host-derived resolver by default. An explicit public resolver can
+# be unreachable on managed networks even while the host resolver works, which
+# would make the pinned Ray install fail before the cluster starts. Override
+# this only when the local Docker resolver is known to be broken.
+export CONTAINER_DNS="${CONTAINER_DNS-}"
 
 # nvcr.io/nvidia/vllm tags do not consistently bundle Ray (26.04-py3 does not,
 # though earlier tags did), so start_ray.sh installs it explicitly. Pinned to
 # the version NVIDIA's own 26.01-py3 image shipped, a combination already
 # validated against this vLLM build. Re-check when bumping VLLM_IMAGE.
 export RAY_VERSION="${RAY_VERSION:-2.53.0}"
+
+# Safety helpers shared by every launcher/orchestrator. Paper measurements must
+# originate on the configured head because local GPU power is part of each row.
+connectx_local_ipv4() {
+  ip -4 -o addr show "$CX_IFACE" 2>/dev/null \
+    | awk 'NR == 1 {split($4, a, "/"); print a[1]}'
+}
+
+require_local_connectx_ip() {
+  local expected="$1" role="${2:-requested role}" actual
+  actual="$(connectx_local_ipv4)"
+  if [[ -z "$actual" || "$actual" != "$expected" ]]; then
+    echo "[cluster] this host has ${actual:-no IPv4} on $CX_IFACE; $role requires $expected" >&2
+    return 1
+  fi
+}
+
+# One fixed serving container and one head GPU means campaigns targeting
+# different output directories still conflict. Scope the nonblocking lock to
+# the physical head/container pair, not OUT_DIR.
+_campaign_lock_id="${VLLM_CONTAINER}_${HEAD_IP//[:.]/_}"
+export CAMPAIGN_LOCK_FILE="${CAMPAIGN_LOCK_FILE:-/tmp/dgx-spark-benchmark_${_campaign_lock_id}.lock}"
+unset _campaign_lock_id
+
+acquire_campaign_lock() {
+  if [[ "${CAMPAIGN_LOCK_HELD:-0}" == "1" ]]; then
+    return 0
+  fi
+  exec {CAMPAIGN_LOCK_FD}>"$CAMPAIGN_LOCK_FILE"
+  if ! flock -n "$CAMPAIGN_LOCK_FD"; then
+    echo "[cluster] another benchmark campaign holds $CAMPAIGN_LOCK_FILE" >&2
+    return 1
+  fi
+  export CAMPAIGN_LOCK_HELD=1
+}

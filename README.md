@@ -221,7 +221,8 @@ fields:
 - `scrape_vllm_metrics`: whether to sample vLLM Prometheus metrics.
 - `require_power_data` and `require_vllm_metrics_data`: fail a paper run rather
   than write a result when the requested GPU-power coverage or the required
-  generation/KV metrics are missing. They are enabled in
+  request-running/waiting, KV-usage, prompt/generation-token, or preemption
+  metrics are missing or too sparse. They are enabled in
   `configs/experiment.yaml` and disabled for the smoke config.
 - `require_provenance`: require exact 40-hex model/tokenizer revisions and a
   64-hex serving-policy fingerprint before any measurement begins. It is
@@ -295,8 +296,9 @@ export VLLM_IMAGE=nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99ca
 export VLLM_CONTAINER=vllm-spark
 export HF_TOKEN=...
 export HF_CACHE=$HOME/.cache/huggingface
-# DNS passed to Docker launch/Ray containers (empty disables an explicit DNS).
-export CONTAINER_DNS=8.8.8.8
+# Optional DNS passed to Docker launch/Ray containers. Unset/empty uses
+# Docker's host-derived resolver, which is the default.
+# export CONTAINER_DNS=8.8.8.8
 # Optional download-only override; defaults to CONTAINER_DNS.
 # export DOWNLOAD_DNS=8.8.8.8
 # Offline serving is the default; predownload exact revisions before launching.
@@ -320,10 +322,11 @@ export TORCHINDUCTOR_AUTOGRAD_CACHE=0
 # export PYTHON=python3
 ```
 
-`CONTAINER_DNS` affects container DNS only, not host resolution, and offline
-serving still performs no Hub lookup. `DOWNLOAD_DNS` is useful when the
-predownload container needs a resolver different from the serving/Ray
-containers.
+`CONTAINER_DNS` affects container DNS only, not host resolution. Leave it empty
+when Docker's host-derived resolver works; an explicit public resolver may be
+blocked on managed networks. Offline serving still performs no Hub lookup.
+`DOWNLOAD_DNS` is useful when the predownload container needs a resolver
+different from the serving/Ray containers.
 
 Do not put an arbitrary `SERVING_FINGERPRINT` in `.env` to satisfy the full
 config. It must be the SHA-256 hash of the server's actual launch policy;
@@ -541,6 +544,13 @@ results and is keyed to the exact cluster runtime and benchmark source:
 scripts/ray_allreduce_bench.sh
 ```
 
+The default acceptance floor is 5 GB/s at 1 GiB and the default 8-byte
+collective-latency ceiling is 5 ms. The command fails without publishing an
+artifact if either threshold is missed. Override
+`ALLREDUCE_MIN_1G_BUSBW_GBPS` or `ALLREDUCE_MAX_8B_LATENCY_S` only when the
+paper explicitly defines and records a different acceptance policy; those
+values are included in the artifact fingerprint.
+
 `scripts/interconnect_microbench.sh` is an optional MPI/nccl-tests alternative
 only for clusters where head-to-worker SSH is configured. It is not the default
 for this no-SSH topology.
@@ -626,6 +636,12 @@ the Ray head container). Every sweep leg uses `--skip-done`, so rerunning the
 same command fills only compatible gaps. `REPEAT_CONCS` is empty by default;
 set it together with a `REPEAT_TOTAL` greater than `FULL_REPEATS` only when you
 want additional windows at selected concurrencies.
+
+Run only one campaign against this physical head/container pair at a time. The
+orchestrators take a nonblocking campaign lock and fail if another sweep or
+all-reduce job is already active. Before the first paper point, commit or tag
+the finalized harness and configuration, run the test command from Quick Start,
+and keep the source and YAML unchanged until the campaign is complete.
 
 `scripts/predownload.sh` uses the same pinned image, cache mount, model ids, and
 revisions as serving. `CHECK_ONLY=1` uses Hugging Face local-only resolution and
@@ -792,8 +808,11 @@ headline metrics. Failed or zero-completion copies remain in the aggregation;
 dropping them would create survivorship bias. The plotter rejects duplicate
 repeat IDs and refuses to combine rows when methodology, config/source/client
 hashes, serving policy, live deployment, server capacity, power scope, or
-measurement boundaries differ anywhere across the curve. It warns when loads
-have unequal repeat-ID sets. Separately, any point whose *least populated
+measurement boundaries differ anywhere across the curve. Paper plots also fail
+closed when the recorded intended concurrency set or repeat-ID rectangle is
+incomplete. `--allow-incomplete` converts those failures to warnings only for
+diagnostic plots; do not use it for publication figures. Separately, any point
+whose *least populated
 copy* has fewer than `--min-samples` successful requests (default 20) is circled
 and listed in a warning. Tail latency uses the stricter `--min-p99-samples`
 threshold (default 100), also per-copy. This shows up at the lowest loads, where
@@ -1004,10 +1023,10 @@ harness can describe a head-only result when a worker sampler fails. The
 shipped full config is stricter: `require_power_data: true` rejects the point
 instead of writing it unless a single run has one node and a tp2/pp2 run has
 both nodes with positive, dense samples bracketing the full window. It likewise sets
-`require_vllm_metrics_data: true`, so missing generation-counter or KV-usage
-samples, a scrape gap over five seconds, an incomplete counter span, or a
-non-advancing generation counter while the client receives tokens rejects the
-point. Disable these requirements only for an explicitly
+`require_vllm_metrics_data: true`, so missing request-running/waiting, KV-usage,
+prompt/generation-token, or preemption samples; a scrape gap over five seconds;
+an incomplete counter span; or a non-advancing generation counter while the
+client receives tokens rejects the point. Disable these requirements only for an explicitly
 non-paper diagnostic run.
 
 ## Troubleshooting

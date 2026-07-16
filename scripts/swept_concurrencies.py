@@ -59,6 +59,20 @@ def _positive_integral(value: object, field: str) -> int:
     return int(number)
 
 
+def _positive_integral_list(values, field: str) -> tuple[int, ...]:
+    parsed = tuple(_positive_integral(value, field) for value in values)
+    if not parsed:
+        raise ValueError(f"at least one {field} is required")
+    if len(set(parsed)) != len(parsed):
+        raise ValueError(f"{field} values must not contain duplicates")
+    return parsed
+
+
+def _row_expected_concurrencies(row: dict[str, str]) -> tuple[int, ...]:
+    raw = str(row.get("expected_concurrencies") or "").split()
+    return _positive_integral_list(raw, "expected concurrency")
+
+
 def _validate_request_counts(row: dict[str, str]) -> None:
     """Require finite, nonnegative integral request counts."""
     for field in REQUEST_COUNT_FIELDS:
@@ -110,12 +124,17 @@ def swept(index_csv: str, label: str, config: str, config_yaml: str) -> list[int
 def completed_repeats(index_csv: str, label: str, config: str,
                       config_yaml: str, serving_fingerprint: str,
                       repeats: int,
-                      deployment_fingerprint: str = "") -> dict[int, set[int]]:
+                      deployment_fingerprint: str = "",
+                      config_overrides: dict | None = None,
+                      expected_concurrencies=None) -> dict[int, set[int]]:
     """Return valid completed repeat ids keyed by concurrency."""
     repeats = _positive_integral(repeats, "repeats")
     if not os.path.exists(index_csv):
         return {}
-    want_config = config_file_fingerprint(config_yaml)
+    want_config = config_file_fingerprint(config_yaml, config_overrides)
+    want_expected = None
+    if expected_concurrencies is not None:
+        want_expected = _positive_integral_list(expected_concurrencies, "expected concurrency")
     want_source = _source_fingerprint()
     want_client = client_environment_fingerprint()
     candidates: list[tuple[int, int]] = []
@@ -134,6 +153,13 @@ def completed_repeats(index_csv: str, label: str, config: str,
                     or not row.get("experiment_fingerprint")):
                 continue
 
+            if want_expected is not None:
+                declared = _row_expected_concurrencies(row)
+                if set(declared) != set(want_expected):
+                    raise ValueError(
+                        "otherwise-current row declares expected concurrencies "
+                        f"{declared}, but this campaign requires {want_expected}"
+                    )
             deployment = row.get("deployment_fingerprint") or ""
             if not deployment:
                 raise ValueError(
@@ -184,16 +210,20 @@ def completed_repeats(index_csv: str, label: str, config: str,
 def missing_schedule(index_csv: str, label: str, config: str,
                      config_yaml: str, serving_fingerprint: str,
                      repeats: int, concurrencies: list[int],
-                     deployment_fingerprint: str = "") -> list[tuple[int, int]]:
+                     deployment_fingerprint: str = "",
+                     config_overrides: dict | None = None,
+                     expected_concurrencies=None) -> list[tuple[int, int]]:
     repeats = _positive_integral(repeats, "repeats")
-    if not concurrencies:
-        raise ValueError("at least one concurrency is required")
-    concurrencies = [
-        _positive_integral(value, "concurrency") for value in concurrencies
-    ]
+    concurrencies = list(_positive_integral_list(concurrencies, "concurrency"))
+    if expected_concurrencies is None:
+        expected_concurrencies = concurrencies
+    else:
+        expected_concurrencies = _positive_integral_list(expected_concurrencies, "expected concurrency")
     completed = completed_repeats(index_csv, label, config, config_yaml,
                                   serving_fingerprint, repeats,
-                                  deployment_fingerprint)
+                                  deployment_fingerprint,
+                                  config_overrides=config_overrides,
+                                  expected_concurrencies=expected_concurrencies)
     return [(rep, concurrency)
             for rep in range(1, repeats + 1)
             for concurrency in concurrencies
@@ -210,10 +240,18 @@ def main() -> int:
     try:
         repeats = int(sys.argv[6])
         concurrencies = [int(value) for value in sys.argv[7:]]
-        schedule = missing_schedule(index, label, config, config_yaml,
-                                    fingerprint, repeats, concurrencies,
-                                    os.environ.get("DEPLOYMENT_FINGERPRINT", ""))
-    except (TypeError, ValueError) as exc:
+        config_overrides = {}
+        if os.environ.get("POWER_BACKEND"):
+            config_overrides["power_backend"] = os.environ["POWER_BACKEND"]
+        expected_raw = os.environ.get("EXPECTED_CONCURRENCIES", "")
+        expected_concurrencies = expected_raw.split() if expected_raw else concurrencies
+        schedule = missing_schedule(
+            index, label, config, config_yaml, fingerprint, repeats, concurrencies,
+            os.environ.get("DEPLOYMENT_FINGERPRINT", ""),
+            config_overrides=config_overrides,
+            expected_concurrencies=expected_concurrencies,
+        )
+    except (RuntimeError, TypeError, ValueError) as exc:
         sys.stderr.write(f"swept_concurrencies.py: {exc}\n")
         return 2
     if schedule:

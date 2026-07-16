@@ -29,7 +29,8 @@
 #      DRY_RUN=1 (list the repos it would fetch, then exit without downloading),
 #      CHECK_ONLY=1 (validate pinned snapshots locally; never use the network),
 #      MODEL_LABELS (optional space-separated label allowlist),
-#      DOWNLOAD_DNS (Docker DNS for downloads, default 8.8.8.8; empty disables),
+#      DOWNLOAD_DNS (Docker DNS for downloads, defaults to CONTAINER_DNS;
+#                    empty uses Docker's host-derived resolver),
 #      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

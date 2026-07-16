@@ -56,13 +56,14 @@ require_running() {
   # The container installs ray[default] before calling `ray start` (see
   # RAY_SETUP above), which can take well over a minute on a slow or flaky
   # DNS path to pypi.org, so poll for readiness instead of a fixed sleep.
-  local waited=0 timeout=180
+  local waited=0 timeout=180 status=""
   while (( waited < timeout )); do
     if ! docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null | grep -q true; then
       show_container_logs
       exit 1
     fi
-    if docker exec "$VLLM_CONTAINER" ray status >/dev/null 2>&1; then
+    status="$(docker exec "$VLLM_CONTAINER" ray status 2>/dev/null || true)"
+    if grep -q '^Active:' <<<"$status"; then
       break
     fi
     sleep 3
@@ -74,11 +75,12 @@ require_running() {
     exit 1
   fi
   echo "[ray] status:"
-  docker exec "$VLLM_CONTAINER" ray status
+  printf '%s\n' "$status"
 }
 
 case "$ROLE" in
   head)
+    require_local_connectx_ip "$HEAD_IP" "Ray head role" || exit 1
     echo "[ray] head on $HEAD_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
@@ -86,7 +88,8 @@ case "$ROLE" in
       -lc "$RAY_SETUP && ray start --head --node-ip-address=$HEAD_IP --port=$RAY_PORT --block"
     ;;
   worker)
-    LOCAL_IP="$(ip -4 -o addr show "$CX_IFACE" | awk '{print $4}' | cut -d/ -f1)"
+    require_local_connectx_ip "$HOEDUS_IP" "Ray worker role" || exit 1
+    LOCAL_IP="$(connectx_local_ipv4)"
     if [[ -z "$LOCAL_IP" ]]; then
       echo "[ray] could not find an IPv4 address on $CX_IFACE" >&2
       exit 1

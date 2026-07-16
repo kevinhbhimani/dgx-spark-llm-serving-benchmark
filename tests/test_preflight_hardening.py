@@ -1,12 +1,14 @@
 import asyncio
 import csv
 import importlib.util
+import os
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from types import ModuleType
 from unittest import mock
 
 import yaml
@@ -404,6 +406,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
             index = Path(tmp) / "index.csv"
             fields = [
                 "model_label", "config_label", "mode", "concurrency",
+                "expected_concurrencies",
                 "requests_completed", "methodology_version",
                 "config_file_sha256", "harness_source_sha256",
                 "client_environment_sha256", "serving_fingerprint",
@@ -411,6 +414,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
             ]
             common = {
                 "model_label": "m", "config_label": "single", "mode": "closed",
+                "expected_concurrencies": "1 2",
                 "requests_completed": 0,
                 "methodology_version": METHODOLOGY_VERSION,
                 "config_file_sha256": config_hash,
@@ -454,6 +458,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
             index = Path(tmp) / "index.csv"
             fields = [
                 "model_label", "config_label", "mode", "concurrency",
+                "expected_concurrencies",
                 "requests_completed", "methodology_version",
                 "config_file_sha256", "harness_source_sha256",
                 "client_environment_sha256", "serving_fingerprint",
@@ -461,6 +466,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
             ]
             row = {
                 "model_label": "m", "config_label": "single", "mode": "closed",
+                "expected_concurrencies": "1",
                 "concurrency": 1, "requests_completed": 10, "repeat_id": 1,
                 "methodology_version": METHODOLOGY_VERSION,
                 "config_file_sha256": config_file_fingerprint(str(config)),
@@ -498,6 +504,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
             index = Path(tmp) / "index.csv"
             fields = [
                 "model_label", "config_label", "mode", "concurrency",
+                "expected_concurrencies",
                 "requests_completed", "requests_failed",
                 "methodology_version", "config_file_sha256",
                 "harness_source_sha256", "client_environment_sha256",
@@ -508,6 +515,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
                 "model_label": "m",
                 "config_label": "single",
                 "mode": "closed",
+                "expected_concurrencies": "1",
                 "concurrency": 1,
                 "requests_completed": 0,
                 "requests_failed": 0,
@@ -579,14 +587,32 @@ class ObservabilityValidationTests(unittest.TestCase):
                 "power_nodes": nodes,
                 "energy_per_token_j": 1.0,
                 "mean_power_w": 100.0,
+                "mean_power_w_head": 50.0 if nodes == 2 else 100.0,
+                "mean_power_w_worker": 50.0 if nodes == 2 else None,
                 "power_samples_head": 100,
                 "power_samples_worker": 100 if nodes == 2 else 0,
                 "power_max_gap_s_head": 0.2,
                 "power_max_gap_s_worker": 0.2 if nodes == 2 else None,
             },
             "vllm_metrics": {
+                "vllm:num_requests_running": {
+                    "mean": 1.0, "sample_count": 10,
+                    "sample_span_s": 9.0, "max_gap_s": 1.0,
+                },
+                "vllm:num_requests_waiting": {
+                    "mean": 0.0, "sample_count": 10,
+                    "sample_span_s": 9.0, "max_gap_s": 1.0,
+                },
                 "vllm:generation_tokens_total": {
                     "delta": 10.0, "sample_count": 11,
+                    "sample_span_s": 10.0, "max_gap_s": 1.0,
+                },
+                "vllm:prompt_tokens_total": {
+                    "delta": 10.0, "sample_count": 11,
+                    "sample_span_s": 10.0, "max_gap_s": 1.0,
+                },
+                "vllm:num_preemptions_total": {
+                    "delta": 0.0, "sample_count": 11,
                     "sample_span_s": 10.0, "max_gap_s": 1.0,
                 },
                 "vllm:kv_cache_usage_perc": {
@@ -612,7 +638,8 @@ class ObservabilityValidationTests(unittest.TestCase):
         )
         summary = self._complete_summary()
         summary["energy"]["mean_power_w"] = 0.0
-        with self.assertRaisesRegex(RuntimeError, "non-positive power"):
+        summary["energy"]["mean_power_w_head"] = 0.0
+        with self.assertRaisesRegex(RuntimeError, "mean_power_w_head"):
             _validate_observability(summary, cfg)
 
         summary = self._complete_summary()
@@ -632,7 +659,7 @@ class ObservabilityValidationTests(unittest.TestCase):
 
         summary = self._complete_summary()
         summary["vllm_metrics"]["vllm:generation_tokens_total"]["max_gap_s"] = 6.0
-        with self.assertRaisesRegex(RuntimeError, "metric scrape gap"):
+        with self.assertRaisesRegex(RuntimeError, "scrape gap"):
             _validate_observability(summary, cfg)
 
     def test_dual_node_run_requires_both_power_samplers(self):
@@ -658,8 +685,71 @@ class ObservabilityValidationTests(unittest.TestCase):
         )
         summary = self._complete_summary()
         summary["vllm_metrics"]["vllm:kv_cache_usage_perc"] = {}
-        with self.assertRaisesRegex(RuntimeError, "samples are missing"):
+        with self.assertRaisesRegex(RuntimeError, "missing or non-finite"):
             _validate_observability(summary, cfg)
+
+
+class WorkerCacheManifestTests(unittest.TestCase):
+    @staticmethod
+    def _load_helper():
+        path = (Path(__file__).resolve().parents[1]
+                / "scripts" / "mirror_worker_cache.py")
+        ray = ModuleType("ray")
+        ray.remote = lambda **_kwargs: lambda obj: obj
+        ray_exceptions = ModuleType("ray.exceptions")
+        ray_exceptions.GetTimeoutError = type("GetTimeoutError", (Exception,), {})
+        spec = importlib.util.spec_from_file_location("mirror_helper", path)
+        helper = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(
+            sys.modules,
+            {"ray": ray, "ray.exceptions": ray_exceptions},
+        ):
+            spec.loader.exec_module(helper)
+        return helper
+
+    def test_manifest_contains_only_exact_snapshot_and_referenced_blobs(self):
+        helper = self._load_helper()
+        revision = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            helper.HUB = str(Path(tmp) / "hub")
+            root = Path(helper.HUB) / "models--org--model"
+            blobs = root / "blobs"
+            snapshot = root / "snapshots" / revision
+            old_snapshot = root / "snapshots" / ("b" * 40)
+            blobs.mkdir(parents=True)
+            snapshot.mkdir(parents=True)
+            old_snapshot.mkdir(parents=True)
+            (blobs / "wanted").write_bytes(b"weights")
+            (blobs / "unrelated").write_bytes(b"old revision data")
+            os.symlink("../../blobs/wanted", snapshot / "model.safetensors")
+            os.symlink("../../blobs/unrelated", old_snapshot / "old.bin")
+
+            files, links = helper.snapshot_manifest("org/model", revision)
+
+        self.assertEqual(
+            files,
+            {"models--org--model/blobs/wanted": len(b"weights")},
+        )
+        self.assertEqual(
+            links,
+            {f"models--org--model/snapshots/{revision}/model.safetensors":
+             "../../blobs/wanted"},
+        )
+
+    def test_manifest_rejects_unpinned_or_unsafe_snapshot_entries(self):
+        helper = self._load_helper()
+        with self.assertRaisesRegex(ValueError, "invalid pinned"):
+            helper.parse_spec("org/model|main|model")
+
+        revision = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            helper.HUB = str(Path(tmp) / "hub")
+            snapshot = (Path(helper.HUB) / "models--org--model"
+                        / "snapshots" / revision)
+            snapshot.mkdir(parents=True)
+            os.symlink("/etc/passwd", snapshot / "unsafe")
+            with self.assertRaisesRegex(RuntimeError, "unsafe snapshot link"):
+                helper.snapshot_manifest("org/model", revision)
 
 
 class ProvenanceValidationTests(unittest.TestCase):
