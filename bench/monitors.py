@@ -167,6 +167,21 @@ class PowerSampler:
             return len(self._samples)
         return sum(1 for t, _ in self._samples if t0 <= t <= t1)
 
+    def samples(self):
+        """Return a stable copy for durable raw-observability artifacts."""
+        return list(self._samples)
+
+    def wait_for_samples(self, minimum=2, timeout_s=10.0):
+        """Wait for live telemetry before committing to a long release point."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self.sample_count() >= minimum:
+                return True
+            if self._thread is not None and not self._thread.is_alive():
+                break
+            time.sleep(min(0.1, max(0.01, self.interval)))
+        return self.sample_count() >= minimum
+
     def coverage(self, t0, t1):
         """Return in-window count and the largest bracketing sample gap."""
         pts = sorted(self._samples)
@@ -240,6 +255,10 @@ class Reader:
         sequence, observed_at, watts = self.latest
         return sequence, time.monotonic() - observed_at, watts
 
+    def identity(self):
+        node_id = ray.get_runtime_context().get_node_id()
+        return ray.util.get_node_ip_address(), str(node_id)
+
     def stop(self):
         self.stop_event.set()
         if self.proc is not None:
@@ -256,6 +275,8 @@ class Reader:
 
 
 reader = Reader.remote(interval_ms)
+identity_ip, identity_node_id = ray.get(reader.identity.remote(), timeout=10)
+print("IDENTITY", identity_ip, identity_node_id, flush=True)
 stop = threading.Event()
 last_sequence = 0
 max_sample_age_s = max(2.0, 3.0 * interval_ms / 1000.0)
@@ -314,6 +335,8 @@ class WorkerPowerSampler(PowerSampler):
         self.node_ip = node_ip
         self._last_sequence = 0
         self._max_sample_age_s = max(2.0, 3.0 * self.interval)
+        self.identity_ip = ""
+        self.identity_node_id = ""
 
     def start(self):
         cmd = ["docker", "exec", "-i", self.container, "python3", "-u", "-c",
@@ -333,6 +356,10 @@ class WorkerPowerSampler(PowerSampler):
     def _consume_line(self, line):
         """Accept one fresh worker observation and reject replayed/stale data."""
         parts = line.strip().split()
+        if len(parts) == 3 and parts[0] == "IDENTITY":
+            self.identity_ip = parts[1]
+            self.identity_node_id = parts[2]
+            return True
         if len(parts) != 3:
             return False
         try:
@@ -351,6 +378,16 @@ class WorkerPowerSampler(PowerSampler):
         before = len(self._samples)
         self._add(watts)
         return len(self._samples) == before + 1
+
+    def wait_for_identity(self, timeout_s=10.0):
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self.identity_ip and self.identity_node_id:
+                return True
+            if self._proc is not None and self._proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        return bool(self.identity_ip and self.identity_node_id)
 
     def _consume(self):
         for line in self._proc.stdout:
@@ -429,6 +466,7 @@ class VLLMMetricsScraper:
         self.url = base_url.rstrip("/") + "/metrics"
         self.interval = interval_s
         self._series = {k: [] for k in self.KEYS}
+        self._label_sets = {k: set() for k in self.KEYS}
         self._thread = None
         self._stop = threading.Event()
 
@@ -471,6 +509,9 @@ class VLLMMetricsScraper:
             if not math.isfinite(value):
                 continue
             key = self.METRIC_ALIASES.get(raw_key, raw_key)
+            metric_token = line.strip().split(None, 1)[0]
+            label_text = metric_token[len(raw_key):]
+            self._label_sets[key].add(label_text)
             self._series[key].append((now, value))
 
     @classmethod
@@ -494,13 +535,47 @@ class VLLMMetricsScraper:
                 "sample_count": len(vals),
                 "sample_span_s": (pts[-1][0] - pts[0][0]) if len(pts) >= 2 else 0.0,
                 "max_gap_s": max(gaps, default=0.0),
+                "series_count": len(self._label_sets[k]),
             } if vals else {
                 "min": None, "mean": None, "max": None,
                 "sample_count": 0, "sample_span_s": None, "max_gap_s": None,
+                "series_count": len(self._label_sets[k]),
             })
         for k in self.COUNTER_KEYS:
             out[k] = self._counter_delta(self._series[k], t0, t1)
+            out[k]["series_count"] = len(self._label_sets[k])
         return out
+
+    def wait_for_release_metrics(self, timeout_s=10.0):
+        """Require every release metric to exist as one unambiguous series."""
+        deadline = time.monotonic() + timeout_s
+        required = set(self.REQUIRED_RELEASE_STATS)
+        while time.monotonic() < deadline:
+            self.scrape_once()
+            if all(self._series[name] for name in required):
+                ambiguous = {
+                    name: len(self._label_sets[name])
+                    for name in required if len(self._label_sets[name]) != 1
+                }
+                if ambiguous:
+                    raise RuntimeError(
+                        "required vLLM metrics expose ambiguous label series: "
+                        + ", ".join(f"{name}={count}"
+                                    for name, count in sorted(ambiguous.items()))
+                    )
+                return True
+            time.sleep(min(0.25, self.interval))
+        return False
+
+    def raw_samples(self):
+        """Return timestamp/value samples and observed label identities."""
+        return {
+            key: {
+                "labels": sorted(self._label_sets[key]),
+                "samples": list(self._series[key]),
+            }
+            for key in self.KEYS
+        }
 
     @staticmethod
     def _counter_delta(pts, t0, t1):

@@ -39,8 +39,9 @@ max_inflight: 512
 warmup_s: 120.0
 # 25 minutes of measurement plus the 120s/180s minimum warmup/cooldown is
 # 30 minutes per point. The active 23 model/config combinations x 8 loads x 3
-# repeats therefore require at least 276 GPU-hours (11.5 wall-clock days)
-# sequentially, before model loads and automatic extensions. At c=1 on the
+# repeats therefore require at least 276 sequential point-hours (11.5
+# wall-clock days) and 468 GB10-hours because 16 of the 23 combinations use
+# two nodes, before model loads and automatic extensions. At c=1 on the
 # slowest models this yields only ~30-50 completions, so those p99 points are
 # flagged by the plots' MIN_P99_SAMPLES rule rather than reported as reliable.
 measure_s: 1500.0
@@ -70,6 +71,10 @@ require_power_data: true
 require_vllm_metrics_data: true
 # Paper rows must identify exact HF commits and the complete serving policy.
 require_provenance: true
+# Never publish or resume a paper point containing request/stream failures, and
+# require enough completed requests to support at least the headline medians.
+require_zero_request_failures: true
+min_successful_requests: 20
 
 config_label: "single"
 collect_hf_metadata: false

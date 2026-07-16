@@ -18,35 +18,161 @@
 #      streaming contract; no measurement. Costs a few hours of model loads;
 #      CANARY_FIRST=0 skips (the per-launch contract check still guards sweeps).
 #   3. full pass at REPEATS=$FULL_REPEATS: tp2, then pp2
-#   4. targeted repeats at CONCURRENCIES="$REPEAT_CONCS" up to $REPEAT_TOTAL
-#      copies (REPEAT_CONCS="" skips)
-#   5. single, LAST: full pass then targeted repeats
-#   6. best-effort plots
+#   4. optional extra full rectangles up to $REPEAT_TOTAL copies
+#      (REPEAT_CONCS="" skips; publication indexes cannot add only some loads)
+#   5. single, LAST: full pass then optional extra full rectangle
+#   6. fail-closed campaign validation, plots, and artifact manifest
 #
 # Every sweep leg uses --skip-done, so re-running this script after a crash
 # resumes at (repeat, concurrency) granularity. Two campaign rules:
 #   - finalize configs/experiment.yaml (warmup/measure/cooldown) BEFORE the
-#     first point; it feeds config_file_sha256, so a mid-campaign change makes
-#     every prior row stop counting as done and mixes identities in plots;
+#     first point; it feeds config_file_sha256, so a mid-campaign change is
+#     rejected and requires a fresh OUT_DIR;
 #   - do not edit bench/*.py or the fingerprinted scripts mid-campaign, for the
-#     same reason (harness_source_sha256).
+#     same reason (harness_source_sha256). The launch gate also requires these
+#     files to be committed, so every row names a recoverable Git revision.
 #
 # Knobs (env): OUT_DIR, CONCURRENCIES, FULL_REPEATS, REPEAT_CONCS,
 #              REPEAT_TOTAL, CANARY_FIRST.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
+
+# Claim every campaign knob from the caller BEFORE .env is sourced.
+# scripts/load_env.sh gives already-exported values precedence over .env, so
+# exporting them here keeps a stale OUT_DIR/CONCURRENCIES in .env from
+# silently retargeting the paper campaign at an old result directory.
+export OUT_DIR="${OUT_DIR:-results-steady-exact-v3}"
+export CONCURRENCIES="${CONCURRENCIES-1 2 4 8 16 32 64 128}"
+export EXPECTED_CONCURRENCIES="$CONCURRENCIES"
+export FULL_REPEATS="${FULL_REPEATS-1}"
+export REPEAT_CONCS="${REPEAT_CONCS:-}"
+export REPEAT_TOTAL="${REPEAT_TOTAL-3}"
+export CANARY_FIRST="${CANARY_FIRST-1}"
+export PLAN_ONLY="${PLAN_ONLY-0}"
+
 source scripts/connectx_env.sh    # VLLM_CONTAINER, HEAD_IP, HOEDUS_IP, .env
+
+# The unattended paper campaign owns these inputs. Clear same-named values
+# inherited from .env or the caller so planning, measurement, and final
+# verification cannot silently target different YAML, a label subset, a
+# canary-only sweep, or a power-policy override.
+export MODELS_YAML="configs/models.yaml"
+export CONFIG_YAML="configs/experiment.yaml"
+export POWER_BACKEND=""
+export CANARY_ONLY=0
+export MODEL_LABELS=""
+
+if [[ -z "${PYTHON:-}" ]]; then
+  if [[ -x "$HERE/.venv/bin/python" ]]; then
+    PYTHON="$HERE/.venv/bin/python"
+  else
+    PYTHON=python3
+  fi
+fi
+export PYTHON
+export PYTHONNOUSERSITE=1
+
+option_error() {
+  echo "[job] invalid campaign options: $*" >&2
+  exit 1
+}
+
+validate_positive_integer() {
+  local name="$1" value="$2"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || \
+    option_error "$name must be a positive integer, got '$value'"
+}
+
+validate_integer_set() {
+  local name="$1" raw="$2" target_name="$3" value
+  local -a values=()
+  local -n target="$target_name"
+  local IFS=$' \t\r\n'
+
+  # -d NUL lets read consume embedded newlines as well as ordinary spaces.
+  read -r -d '' -a values < <(printf '%s\0' "$raw") || true
+  (( ${#values[@]} > 0 )) || option_error "$name must not be empty"
+  target=()
+  for value in "${values[@]}"; do
+    [[ "$value" =~ ^[1-9][0-9]*$ ]] || \
+      option_error "$name contains non-positive integer '$value'"
+    [[ -z "${target[$value]+x}" ]] || \
+      option_error "$name contains duplicate concurrency '$value'"
+    target[$value]=1
+  done
+}
+
+integer_sets_match() {
+  local left_name="$1" right_name="$2" value
+  local -n left="$left_name" right="$right_name"
+  (( ${#left[@]} == ${#right[@]} )) || return 1
+  for value in "${!left[@]}"; do
+    [[ -n "${right[$value]+x}" ]] || return 1
+  done
+}
+
+# Compare positive decimal strings without overflowing bash arithmetic.
+decimal_is_greater() {
+  local left="$1" right="$2"
+  (( ${#left} > ${#right} )) && return 0
+  (( ${#left} < ${#right} )) && return 1
+  [[ "$left" > "$right" ]]
+}
+
+[[ "$CANARY_FIRST" == "0" || "$CANARY_FIRST" == "1" ]] || \
+  option_error "CANARY_FIRST must be exactly 0 or 1, got '$CANARY_FIRST'"
+[[ "$PLAN_ONLY" == "0" || "$PLAN_ONLY" == "1" ]] || \
+  option_error "PLAN_ONLY must be exactly 0 or 1, got '$PLAN_ONLY'"
+validate_positive_integer FULL_REPEATS "$FULL_REPEATS"
+validate_positive_integer REPEAT_TOTAL "$REPEAT_TOTAL"
+
+declare -A CONCURRENCY_SET=() EXPECTED_CONCURRENCY_SET=() REPEAT_CONCURRENCY_SET=()
+validate_integer_set CONCURRENCIES "$CONCURRENCIES" CONCURRENCY_SET
+validate_integer_set EXPECTED_CONCURRENCIES "$EXPECTED_CONCURRENCIES" \
+  EXPECTED_CONCURRENCY_SET
+integer_sets_match CONCURRENCY_SET EXPECTED_CONCURRENCY_SET || \
+  option_error "CONCURRENCIES and EXPECTED_CONCURRENCIES must contain the same full set"
+
+if [[ -n "$REPEAT_CONCS" ]]; then
+  validate_integer_set REPEAT_CONCS "$REPEAT_CONCS" REPEAT_CONCURRENCY_SET
+  integer_sets_match CONCURRENCY_SET REPEAT_CONCURRENCY_SET || \
+    option_error "REPEAT_CONCS must be empty or contain the same full concurrency set"
+  decimal_is_greater "$REPEAT_TOTAL" "$FULL_REPEATS" || \
+    option_error "REPEAT_TOTAL must exceed FULL_REPEATS when REPEAT_CONCS is nonempty"
+fi
+FINAL_REPEATS="$FULL_REPEATS"
+[[ -n "$REPEAT_CONCS" ]] && FINAL_REPEATS="$REPEAT_TOTAL"
+
+print_plan() {
+  local canary_legs=0 repeat_legs=0
+  [[ "$CANARY_FIRST" == "1" ]] && canary_legs=2
+  [[ -n "$REPEAT_CONCS" ]] && repeat_legs=3
+  echo "[plan] campaign options valid; no hardware operations will be performed"
+  echo "[plan] PYTHON=$PYTHON PYTHONNOUSERSITE=$PYTHONNOUSERSITE OUT_DIR=$OUT_DIR"
+  echo "[plan] canonical inputs: MODELS_YAML=$MODELS_YAML CONFIG_YAML=$CONFIG_YAML POWER_BACKEND=<experiment.yaml> MODEL_LABELS=<all> CANARY_ONLY=$CANARY_ONLY"
+  echo "[plan] concurrencies (${#CONCURRENCY_SET[@]}): $CONCURRENCIES"
+  echo "[plan] expected concurrency order: $EXPECTED_CONCURRENCIES"
+  echo "[plan] prep legs (8): source, environment, matrix, Ray, runtime, head cache, worker cache, allreduce"
+  echo "[plan] canary legs ($canary_legs): CANARY_FIRST=$CANARY_FIRST (tp2, pp2 when enabled)"
+  echo "[plan] full measurement legs (3): tp2, pp2, single; $FULL_REPEATS repeat(s) per concurrency"
+  if [[ -n "$REPEAT_CONCS" ]]; then
+    echo "[plan] repeat measurement legs ($repeat_legs): tp2, pp2, single; target $REPEAT_TOTAL total repeat(s) per concurrency"
+  else
+    echo "[plan] repeat measurement legs (0): REPEAT_CONCS is empty"
+  fi
+  echo "[plan] finalization legs (5): source audit, verify, plots/table in $OUT_DIR/figs, pre-seal audit, sealed manifest"
+}
+
+if [[ "$PLAN_ONLY" == "1" ]]; then
+  "$PYTHON" scripts/check_environment.py || exit 1
+  "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" --repeats "$FINAL_REPEATS" || exit 1
+  print_plan
+  exit 0
+fi
+
 require_local_connectx_ip "$HEAD_IP" "paper campaign head role" || exit 1
 acquire_campaign_lock || exit 1
-
-export OUT_DIR="${OUT_DIR:-results}"
-CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
-export EXPECTED_CONCURRENCIES="${EXPECTED_CONCURRENCIES:-$CONCURRENCIES}"
-FULL_REPEATS="${FULL_REPEATS:-1}"
-REPEAT_CONCS="${REPEAT_CONCS:-}"
-REPEAT_TOTAL="${REPEAT_TOTAL:-3}"
-CANARY_FIRST="${CANARY_FIRST:-1}"
 
 mkdir -p "$OUT_DIR"
 LOG="$OUT_DIR/run_job_$(date +%Y%m%d-%H%M%S).log"
@@ -113,6 +239,28 @@ ray_ok() {
   fi
 }
 
+source_tree_ok() {
+  local untracked
+  git rev-parse --verify HEAD >/dev/null 2>&1 || {
+    log "repository has no recoverable Git commit"
+    return 1
+  }
+  if ! git diff --quiet -- bench configs scripts plot_results.py requirements.txt requirements.lock; then
+    log "tracked benchmark sources have uncommitted changes"
+    return 1
+  fi
+  if ! git diff --cached --quiet -- bench configs scripts plot_results.py requirements.txt requirements.lock; then
+    log "benchmark sources are staged but not committed"
+    return 1
+  fi
+  untracked="$(git ls-files --others --exclude-standard -- bench configs scripts plot_results.py requirements.txt requirements.lock)"
+  if [[ -n "$untracked" ]]; then
+    log "untracked benchmark source/input files are not recoverable:"
+    printf '%s\n' "$untracked"
+    return 1
+  fi
+}
+
 cluster_runtime_ok() {
   CLUSTER_RUNTIME_JSON="$(docker exec -i "$VLLM_CONTAINER" python3 - \
     "$HEAD_IP" "$HOEDUS_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
@@ -138,7 +286,7 @@ allreduce_once() {
   artifact_id="$(scripts/ray_allreduce_bench.sh --fingerprint-only)" || return 1
   for artifact in "$OUT_DIR"/allreduce_ray_"$artifact_id"_*.csv; do
     [[ -e "$artifact" ]] || continue
-    if python3 -c 'import csv, math, sys
+    if "$PYTHON" -c 'import csv, math, sys
 path = sys.argv[1]
 with open(path, newline="") as handle:
     reader = csv.DictReader(handle)
@@ -168,6 +316,14 @@ log "campaign start; log: $LOG"
 log "OUT_DIR=$OUT_DIR FULL_REPEATS=$FULL_REPEATS REPEAT_CONCS='$REPEAT_CONCS'" \
     "REPEAT_TOTAL=$REPEAT_TOTAL CONCURRENCIES='$CONCURRENCIES'"
 
+prep "clean committed benchmark source tree" source_tree_ok
+prep "isolated locked client environment" \
+  "$PYTHON" scripts/check_environment.py \
+    --manifest "$OUT_DIR/client_environment.json"
+prep "valid complete campaign definition" \
+  "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" \
+    --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" \
+    --repeats "$FINAL_REPEATS"
 prep "Ray cluster active on head+worker"      ray_ok
 prep "two-node runtime identity matches"      cluster_runtime_ok
 prep "head HF cache has pinned snapshots"     warm_head_cache
@@ -209,9 +365,27 @@ if [[ -n "$REPEAT_CONCS" ]]; then
     scripts/run_models.sh single --skip-done
 fi
 
-leg "plots + summary table" \
-  "${PYTHON:-python3}" plot_results.py --index "$OUT_DIR/index.csv" --out figs \
+# Recheck after the multi-day measurement campaign. This catches any source
+# edit or checkout performed while the job was running before those current
+# files can be sealed beside rows produced by a different revision.
+prep "final clean committed benchmark source tree" source_tree_ok
+
+prep "complete result grid + artifact verification" \
+  "$PYTHON" scripts/validate_campaign.py verify --models "$MODELS_YAML" \
+    --experiment "$CONFIG_YAML" --out-dir "$OUT_DIR" \
+    --concurrencies "$CONCURRENCIES" --repeats "$FINAL_REPEATS"
+
+prep "plots + summary table" \
+  "$PYTHON" plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" \
     --format both --table
+
+prep "pre-seal clean committed benchmark source tree" source_tree_ok
+
+prep "sealed final artifact manifest" \
+  "$PYTHON" scripts/validate_campaign.py verify --models "$MODELS_YAML" \
+    --experiment "$CONFIG_YAML" --out-dir "$OUT_DIR" \
+    --concurrencies "$CONCURRENCIES" --repeats "$FINAL_REPEATS" \
+    --manifest "$OUT_DIR/campaign_manifest.json"
 
 if (( ${#FAILED[@]} )); then
   log "campaign finished WITH FAILURES:"
@@ -219,4 +393,4 @@ if (( ${#FAILED[@]} )); then
   log "fix the cause and re-run scripts/run_job.sh; --skip-done resumes the gaps"
   exit 1
 fi
-log "campaign complete: $OUT_DIR/index.csv, figures in figs/"
+log "campaign complete: $OUT_DIR/index.csv, figures in $OUT_DIR/figs/"

@@ -8,7 +8,7 @@ empty line means the requested rectangle is complete.
 A row only counts as done when:
   - model_label and config_label match,
   - mode is "closed" (sweeps are always closed; open-mode rows never count),
-  - request counts are finite and nonnegative (zero-success runs still count),
+  - request counts are finite, nonnegative, and internally consistent,
   - methodology, canonical config, current source tree, client runtime, serving
     policy, and live deployment fingerprint exactly match, and
   - its one-based repeat_id is within the requested repeat count.
@@ -19,6 +19,7 @@ Usage: python scripts/swept_concurrencies.py INDEX_CSV LABEL CONFIG CONFIG_YAML 
 from __future__ import annotations
 import csv
 from decimal import Decimal, InvalidOperation
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -32,6 +33,7 @@ if str(ROOT) not in sys.path:
 from bench.run_benchmark import (METHODOLOGY_VERSION, _source_fingerprint,
                                  client_environment_fingerprint,
                                  config_file_fingerprint)
+from bench.config import ExperimentConfig
 
 # Mirrors bench.config.ExperimentConfig.measure_s; keep in sync.
 DEFAULT_MEASURE_S = 60.0
@@ -131,6 +133,10 @@ def completed_repeats(index_csv: str, label: str, config: str,
     repeats = _positive_integral(repeats, "repeats")
     if not os.path.exists(index_csv):
         return {}
+    campaign_cfg = ExperimentConfig.from_yaml(config_yaml)
+    for key, value in (config_overrides or {}).items():
+        setattr(campaign_cfg, key, value)
+    campaign_cfg.validate()
     want_config = config_file_fingerprint(config_yaml, config_overrides)
     want_expected = None
     if expected_concurrencies is not None:
@@ -144,14 +150,23 @@ def completed_repeats(index_csv: str, label: str, config: str,
         for row in csv.DictReader(f):
             if (row.get("model_label") != label
                     or row.get("config_label") != config
-                    or row.get("mode") != "closed"
-                    or row.get("methodology_version") != METHODOLOGY_VERSION
-                    or row.get("config_file_sha256") != want_config
-                    or row.get("harness_source_sha256") != want_source
-                    or row.get("client_environment_sha256") != want_client
-                    or row.get("serving_fingerprint") != serving_fingerprint
-                    or not row.get("experiment_fingerprint")):
+                    or row.get("mode") != "closed"):
                 continue
+
+            current_identity = (
+                row.get("methodology_version") == METHODOLOGY_VERSION
+                and row.get("config_file_sha256") == want_config
+                and row.get("harness_source_sha256") == want_source
+                and row.get("client_environment_sha256") == want_client
+                and row.get("serving_fingerprint") == serving_fingerprint
+                and bool(row.get("experiment_fingerprint"))
+            )
+            if not current_identity:
+                raise ValueError(
+                    "index already contains an incompatible row for "
+                    f"{label}/{config}; use a fresh OUT_DIR before launching "
+                    "with changed config, source, environment, or serving policy"
+                )
 
             if want_expected is not None:
                 declared = _row_expected_concurrencies(row)
@@ -184,6 +199,64 @@ def completed_repeats(index_csv: str, label: str, config: str,
             concurrency = _positive_integral(
                 row.get("concurrency"), "concurrency")
             _validate_request_counts(row)
+            started_count = int(Decimal(row.get("requests_started", "0")))
+            completed_count = int(Decimal(row.get("requests_completed", "0")))
+            failed_count = int(Decimal(row.get("requests_failed", "0")))
+            if started_count != completed_count + failed_count:
+                raise ValueError(
+                    "otherwise-current row has inconsistent request accounting"
+                )
+            if campaign_cfg.require_zero_request_failures:
+                if failed_count:
+                    raise ValueError(
+                        "otherwise-current row contains request failures and "
+                        "cannot be resumed as a release point"
+                    )
+                if completed_count < campaign_cfg.min_successful_requests:
+                    raise ValueError(
+                        "otherwise-current row has fewer successful requests "
+                        "than the release minimum"
+                    )
+                try:
+                    total_tokens = _positive_integral(
+                        row.get("total_output_tokens"), "total_output_tokens"
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        "otherwise-current release row has no output tokens"
+                    ) from exc
+
+            # Current-schema production indexes carry durable artifact metadata.
+            # Keep legacy unit/API fixtures (which omit the columns entirely)
+            # readable, but fail closed when a declared artifact is absent,
+            # resized, or its small summary file no longer matches its digest.
+            if "raw_path" in row:
+                root = Path(index_csv).resolve().parent
+                for kind in ("raw", "summary"):
+                    rel = row.get(f"{kind}_path") or ""
+                    if not rel or Path(rel).name != rel:
+                        raise ValueError(
+                            f"otherwise-current row has invalid {kind} artifact"
+                        )
+                    artifact = root / rel
+                    try:
+                        expected_size = int(row.get(f"{kind}_bytes", ""))
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"otherwise-current row has invalid {kind}_bytes"
+                        ) from exc
+                    if not artifact.is_file() or artifact.stat().st_size != expected_size:
+                        raise ValueError(
+                            f"otherwise-current row's {kind} artifact is "
+                            "missing or has changed size"
+                        )
+                    if kind == "summary":
+                        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+                        if digest != row.get("summary_sha256"):
+                            raise ValueError(
+                                "otherwise-current row's summary artifact "
+                                "digest does not match the index"
+                            )
 
             identity = (concurrency, repeat_id)
             if identity in identities:

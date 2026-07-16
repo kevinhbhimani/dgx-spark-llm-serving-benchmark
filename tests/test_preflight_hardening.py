@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import hashlib
 import importlib.util
 import os
 import sys
@@ -174,6 +175,22 @@ class OpenLoopAdmissionTests(unittest.TestCase):
 
 class ProvenanceAndSchemaTests(unittest.TestCase):
     @staticmethod
+    def _materialize_artifacts(tmp, summary):
+        artifacts = {}
+        for kind, name, data in (
+            ("raw", "run.raw.jsonl", b"{}\n"),
+            ("summary", "run.summary.json", b"{}\n"),
+        ):
+            (Path(tmp) / name).write_bytes(data)
+            artifacts[kind] = {
+                "path": name,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+            }
+        summary["artifacts"] = artifacts
+        return summary
+
+    @staticmethod
     def _summary():
         pct = {"p50": 0.1, "p99": 0.2}
         return {
@@ -235,6 +252,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
     def test_index_row_preserves_all_resume_provenance(self):
         summary = self._summary()
         with tempfile.TemporaryDirectory() as tmp:
+            self._materialize_artifacts(tmp, summary)
             _append_index(tmp, summary)
             validate_index_schema(tmp)
             with (Path(tmp) / "index.csv").open(newline="") as handle:
@@ -278,18 +296,20 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
         summary = self._summary()
         summary["requests_completed"] = float("nan")
         with tempfile.TemporaryDirectory() as tmp:
+            self._materialize_artifacts(tmp, summary)
             with self.assertRaisesRegex(RuntimeError, "requests_completed"):
                 _append_index(tmp, summary)
 
         summary = self._summary()
         summary["repeat_count"] = summary["repeat_id"] - 1
         with tempfile.TemporaryDirectory() as tmp:
+            self._materialize_artifacts(tmp, summary)
             with self.assertRaisesRegex(RuntimeError, "greater than repeat_count"):
                 _append_index(tmp, summary)
 
     def test_duplicate_or_interrupted_append_preserves_existing_index(self):
         with tempfile.TemporaryDirectory() as tmp:
-            first = self._summary()
+            first = self._materialize_artifacts(tmp, self._summary())
             _append_index(tmp, first)
             index = Path(tmp) / "index.csv"
             original = index.read_bytes()
@@ -393,7 +413,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
                 config_file_fingerprint(str(changed)),
             )
 
-    def test_resume_schedule_is_repeat_and_fingerprint_exact(self):
+    def test_resume_rejects_incompatible_identity_before_launch(self):
         path = (Path(__file__).resolve().parents[1]
                 / "scripts" / "swept_concurrencies.py")
         spec = importlib.util.spec_from_file_location("resume_helper", path)
@@ -440,11 +460,11 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
                                    return_value="source"), \
                     mock.patch.object(helper, "client_environment_fingerprint",
                                       return_value="client"):
-                missing = helper.missing_schedule(
-                    str(index), "m", "single", str(config), "serving", 2,
-                    [1, 2], "deployment",
-                )
-            self.assertEqual(missing, [(1, 2), (2, 1)])
+                with self.assertRaisesRegex(ValueError, "fresh OUT_DIR"):
+                    helper.missing_schedule(
+                        str(index), "m", "single", str(config), "serving", 2,
+                        [1, 2], "deployment",
+                    )
 
     def test_resume_rejects_a_different_live_deployment(self):
         path = (Path(__file__).resolve().parents[1]

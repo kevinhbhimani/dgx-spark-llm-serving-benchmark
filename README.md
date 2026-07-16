@@ -17,22 +17,42 @@ successful only when the stream ends cleanly with the requested token count.
 
 Run these commands from the repository root.
 
-1. Create and activate a Python environment:
+1. Create and activate an isolated Python 3.12-or-newer environment, then
+   install the exact release dependency closure:
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
+export PYTHONNOUSERSITE=1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.lock
 ```
 
-2. Check the local client tools:
+`requirements.txt` lists the direct client dependencies; `requirements.lock`
+is the authoritative, fully pinned transitive environment for final runs.
+Keep `PYTHONNOUSERSITE=1` set so packages from a user-site installation cannot
+silently enter the benchmark process.
+
+2. Check the locked client environment and local tools:
 
 ```bash
+python scripts/check_environment.py
 python -m bench.run_benchmark --help
 python plot_results.py --help
 python -m unittest discover -s tests -v
 ```
+
+Before touching the GPUs, validate the complete default campaign definition:
+
+```bash
+OUT_DIR=results-steady-exact-v3 PLAN_ONLY=1 scripts/run_job.sh
+```
+
+Plan mode performs no hardware operations. It checks the isolated environment,
+campaign options, model/config matrix, revisions, workload bounds, and expected
+result rectangle. The shipped matrix is 23 model/config combinations times 8
+concurrencies times `FULL_REPEATS` (default 1), or exactly 184 measurement rows
+per complete pass; `FULL_REPEATS=3` yields the full 552-row spread matrix.
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
    Spark node, run this in one terminal:
@@ -91,7 +111,8 @@ from the smoke step.
 6. Plot the sweep:
 
 ```bash
-python plot_results.py --index results/index.csv --out figs --format both
+OUT_DIR="${OUT_DIR:-results}"
+python plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
 ```
 
 ## Repository Layout
@@ -111,6 +132,8 @@ configs/
   experiment.yaml  default full benchmark settings
   models.yaml      model matrix for the multi-model sweep
 scripts/
+  check_environment.py         validate the isolated, fully locked client
+  validate_campaign.py         plan/verify the exact publication result grid
   load_env.sh                 source a repo-local .env for script entrypoints
   connectx_env.sh             shared ConnectX and container settings; loads .env
   verify_connectx.sh          route and latency sanity checks
@@ -126,15 +149,18 @@ scripts/
 plot_results.py               generate PDF/PNG figures from results/index.csv
 tests/                        standard-library regression tests for release paths
 requirements.txt              Python client and plotting dependencies
+requirements.lock             exact direct and transitive release environment
 ```
 
 ## Prerequisites
 
 Client-side requirements:
 
-- Python 3.10 or newer. The validation checks in this workspace used Python
-  3.12, but the code is not tied to that exact version.
-- Python packages from `requirements.txt`.
+- Python 3.12 or newer in a real virtual environment, with user-site packages
+  disabled.
+- The exact direct and transitive packages from `requirements.lock` for final
+  results. Use `requirements.txt` only when intentionally developing or
+  refreshing the lock.
 - Network access from the benchmark client to the vLLM server and its `/metrics`
   endpoint.
 - A Hugging Face tokenizer matching the served model for exact input lengths.
@@ -174,7 +200,8 @@ fields:
 - `model_revision`: exact 40-hex Hugging Face commit used by the server. The
   multi-model wrapper fills this from `configs/models.yaml`.
 - `api_key`: bearer token sent in the `Authorization` header. The vLLM default
-  is usually `EMPTY`.
+  is usually `EMPTY`. Its value is redacted from resolved configurations,
+  summaries, fingerprints, and publication artifacts.
 - `tokenizer`: Hugging Face tokenizer id or local path. Set to `""` only for
   quick approximate checks.
 - `tokenizer_revision`: exact 40-hex tokenizer commit. It defaults to
@@ -186,7 +213,10 @@ fields:
   tokenizer.
 - `buckets`: weighted synthetic workload buckets with `input_len`,
   `output_len`, and `weight`.
-- `trace_path`: optional JSONL trace that replaces `buckets`.
+- `trace_path`: optional JSONL trace that replaces `buckets`. A relative path
+  is resolved from the experiment YAML's directory, and the file's SHA-256 is
+  recorded as `trace_sha256`; changing trace contents therefore changes the
+  experiment identity even when the filename is unchanged.
 - `seed`: random seed for workload ordering and synthetic prompt slices.
 - `balanced_workload`: when true (the default), use smooth weighted scheduling
   for buckets and shuffled without-replacement epochs for traces. This keeps
@@ -224,6 +254,11 @@ fields:
   request-running/waiting, KV-usage, prompt/generation-token, or preemption
   metrics are missing or too sparse. They are enabled in
   `configs/experiment.yaml` and disabled for the smoke config.
+- `require_zero_request_failures` and `min_successful_requests`: reject a
+  measurement point before publication when any request fails or when fewer
+  than the required number of successful requests were collected. The shipped
+  paper config requires zero failures and at least 20 successes per point;
+  the smoke config keeps these gates diagnostic-friendly.
 - `require_provenance`: require exact 40-hex model/tokenizer revisions and a
   64-hex serving-policy fingerprint before any measurement begins. It is
   enabled in `configs/experiment.yaml`, false by default, and intentionally
@@ -241,15 +276,18 @@ fields:
 - `out_dir`: output directory, default `results`.
 - `run_note`: free-form note preserved in the resolved configuration block.
 
-Each full result also records `methodology_version`, the YAML and harness
+Each full result records methodology `steady-exact-v3`, the YAML and harness
 hashes, the git commit, model/tokenizer revisions, a serving-policy
 fingerprint, an experiment fingerprint, and the independent `repeat_id`.
 These fields prevent rows produced by different code, launch settings, or
 measurement definitions from being mistaken for replicates.
-The wrapper's serving fingerprint covers the immutable image and model/tokenizer
-revisions plus material launch choices such as dtype/quantization, context and
-KV budget, prefix/generation policy, compilation-cache policy, and distributed
-layout.
+The wrapper also writes the canonical launch policy as an immutable
+`serving_policy_*.json` artifact. Its serving fingerprint covers the immutable
+image and model/tokenizer revisions plus material launch choices such as
+dtype/quantization, context and KV budget, prefix/generation policy,
+compilation-cache policy, and distributed layout, as well as the recorded
+runtime identity. The benchmark validates that policy against the requested
+point before measurement and links its hash from the summary and index.
 
 Common script environment variables:
 
@@ -317,9 +355,10 @@ export RAY_VERSION=2.53.0
 # Work around a serialization failure in the pinned PyTorch build's
 # AOTAutograd disk cache while leaving graph compilation itself enabled.
 export TORCHINDUCTOR_AUTOGRAD_CACHE=0
-# interpreter used by the sweep scripts; default python3 (a venv's python3
-# when the venv is active)
-# export PYTHON=python3
+# Final campaigns automatically prefer the repo's .venv. Set these explicitly
+# for manually driven commands as well.
+export PYTHON="$PWD/.venv/bin/python"
+export PYTHONNOUSERSITE=1
 ```
 
 `CONTAINER_DNS` affects container DNS only, not host resolution. Leave it empty
@@ -579,9 +618,13 @@ each launch. Readiness requires both the expected `/v1/models` id and a strict
 streaming probe with delta token IDs, matching final usage,
 `finish_reason: length`, and `[DONE]`; an old or merely HTTP-ready server cannot
 pass. The wrapper then runs the concurrency sweep tagged with the model label
-and tears the server down before the next model. Server stdout is teed to
-`OUT_DIR/server_<label>_<config>.log` and passed to the benchmark so exact
-per-worker memory, max-concurrency, and other capacity figures are captured.
+and tears the server down before the next model. Each launch writes a new,
+never-overwritten log named
+`OUT_DIR/server_<label>_<config>_<fingerprint-prefix>_<UTC>_pid<PID>.log` and an
+immutable `OUT_DIR/serving_policy_<label>_<config>_<fingerprint>.json`. The log
+is passed to the benchmark so exact per-worker memory, max-concurrency, and
+other capacity figures are captured; the policy makes the launch inputs and
+runtime identity independently inspectable.
 
 ```bash
 # Fetch the exact model/tokenizer revisions before allocating a server. The
@@ -622,26 +665,65 @@ scripts/start_ray.sh stop                      # on each node when finished
 scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 ```
 
-For the complete unattended campaign, start Ray on Diya and then Hoedus as
-shown above and run this on Diya inside `tmux`:
+### Final unattended campaign
+
+Finalize and commit the benchmark code and configuration before allocating the
+GPUs. The campaign refuses tracked, staged, or untracked changes under the
+fingerprinted benchmark paths (`bench`, `configs`, `scripts`,
+`plot_results.py`, and the requirements files). Choose a fresh output directory
+for methodology `steady-exact-v3`; do not copy rows from an earlier
+methodology or checkout into it.
+
+With the locked virtual environment active, run the hardware-free plan first:
+
+```bash
+export PYTHONNOUSERSITE=1
+export OUT_DIR=results-steady-exact-v3
+PLAN_ONLY=1 scripts/run_job.sh
+```
+
+The default plan must report 23 model/config combinations, 8 concurrencies,
+and 1 repeat: 184 rows. At the configured 30-minute minimum phase duration,
+that is at least 92 sequential point-hours (about 4 days), before model
+launches and automatic boundary extensions. With 7 single-node and 16 dual-node
+model/config combinations, it represents at least 156 GB10-hours of accelerator
+use per pass; this is not “92 GPU-hours.” Extending to the full three-repeat
+matrix (`FULL_REPEATS=3`, 552 rows) triples those figures to 276 sequential
+point-hours (11.5 days) and 468 GB10-hours. Budget additional time for
+canaries, model loads, cache work, all-reduce validation, and slow requests
+that extend phase boundaries. Then start Ray on Diya and Hoedus as shown above
+and run this on Diya inside `tmux`, using the same `OUT_DIR`:
 
 ```bash
 scripts/run_job.sh
 ```
 
-The job validates both caches, records a successful no-SSH Ray all-reduce
-microbenchmark atomically, runs every TP2 and PP2 launch canary, performs the
-three-repeat dual sweeps, and runs single-node last (because single mode replaces
-the Ray head container). Every sweep leg uses `--skip-done`, so rerunning the
-same command fills only compatible gaps. `REPEAT_CONCS` is empty by default;
-set it together with a `REPEAT_TOTAL` greater than `FULL_REPEATS` only when you
-want additional windows at selected concurrencies.
+The job revalidates the clean commit and locked Python environment, records
+`client_environment.json`, validates both caches and the two-node runtime,
+records a successful no-SSH Ray all-reduce microbenchmark atomically, runs every
+TP2 and PP2 launch canary, performs the dual sweeps at `FULL_REPEATS`, and runs
+single-node last (because single mode replaces the Ray head container). A paper
+point is published only with zero failed requests, at least 20 successful
+requests, complete required power coverage, and complete unambiguous vLLM
+metric series. Power and metric samplers must also pass a live preflight before
+the long measurement window starts.
+
+Every sweep leg uses `--skip-done`, so rerunning the same command fills only
+compatible gaps. Resume is deliberately strict: if an existing row for the
+same model/config comes from a different methodology, config, source, client
+environment, or serving policy, the sweep fails before another expensive point
+and tells you to choose a fresh `OUT_DIR`.
+
+`REPEAT_CONCS` is empty by default. Publication results may only add complete
+rectangles: when requesting more repeats, set `REPEAT_CONCS` to the same full
+set as `CONCURRENCIES` and set `REPEAT_TOTAL` greater than `FULL_REPEATS`.
+Partial-concurrency extra repeats are rejected because they would create an
+unbalanced paper matrix.
 
 Run only one campaign against this physical head/container pair at a time. The
 orchestrators take a nonblocking campaign lock and fail if another sweep or
-all-reduce job is already active. Before the first paper point, commit or tag
-the finalized harness and configuration, run the test command from Quick Start,
-and keep the source and YAML unchanged until the campaign is complete.
+all-reduce job is already active. Keep the committed source and YAML unchanged
+until the campaign is complete.
 
 `scripts/predownload.sh` uses the same pinned image, cache mount, model ids, and
 revisions as serving. `CHECK_ONLY=1` uses Hugging Face local-only resolution and
@@ -653,13 +735,34 @@ for every selected model, including the on-the-fly FP8 and distributed paths,
 but writes no benchmark points.
 
 All runs append to one `OUT_DIR/index.csv` tagged by `model_label`, so a single
-plotting invocation compares across models (see Outputs). Use a fresh `OUT_DIR`
-the first time on an upgraded checkout: the index gained columns, and the
-benchmark refuses to append rows to an index whose header does not match, to
-avoid silently misaligning columns. Keep pre-`steady-exact-v2` results in a
-separate directory; do not copy their rows into a new index. For example, set
-`OUT_DIR=results-steady-exact-v2` consistently for canary/server logs, all
-three serving configs, and plotting.
+plotting invocation compares across models (see Outputs). The benchmark also
+refuses an index whose header does not exactly match the current schema. Keep
+pre-`steady-exact-v3` results in separate directories and never copy their rows
+into the new index. Set `OUT_DIR=results-steady-exact-v3` consistently for
+canaries, policies, server logs, all three serving configs, validation, and
+plotting.
+
+`run_job.sh` verifies the exact rectangle before plotting and again afterward,
+when it atomically writes the final artifact manifest. To repeat that final
+fail-closed check explicitly, pass the campaign's final repeat count
+(`FULL_REPEATS`, or `REPEAT_TOTAL` when a repeat rectangle was added):
+
+```bash
+python scripts/validate_campaign.py verify \
+  --models configs/models.yaml \
+  --experiment configs/experiment.yaml \
+  --out-dir "$OUT_DIR" \
+  --concurrencies 1 2 4 8 16 32 64 128 \
+  --repeats 1 \
+  --manifest "$OUT_DIR/campaign_manifest.json"
+```
+
+The verifier requires exactly the planned rows and repeat IDs, validates the
+indexed artifact sizes and SHA-256 digests, provenance consistency, request and
+observability quality, server logs/policies, and the dual-node all-reduce CSV.
+It also seals configs, trace (when used), dependency locks, benchmark/plot
+source, client environment, raw data, telemetry, summaries, logs, policies,
+all-reduce data, index, and figures into `campaign_manifest.json`.
 
 Key environment variables for the multi-model wrapper: `MODELS_YAML` (default
 `configs/models.yaml`), `OUT_DIR`, `BASE_URL`, `POWER_BACKEND`,
@@ -705,6 +808,11 @@ line can contain:
 {"input_len": 512, "max_tokens": 64, "prompt": "optional prompt text"}
 ```
 
+Relative trace paths are resolved relative to the experiment YAML. The harness
+hashes the trace bytes before a run and records `trace_sha256` in the resolved
+configuration, summary, and index, so editing the trace invalidates resume even
+when its path stays the same.
+
 When `use_token_ids` is true, the harness preserves requested lengths by
 building synthetic token-id prompts. When `use_token_ids` is false and a prompt
 is present, the prompt text is sent directly. Trace lines define the request
@@ -721,6 +829,11 @@ Every measurement point writes these files under `out_dir`:
 - `<run_tag>.raw.jsonl`: one JSON record per request, including TTFT, E2E,
   exact delta-token timestamps, final usage count, finish reason, stream-end
   state, inter-token gaps, success state, and error text.
+- `<run_tag>.power.jsonl`: the timestamped raw head and, for dual runs, worker
+  power samples used for window integration. It is written whenever a power
+  backend is active.
+- `<run_tag>.vllm_metrics.jsonl`: timestamped raw values and label sets for the
+  required vLLM Prometheus series whenever metrics scraping is active.
 - `<run_tag>.summary.json`: aggregate metrics, capacity samples, server-side
   token counters, the served model and label, a `server_info` block (capacity
   and launch configuration), optional energy metrics, the full resolved
@@ -733,7 +846,17 @@ Every measurement point writes these files under `out_dir`:
   tagged with `model`, `model_label`, and `repeat_id` and carries the provenance,
   server-side counters, and capacity columns below alongside the client-side
   latency/throughput metrics. The benchmark refuses to append if the existing
-  header is not exactly the current schema.
+  header is not exactly the current schema. It records the path, byte count,
+  and SHA-256 for the raw request data, summary, raw power, raw vLLM metrics,
+  and serving-policy artifact. All point artifacts are fsynced and atomically
+  renamed before the index row can make that point resumable.
+
+Campaign-level files in `OUT_DIR` include immutable `serving_policy_*.json`
+launch records, unique `server_*.log` files, the fingerprinted
+`allreduce_ray_*.csv`, `client_environment.json`, figures and tables under
+`OUT_DIR/figs/`, and the final `campaign_manifest.json`. The manifest is the
+paper bundle's integrity inventory; rerun the verifier after any intentional
+figure regeneration.
 
 When several models were run into one `index.csv` (see Benchmarking Multiple
 Models), `plot_results.py` writes a cross-model `model_comparison` figure and a
@@ -743,20 +866,21 @@ Restrict to one model with `--model <label>`.
 The run tag has this shape:
 
 ```text
-<config_label>_<mode>_<concurrency-or-qps>_r<repeat>_<YYYYmmdd-HHMMSS>
+<config_label>_<mode>_<concurrency-or-qps>_r<repeat>_<YYYYmmdd-HHMMSS>-<nanoseconds>
 ```
 
 When `--model-label` is explicit, as it is in `scripts/run_models.sh`, the run
 tag is prefixed with that label:
 
 ```text
-<model_label>_<config_label>_<mode>_<concurrency-or-qps>_r<repeat>_<YYYYmmdd-HHMMSS>
+<model_label>_<config_label>_<mode>_<concurrency-or-qps>_r<repeat>_<YYYYmmdd-HHMMSS>-<nanoseconds>
 ```
 
 Plot all rows in an index:
 
 ```bash
-python plot_results.py --index results/index.csv --out figs --format both
+OUT_DIR="${OUT_DIR:-results-steady-exact-v3}"
+python plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
 ```
 
 Available formats are `pdf`, `png`, and `both`. The plotting script writes
@@ -765,11 +889,12 @@ reliability, and energy figures when the needed columns are present. Series use
 the colorblind-safe Okabe-Ito palette and are also distinguished by marker and
 line style, so identity never rests on hue alone. Add `--serif` for a Times-like
 body font matching an IEEE paper, and `--table` to also emit a paper-ready
-per-point summary as `figs/summary_table.tex` (booktabs) and
-`figs/summary_table.md`:
+per-point summary as `OUT_DIR/figs/summary_table.tex` (booktabs) and
+`OUT_DIR/figs/summary_table.md`:
 
 ```bash
-python plot_results.py --index results/index.csv --out figs --format both \
+OUT_DIR="${OUT_DIR:-results-steady-exact-v3}"
+python plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both \
   --serif --table
 ```
 
@@ -1031,8 +1156,9 @@ non-paper diagnostic run.
 
 ## Troubleshooting
 
-- `ModuleNotFoundError` for `pandas`, `aiohttp`, or `yaml`: activate the virtual
-  environment and reinstall `requirements.txt`.
+- `ModuleNotFoundError` for `pandas`, `aiohttp`, or `yaml`: activate the Python
+  3.12+ virtual environment, reinstall `requirements.lock`, and rerun
+  `python scripts/check_environment.py` with `PYTHONNOUSERSITE=1`.
 - `Connection refused` or model resolution fails: confirm vLLM is running and
   `curl http://127.0.0.1:8000/v1/models` works from the benchmark client.
 - `CHECK_ONLY=1` or the automatic model-cache preflight reports a missing
@@ -1080,7 +1206,8 @@ non-paper diagnostic run.
   and Ray containers. This disables the problematic disk cache, not graph
   compilation, and is the uniform default for all configs.
 - `run_models.sh` skips a model with a timeout or "launcher exited": that model
-  failed to come up (often OOM). Check `OUT_DIR/server_<label>_<config>.log`;
+  failed to come up (often OOM). Check the newest matching
+  `OUT_DIR/server_<label>_<config>_*.log` (logs are never overwritten);
   lower its `gpu_util` in `configs/models.yaml`, add a `quant`, or move it to the
   dual-node configs if it does not fit on one GB10. The orchestrator continues
   to the next model rather than aborting the whole sweep.
@@ -1149,6 +1276,9 @@ non-paper diagnostic run.
 Useful checks after editing the repository:
 
 ```bash
+export PYTHONNOUSERSITE=1
+python scripts/check_environment.py
+OUT_DIR=results-steady-exact-v3 PLAN_ONLY=1 scripts/run_job.sh
 python -m compileall bench plot_results.py scripts/models_for_config.py
 bash -n scripts/*.sh
 python -m pip check

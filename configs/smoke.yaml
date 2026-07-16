@@ -29,6 +29,8 @@ scrape_vllm_metrics: true
 require_power_data: false
 require_vllm_metrics_data: false
 require_provenance: false
+require_zero_request_failures: false
+min_successful_requests: 1
 
 config_label: "smoke"
 collect_hf_metadata: false
