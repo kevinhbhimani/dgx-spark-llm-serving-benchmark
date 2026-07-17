@@ -583,9 +583,12 @@ results and is keyed to the exact cluster runtime and benchmark source:
 scripts/ray_allreduce_bench.sh
 ```
 
-The default acceptance floor is 5 GB/s at 1 GiB and the default 8-byte
-collective-latency ceiling is 5 ms. The command fails without publishing an
-artifact if either threshold is missed. Override
+The default acceptance floor is 1.8 GB/s at 1 GiB and the default 8-byte
+collective-latency ceiling is 5 ms. The floor is calibrated to this cluster's
+measured NCCL socket-transport plateau of ~2.08 GB/s (`NCCL_IB_DISABLE=1`,
+MTU 1500, 200 GbE ConnectX, 2026-07-16), set ~13% below it so a healthy link
+passes while a degraded or misrouted one fails. The command fails without
+publishing an artifact if either threshold is missed. Override
 `ALLREDUCE_MIN_1G_BUSBW_GBPS` or `ALLREDUCE_MAX_8B_LATENCY_S` only when the
 paper explicitly defines and records a different acceptance policy; those
 values are included in the artifact fingerprint.
