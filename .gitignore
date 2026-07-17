@@ -221,5 +221,4 @@ figs/
 
 .claude/
 
-results/
-results-*/
+results-*/server_*.log

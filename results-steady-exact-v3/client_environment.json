@@ -1,0 +1,629 @@
+{
+  "executable": "/home/kbhimani/dgx-spark-llm-serving-benchmark/.venv/bin/python3",
+  "installed_distributions": [
+    {
+      "name": "aiohappyeyeballs",
+      "normalized_name": "aiohappyeyeballs",
+      "version": "2.6.2"
+    },
+    {
+      "name": "aiohttp",
+      "normalized_name": "aiohttp",
+      "version": "3.14.1"
+    },
+    {
+      "name": "aiosignal",
+      "normalized_name": "aiosignal",
+      "version": "1.4.0"
+    },
+    {
+      "name": "annotated-doc",
+      "normalized_name": "annotated-doc",
+      "version": "0.0.4"
+    },
+    {
+      "name": "anyio",
+      "normalized_name": "anyio",
+      "version": "4.14.1"
+    },
+    {
+      "name": "asttokens",
+      "normalized_name": "asttokens",
+      "version": "3.0.1"
+    },
+    {
+      "name": "attrs",
+      "normalized_name": "attrs",
+      "version": "26.1.0"
+    },
+    {
+      "name": "certifi",
+      "normalized_name": "certifi",
+      "version": "2026.6.17"
+    },
+    {
+      "name": "click",
+      "normalized_name": "click",
+      "version": "8.4.2"
+    },
+    {
+      "name": "comm",
+      "normalized_name": "comm",
+      "version": "0.2.3"
+    },
+    {
+      "name": "contourpy",
+      "normalized_name": "contourpy",
+      "version": "1.3.3"
+    },
+    {
+      "name": "cycler",
+      "normalized_name": "cycler",
+      "version": "0.12.1"
+    },
+    {
+      "name": "debugpy",
+      "normalized_name": "debugpy",
+      "version": "1.8.21"
+    },
+    {
+      "name": "decorator",
+      "normalized_name": "decorator",
+      "version": "5.3.1"
+    },
+    {
+      "name": "executing",
+      "normalized_name": "executing",
+      "version": "2.2.1"
+    },
+    {
+      "name": "filelock",
+      "normalized_name": "filelock",
+      "version": "3.29.4"
+    },
+    {
+      "name": "fonttools",
+      "normalized_name": "fonttools",
+      "version": "4.63.0"
+    },
+    {
+      "name": "frozenlist",
+      "normalized_name": "frozenlist",
+      "version": "1.8.0"
+    },
+    {
+      "name": "fsspec",
+      "normalized_name": "fsspec",
+      "version": "2026.6.0"
+    },
+    {
+      "name": "h11",
+      "normalized_name": "h11",
+      "version": "0.16.0"
+    },
+    {
+      "name": "hf-xet",
+      "normalized_name": "hf-xet",
+      "version": "1.5.1"
+    },
+    {
+      "name": "httpcore",
+      "normalized_name": "httpcore",
+      "version": "1.0.9"
+    },
+    {
+      "name": "httpx",
+      "normalized_name": "httpx",
+      "version": "0.28.1"
+    },
+    {
+      "name": "huggingface_hub",
+      "normalized_name": "huggingface-hub",
+      "version": "1.21.0"
+    },
+    {
+      "name": "idna",
+      "normalized_name": "idna",
+      "version": "3.18"
+    },
+    {
+      "name": "ipykernel",
+      "normalized_name": "ipykernel",
+      "version": "7.3.0"
+    },
+    {
+      "name": "ipython",
+      "normalized_name": "ipython",
+      "version": "9.15.0"
+    },
+    {
+      "name": "ipython_pygments_lexers",
+      "normalized_name": "ipython-pygments-lexers",
+      "version": "1.1.1"
+    },
+    {
+      "name": "jedi",
+      "normalized_name": "jedi",
+      "version": "0.20.0"
+    },
+    {
+      "name": "jupyter_client",
+      "normalized_name": "jupyter-client",
+      "version": "8.9.1"
+    },
+    {
+      "name": "jupyter_core",
+      "normalized_name": "jupyter-core",
+      "version": "5.9.1"
+    },
+    {
+      "name": "kiwisolver",
+      "normalized_name": "kiwisolver",
+      "version": "1.5.0"
+    },
+    {
+      "name": "markdown-it-py",
+      "normalized_name": "markdown-it-py",
+      "version": "4.2.0"
+    },
+    {
+      "name": "matplotlib",
+      "normalized_name": "matplotlib",
+      "version": "3.11.0"
+    },
+    {
+      "name": "matplotlib-inline",
+      "normalized_name": "matplotlib-inline",
+      "version": "0.2.2"
+    },
+    {
+      "name": "mdurl",
+      "normalized_name": "mdurl",
+      "version": "0.1.2"
+    },
+    {
+      "name": "multidict",
+      "normalized_name": "multidict",
+      "version": "6.7.1"
+    },
+    {
+      "name": "nest-asyncio2",
+      "normalized_name": "nest-asyncio2",
+      "version": "1.7.2"
+    },
+    {
+      "name": "numpy",
+      "normalized_name": "numpy",
+      "version": "2.5.0"
+    },
+    {
+      "name": "packaging",
+      "normalized_name": "packaging",
+      "version": "26.2"
+    },
+    {
+      "name": "pandas",
+      "normalized_name": "pandas",
+      "version": "3.0.3"
+    },
+    {
+      "name": "parso",
+      "normalized_name": "parso",
+      "version": "0.8.7"
+    },
+    {
+      "name": "pexpect",
+      "normalized_name": "pexpect",
+      "version": "4.9.0"
+    },
+    {
+      "name": "pillow",
+      "normalized_name": "pillow",
+      "version": "12.2.0"
+    },
+    {
+      "name": "pip",
+      "normalized_name": "pip",
+      "version": "26.1.2"
+    },
+    {
+      "name": "platformdirs",
+      "normalized_name": "platformdirs",
+      "version": "4.10.0"
+    },
+    {
+      "name": "prompt_toolkit",
+      "normalized_name": "prompt-toolkit",
+      "version": "3.0.52"
+    },
+    {
+      "name": "propcache",
+      "normalized_name": "propcache",
+      "version": "0.5.2"
+    },
+    {
+      "name": "psutil",
+      "normalized_name": "psutil",
+      "version": "7.2.2"
+    },
+    {
+      "name": "ptyprocess",
+      "normalized_name": "ptyprocess",
+      "version": "0.7.0"
+    },
+    {
+      "name": "pure_eval",
+      "normalized_name": "pure-eval",
+      "version": "0.2.3"
+    },
+    {
+      "name": "Pygments",
+      "normalized_name": "pygments",
+      "version": "2.20.0"
+    },
+    {
+      "name": "pyparsing",
+      "normalized_name": "pyparsing",
+      "version": "3.3.2"
+    },
+    {
+      "name": "python-dateutil",
+      "normalized_name": "python-dateutil",
+      "version": "2.9.0.post0"
+    },
+    {
+      "name": "PyYAML",
+      "normalized_name": "pyyaml",
+      "version": "6.0.3"
+    },
+    {
+      "name": "pyzmq",
+      "normalized_name": "pyzmq",
+      "version": "27.1.0"
+    },
+    {
+      "name": "regex",
+      "normalized_name": "regex",
+      "version": "2026.6.28"
+    },
+    {
+      "name": "rich",
+      "normalized_name": "rich",
+      "version": "15.0.0"
+    },
+    {
+      "name": "safetensors",
+      "normalized_name": "safetensors",
+      "version": "0.8.0"
+    },
+    {
+      "name": "shellingham",
+      "normalized_name": "shellingham",
+      "version": "1.5.4"
+    },
+    {
+      "name": "six",
+      "normalized_name": "six",
+      "version": "1.17.0"
+    },
+    {
+      "name": "stack-data",
+      "normalized_name": "stack-data",
+      "version": "0.6.3"
+    },
+    {
+      "name": "tokenizers",
+      "normalized_name": "tokenizers",
+      "version": "0.22.2"
+    },
+    {
+      "name": "tornado",
+      "normalized_name": "tornado",
+      "version": "6.5.7"
+    },
+    {
+      "name": "tqdm",
+      "normalized_name": "tqdm",
+      "version": "4.68.3"
+    },
+    {
+      "name": "traitlets",
+      "normalized_name": "traitlets",
+      "version": "5.15.1"
+    },
+    {
+      "name": "transformers",
+      "normalized_name": "transformers",
+      "version": "5.12.1"
+    },
+    {
+      "name": "typer",
+      "normalized_name": "typer",
+      "version": "0.25.1"
+    },
+    {
+      "name": "typing_extensions",
+      "normalized_name": "typing-extensions",
+      "version": "4.15.0"
+    },
+    {
+      "name": "wcwidth",
+      "normalized_name": "wcwidth",
+      "version": "0.8.2"
+    },
+    {
+      "name": "yarl",
+      "normalized_name": "yarl",
+      "version": "1.24.2"
+    }
+  ],
+  "installed_distributions_sha256": "b9b7e79f043ef74a5799d4da799513c95c5f22606ef36ee6840ff9a44702b810",
+  "locked_distributions": [
+    {
+      "name": "aiohappyeyeballs",
+      "normalized_name": "aiohappyeyeballs",
+      "version": "2.6.2"
+    },
+    {
+      "name": "aiohttp",
+      "normalized_name": "aiohttp",
+      "version": "3.14.1"
+    },
+    {
+      "name": "aiosignal",
+      "normalized_name": "aiosignal",
+      "version": "1.4.0"
+    },
+    {
+      "name": "annotated-doc",
+      "normalized_name": "annotated-doc",
+      "version": "0.0.4"
+    },
+    {
+      "name": "anyio",
+      "normalized_name": "anyio",
+      "version": "4.14.1"
+    },
+    {
+      "name": "attrs",
+      "normalized_name": "attrs",
+      "version": "26.1.0"
+    },
+    {
+      "name": "certifi",
+      "normalized_name": "certifi",
+      "version": "2026.6.17"
+    },
+    {
+      "name": "click",
+      "normalized_name": "click",
+      "version": "8.4.2"
+    },
+    {
+      "name": "contourpy",
+      "normalized_name": "contourpy",
+      "version": "1.3.3"
+    },
+    {
+      "name": "cycler",
+      "normalized_name": "cycler",
+      "version": "0.12.1"
+    },
+    {
+      "name": "filelock",
+      "normalized_name": "filelock",
+      "version": "3.29.4"
+    },
+    {
+      "name": "fonttools",
+      "normalized_name": "fonttools",
+      "version": "4.63.0"
+    },
+    {
+      "name": "frozenlist",
+      "normalized_name": "frozenlist",
+      "version": "1.8.0"
+    },
+    {
+      "name": "fsspec",
+      "normalized_name": "fsspec",
+      "version": "2026.6.0"
+    },
+    {
+      "name": "h11",
+      "normalized_name": "h11",
+      "version": "0.16.0"
+    },
+    {
+      "name": "hf-xet",
+      "normalized_name": "hf-xet",
+      "version": "1.5.1"
+    },
+    {
+      "name": "httpcore",
+      "normalized_name": "httpcore",
+      "version": "1.0.9"
+    },
+    {
+      "name": "httpx",
+      "normalized_name": "httpx",
+      "version": "0.28.1"
+    },
+    {
+      "name": "huggingface_hub",
+      "normalized_name": "huggingface-hub",
+      "version": "1.21.0"
+    },
+    {
+      "name": "idna",
+      "normalized_name": "idna",
+      "version": "3.18"
+    },
+    {
+      "name": "kiwisolver",
+      "normalized_name": "kiwisolver",
+      "version": "1.5.0"
+    },
+    {
+      "name": "markdown-it-py",
+      "normalized_name": "markdown-it-py",
+      "version": "4.2.0"
+    },
+    {
+      "name": "matplotlib",
+      "normalized_name": "matplotlib",
+      "version": "3.11.0"
+    },
+    {
+      "name": "mdurl",
+      "normalized_name": "mdurl",
+      "version": "0.1.2"
+    },
+    {
+      "name": "multidict",
+      "normalized_name": "multidict",
+      "version": "6.7.1"
+    },
+    {
+      "name": "numpy",
+      "normalized_name": "numpy",
+      "version": "2.5.0"
+    },
+    {
+      "name": "packaging",
+      "normalized_name": "packaging",
+      "version": "26.2"
+    },
+    {
+      "name": "pandas",
+      "normalized_name": "pandas",
+      "version": "3.0.3"
+    },
+    {
+      "name": "pillow",
+      "normalized_name": "pillow",
+      "version": "12.2.0"
+    },
+    {
+      "name": "propcache",
+      "normalized_name": "propcache",
+      "version": "0.5.2"
+    },
+    {
+      "name": "Pygments",
+      "normalized_name": "pygments",
+      "version": "2.20.0"
+    },
+    {
+      "name": "pyparsing",
+      "normalized_name": "pyparsing",
+      "version": "3.3.2"
+    },
+    {
+      "name": "python-dateutil",
+      "normalized_name": "python-dateutil",
+      "version": "2.9.0.post0"
+    },
+    {
+      "name": "PyYAML",
+      "normalized_name": "pyyaml",
+      "version": "6.0.3"
+    },
+    {
+      "name": "regex",
+      "normalized_name": "regex",
+      "version": "2026.6.28"
+    },
+    {
+      "name": "rich",
+      "normalized_name": "rich",
+      "version": "15.0.0"
+    },
+    {
+      "name": "safetensors",
+      "normalized_name": "safetensors",
+      "version": "0.8.0"
+    },
+    {
+      "name": "shellingham",
+      "normalized_name": "shellingham",
+      "version": "1.5.4"
+    },
+    {
+      "name": "six",
+      "normalized_name": "six",
+      "version": "1.17.0"
+    },
+    {
+      "name": "tokenizers",
+      "normalized_name": "tokenizers",
+      "version": "0.22.2"
+    },
+    {
+      "name": "tqdm",
+      "normalized_name": "tqdm",
+      "version": "4.68.3"
+    },
+    {
+      "name": "transformers",
+      "normalized_name": "transformers",
+      "version": "5.12.1"
+    },
+    {
+      "name": "typer",
+      "normalized_name": "typer",
+      "version": "0.25.1"
+    },
+    {
+      "name": "typing_extensions",
+      "normalized_name": "typing-extensions",
+      "version": "4.15.0"
+    },
+    {
+      "name": "yarl",
+      "normalized_name": "yarl",
+      "version": "1.24.2"
+    }
+  ],
+  "pip_check": {
+    "command": [
+      "/home/kbhimani/dgx-spark-llm-serving-benchmark/.venv/bin/python3",
+      "-I",
+      "-m",
+      "pip",
+      "check"
+    ],
+    "ok": true,
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "No broken requirements found."
+  },
+  "platform": {
+    "machine": "aarch64",
+    "platform": "Linux-6.11.0-1014-nvidia-aarch64-with-glibc2.39",
+    "release": "6.11.0-1014-nvidia",
+    "system": "Linux"
+  },
+  "python": {
+    "implementation": "CPython",
+    "version": "3.12.3",
+    "version_info": {
+      "major": 3,
+      "micro": 3,
+      "minor": 12,
+      "releaselevel": "final",
+      "serial": 0
+    }
+  },
+  "requirements_lock": {
+    "path": "/home/kbhimani/dgx-spark-llm-serving-benchmark/requirements.lock",
+    "sha256": "fa60328a2aeafa2938c85405c91636f3f4f771e039c2bfa7ad00f0ef493f523f"
+  },
+  "schema_version": 1,
+  "virtual_environment": {
+    "base_prefix": "/usr",
+    "prefix": "/home/kbhimani/dgx-spark-llm-serving-benchmark/.venv",
+    "real": true,
+    "user_site_enabled": false
+  }
+}
