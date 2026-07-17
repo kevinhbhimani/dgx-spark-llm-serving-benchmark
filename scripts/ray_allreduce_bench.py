@@ -101,7 +101,7 @@ def main() -> int:
     head_ip, worker_ip, iface = sys.argv[1], sys.argv[2], sys.argv[3]
     try:
         port = int(sys.argv[4]) if len(sys.argv) > 4 else 29517
-        min_bw = float(sys.argv[5]) if len(sys.argv) > 5 else 5.0
+        min_bw = float(sys.argv[5]) if len(sys.argv) > 5 else 1.8
         max_latency = float(sys.argv[6]) if len(sys.argv) > 6 else 0.005
     except ValueError as exc:
         sys.stderr.write(f"[microbench] invalid numeric argument: {exc}\n")

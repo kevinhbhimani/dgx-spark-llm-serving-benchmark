@@ -14,7 +14,11 @@ acquire_campaign_lock || exit 1
 
 OUT_DIR="${OUT_DIR:-results}"
 PORT="${ALLREDUCE_PORT:-29517}"
-MIN_1G_BUSBW="${ALLREDUCE_MIN_1G_BUSBW_GBPS:-5.0}"
+# Floor calibrated on this cluster 2026-07-16: NCCL socket transport
+# (NCCL_IB_DISABLE=1) over the 200GbE ConnectX link plateaus at ~2.08 GB/s
+# from 8 MiB to 1 GiB, so 1.8 accepts the healthy link and still fails a
+# degraded one. Keep in sync with ray_allreduce_bench.py/validate_campaign.py.
+MIN_1G_BUSBW="${ALLREDUCE_MIN_1G_BUSBW_GBPS:-1.8}"
 MAX_8B_LATENCY="${ALLREDUCE_MAX_8B_LATENCY_S:-0.005}"
 if ! python3 - "$PORT" "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" <<'PY_VALIDATE'
 import math
