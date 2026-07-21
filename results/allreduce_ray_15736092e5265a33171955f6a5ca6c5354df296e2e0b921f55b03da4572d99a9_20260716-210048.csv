@@ -27,8 +27,3 @@ bytes,avg_s,min_s,algbw_GBps,busbw_GBps
 268435456,1.361190e-01,1.330785e-01,1.972,1.972
 536870912,2.700181e-01,2.674010e-01,1.988,1.988
 1073741824,5.395240e-01,5.354379e-01,1.990,1.990
-[36m(_worker pid=1357)[0m NCCL version 2.29.7+cuda13.2
-[36m(_worker pid=1357)[0m 
-[36m(_worker pid=1357)[0m [2026-07-17 01:00:49] Diya:1357:1357 [0] misc/ibvwrap.cc:173 NCCL WARN lib wrapper not initialized.
-[36m(_worker pid=4064, ip=10.10.10.2)[0m 
-[36m(_worker pid=4064, ip=10.10.10.2)[0m [2026-07-17 01:00:49] Hoedus:4064:4064 [0] misc/ibvwrap.cc:173 NCCL WARN lib wrapper not initialized.
