@@ -1,0 +1,521 @@
+{
+  "artifacts": {
+    "power_samples": {
+      "bytes": 1246335,
+      "path": "nemotron3-super-120b-a12b-nvfp4_single_closed_32_r1_20260720-203013-760760436.power.jsonl",
+      "sha256": "fafe573a926f67142fabdc5f59b12ef344c428b5525285f2cd05ad2ee4e190f6"
+    },
+    "raw": {
+      "bytes": 7001216,
+      "path": "nemotron3-super-120b-a12b-nvfp4_single_closed_32_r1_20260720-203013-760760436.raw.jsonl",
+      "sha256": "1230c8dca609afeec8fecb9ece531f2d313286cb1dd99384acdcc408fb6256b5"
+    },
+    "serving_policy": {
+      "bytes": 1808,
+      "path": "serving_policy_nemotron3-super-120b-a12b-nvfp4_single_3c52c4e89de26384ad168484df871f79e961850bb8e2286558901ddc069e1b53.json",
+      "sha256": "24e16d4497222a203c4bb534c213caf9ff13afa73fa89ceb37b9d95614e899f9"
+    },
+    "vllm_samples": {
+      "bytes": 3673961,
+      "path": "nemotron3-super-120b-a12b-nvfp4_single_closed_32_r1_20260720-203013-760760436.vllm_metrics.jsonl",
+      "sha256": "b12e574cf1daf146b36f21aeecb3a44b7fd15d39b77d31ab976be084f4163c75"
+    }
+  },
+  "avg_input_tokens": 2661.551656920078,
+  "avg_requested_output_tokens": 255.7504873294347,
+  "client_environment": {
+    "PyYAML": "6.0.3",
+    "aiohttp": "3.14.1",
+    "huggingface-hub": "1.21.0",
+    "installed_distributions": [
+      "aiohappyeyeballs==2.6.2",
+      "aiohttp==3.14.1",
+      "aiosignal==1.4.0",
+      "annotated-doc==0.0.4",
+      "anyio==4.14.1",
+      "asttokens==3.0.1",
+      "attrs==26.1.0",
+      "certifi==2026.6.17",
+      "click==8.4.2",
+      "comm==0.2.3",
+      "contourpy==1.3.3",
+      "cycler==0.12.1",
+      "debugpy==1.8.21",
+      "decorator==5.3.1",
+      "executing==2.2.1",
+      "filelock==3.29.4",
+      "fonttools==4.63.0",
+      "frozenlist==1.8.0",
+      "fsspec==2026.6.0",
+      "h11==0.16.0",
+      "hf-xet==1.5.1",
+      "httpcore==1.0.9",
+      "httpx==0.28.1",
+      "huggingface-hub==1.21.0",
+      "idna==3.18",
+      "ipykernel==7.3.0",
+      "ipython==9.15.0",
+      "ipython-pygments-lexers==1.1.1",
+      "jedi==0.20.0",
+      "jupyter-client==8.9.1",
+      "jupyter-core==5.9.1",
+      "kiwisolver==1.5.0",
+      "markdown-it-py==4.2.0",
+      "matplotlib==3.11.0",
+      "matplotlib-inline==0.2.2",
+      "mdurl==0.1.2",
+      "multidict==6.7.1",
+      "nest-asyncio2==1.7.2",
+      "numpy==2.5.0",
+      "packaging==26.2",
+      "pandas==3.0.3",
+      "parso==0.8.7",
+      "pexpect==4.9.0",
+      "pillow==12.2.0",
+      "pip==26.1.2",
+      "platformdirs==4.10.0",
+      "prompt-toolkit==3.0.52",
+      "propcache==0.5.2",
+      "psutil==7.2.2",
+      "ptyprocess==0.7.0",
+      "pure-eval==0.2.3",
+      "pygments==2.20.0",
+      "pyparsing==3.3.2",
+      "python-dateutil==2.9.0.post0",
+      "pyyaml==6.0.3",
+      "pyzmq==27.1.0",
+      "regex==2026.6.28",
+      "rich==15.0.0",
+      "safetensors==0.8.0",
+      "shellingham==1.5.4",
+      "six==1.17.0",
+      "stack-data==0.6.3",
+      "tokenizers==0.22.2",
+      "tornado==6.5.7",
+      "tqdm==4.68.3",
+      "traitlets==5.15.1",
+      "transformers==5.12.1",
+      "typer==0.25.1",
+      "typing-extensions==4.15.0",
+      "wcwidth==0.8.2",
+      "yarl==1.24.2"
+    ],
+    "machine": "aarch64",
+    "matplotlib": "3.11.0",
+    "numpy": "2.5.0",
+    "pandas": "3.0.3",
+    "platform": "Linux-6.11.0-1014-nvidia-aarch64-with-glibc2.39",
+    "python_implementation": "CPython",
+    "python_version": "3.12.3",
+    "tokenizers": "0.22.2",
+    "transformers": "5.12.1",
+    "user_site_enabled": false,
+    "virtual_environment": true
+  },
+  "client_environment_sha256": "28d3b6f5b9ee58fa9c9bd4654a5e50a35c4e40ec46dd8d1bf1ad59f6b0aaaa13",
+  "completed_output_tokens": 130560,
+  "completed_token_throughput_tps": 87.04,
+  "concurrency": 32,
+  "config": {
+    "api_key": "<redacted>",
+    "balanced_workload": true,
+    "base_url": "http://127.0.0.1:8000",
+    "buckets": [
+      {
+        "input_len": 128,
+        "output_len": 128,
+        "weight": 1.0
+      },
+      {
+        "input_len": 1024,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 4096,
+        "output_len": 256,
+        "weight": 1.0
+      },
+      {
+        "input_len": 8192,
+        "output_len": 512,
+        "weight": 0.5
+      }
+    ],
+    "collect_hf_metadata": false,
+    "concurrency": 32,
+    "config_label": "single",
+    "cooldown_s": 180.0,
+    "deployment_fingerprint": "f20255bf046539b87aff78e2bc197eccb56dcaabb75c2b4faa381e613b42575a",
+    "endpoint": "/v1/completions",
+    "expected_concurrencies": "1 2 4 8 16 32 64 128",
+    "head_node_ip": "",
+    "itl_slo_s": 0.1,
+    "itl_slo_s2": 0.2,
+    "max_inflight": 512,
+    "measure_s": 1500.0,
+    "min_successful_requests": 20,
+    "mode": "closed",
+    "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "model_label": "nemotron3-super-120b-a12b-nvfp4",
+    "model_revision": "4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6",
+    "out_dir": "results-steady-exact-v3",
+    "power_backend": "nvidia_smi",
+    "power_interval_ms": 100,
+    "power_rails": [],
+    "power_sysfs_path": "",
+    "qps": 4.0,
+    "repeat_count": 1,
+    "repeat_id": 1,
+    "request_timeout_s": 14400.0,
+    "require_power_data": true,
+    "require_provenance": true,
+    "require_vllm_metrics_data": true,
+    "require_zero_request_failures": true,
+    "run_note": "",
+    "scrape_vllm_metrics": true,
+    "seed": 1234,
+    "server_log": "results-steady-exact-v3/server_nemotron3-super-120b-a12b-nvfp4_single_3c52c4e89de26384_20260720T214728Z_pid1777922.log",
+    "serving_fingerprint": "3c52c4e89de26384ad168484df871f79e961850bb8e2286558901ddc069e1b53",
+    "tokenizer": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "tokenizer_revision": "4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6",
+    "trace_path": "",
+    "trace_sha256": "",
+    "trust_remote_code": true,
+    "ttft_slo_s": 3.0,
+    "use_token_ids": true,
+    "warmup_s": 120.0,
+    "worker_power_container": "",
+    "worker_power_node_ip": ""
+  },
+  "config_file_sha256": "d6b5ae735bbfdde0d29cef52e01136c10865ebf4ee702c414b218237a61096bb",
+  "config_label": "single",
+  "configured_warmup_s": 120.0,
+  "cooldown_s": 180.0,
+  "deployment_fingerprint": "f20255bf046539b87aff78e2bc197eccb56dcaabb75c2b4faa381e613b42575a",
+  "drain_s": 55.99479960743338,
+  "e2e_s": {
+    "mean": 92.6174506059935,
+    "p50": 92.57080185366794,
+    "p90": 183.58142135739325,
+    "p95": 184.57207901654763,
+    "p99": 186.25081323323772
+  },
+  "energy": {
+    "energy_j": 96982.50323579561,
+    "energy_per_token_j": 0.7283155845283539,
+    "mean_power_w": 64.65500215719707,
+    "mean_power_w_head": 64.65500215719707,
+    "mean_power_w_worker": null,
+    "power_max_gap_s_head": 0.10264889104291797,
+    "power_max_gap_s_worker": null,
+    "power_nodes": 1,
+    "power_samples_head": 14912,
+    "power_samples_worker": 0,
+    "power_scope": "gpu_devices",
+    "tokens_per_watt": 1.3730311711613101
+  },
+  "expected_concurrencies": "1 2 4 8 16 32 64 128",
+  "experiment_fingerprint": "c5a0238ad9791f7b86858ba8df86f59364a0c708e1ee5fde4e140af3ecc6aad7",
+  "goodput_itl2_rps": 0.0,
+  "goodput_rps": 0.0,
+  "harness_git_commit": "e4c7a4b179fa44ced3a09eb6829e7d3fdb887662",
+  "harness_source_sha256": "3bd05100509e7ed8b142cd55f90ce371489af4ae5c3710321f141a0fc14c8079",
+  "itl_s": {
+    "mean": 0.34977110147085844,
+    "p50": 0.24083829578012228,
+    "p90": 0.8580672243610039,
+    "p95": 0.95102161699906,
+    "p99": 0.9773964327666909
+  },
+  "load_extension_s": 11.603078986983746,
+  "mean_itl_s": {
+    "mean": 0.34928921081633874,
+    "p50": 0.34844603148270764,
+    "p90": 0.35567115179390885,
+    "p95": 0.35967066631600214,
+    "p99": 0.3648418166351815
+  },
+  "measure_s": 1500.0,
+  "methodology_version": "steady-exact-v3",
+  "mode": "closed",
+  "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+  "model_label": "nemotron3-super-120b-a12b-nvfp4",
+  "output_token_throughput_tps": 88.77333333333333,
+  "repeat_count": 1,
+  "repeat_id": 1,
+  "request_throughput_rps": 0.342,
+  "requests_completed": 513,
+  "requests_completed_in_window": 512,
+  "requests_failed": 0,
+  "requests_started": 513,
+  "requests_started_and_completed_in_window": 481,
+  "run_tag": "nemotron3-super-120b-a12b-nvfp4_single_closed_32_r1_20260720-203013-760760436",
+  "server_info": {
+    "block_size": 8320,
+    "enable_prefix_caching": "False",
+    "gpu_blocks": 757,
+    "gpu_memory_utilization": 0.8,
+    "hybrid_cache": true,
+    "kv_cache_dtype": "fp8_e4m3",
+    "mamba_page_size_padded": "4259840",
+    "max_concurrency": 108.14,
+    "max_model_len": 8704,
+    "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "total_kv_tokens": 1048320,
+    "total_kv_tokens_source": "vllm_startup_log",
+    "vllm_version": "0.19.0+6bc3197f.nv26.04.48680843",
+    "worker_kv_cache_gb": 24.04,
+    "worker_weight_gb": 69.54
+  },
+  "serving_fingerprint": "3c52c4e89de26384ad168484df871f79e961850bb8e2286558901ddc069e1b53",
+  "serving_policy": {
+    "cluster_runtime": "06e3ab5d0f90d394cf33d2b19f47b3174c3ba1083942e0d6eb97e8386c609213",
+    "config": "single",
+    "connectx_iface": "enp1s0f0np0",
+    "dtype": "auto",
+    "generation_config": "vllm",
+    "gpu_util": "0.80",
+    "head_ip": "10.10.10.1",
+    "hf_hub_offline": "1",
+    "image": "nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27",
+    "max_model_len": "8704",
+    "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "nccl_ib_disable": "1",
+    "power_backend": "nvidia_smi",
+    "prefix_caching": "0",
+    "quant": "",
+    "ray_version": "2.53.0",
+    "revision": "4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6",
+    "runtime_facts": {
+      "gpus": [
+        {
+          "application_graphics_clock_mhz": "2418",
+          "compute_capability": "12.1",
+          "default_application_graphics_clock_mhz": "2418",
+          "driver": "580.82.09",
+          "gpu_name": "NVIDIA GB10",
+          "gpu_uuid": "GPU-fb2307eb-1621-534e-26fa-bb63647fda6d",
+          "max_graphics_clock_mhz": "3003",
+          "power_limit_w": "[N/A]"
+        }
+      ],
+      "query_fields": [
+        "name",
+        "uuid",
+        "driver_version",
+        "power.limit",
+        "compute_cap",
+        "clocks.max.graphics",
+        "clocks.applications.graphics",
+        "clocks.default_applications.graphics"
+      ],
+      "source": "host-nvidia-smi"
+    },
+    "runtime_facts_sha256": "06e3ab5d0f90d394cf33d2b19f47b3174c3ba1083942e0d6eb97e8386c609213",
+    "runtime_scope": "single-host",
+    "schema": "serving-v1",
+    "serving_fingerprint": "3c52c4e89de26384ad168484df871f79e961850bb8e2286558901ddc069e1b53",
+    "tokenizer": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+    "tokenizer_revision": "4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6",
+    "torchinductor_autograd_cache": "0",
+    "trust_remote_code": "1",
+    "worker_ip": "10.10.10.2"
+  },
+  "slo": {
+    "itl_s": 0.1,
+    "itl_s2": 0.2,
+    "ttft_s": 3.0
+  },
+  "target_qps": null,
+  "total_output_tokens": 133160,
+  "trace_sha256": "",
+  "ttft_s": {
+    "mean": 3.513049083583957,
+    "p50": 2.993066684808582,
+    "p90": 5.797441261913628,
+    "p95": 6.630673897266388,
+    "p99": 6.883332123514265
+  },
+  "vllm_metrics": {
+    "vllm:generation_tokens_total": {
+      "delta": 133097.0,
+      "max_gap_s": 1.0220595924183726,
+      "rate_per_s": 88.71868736157793,
+      "sample_count": 1489,
+      "sample_span_s": 1500.2138101700693,
+      "series_count": 1
+    },
+    "vllm:kv_cache_usage_perc": {
+      "max": 0.26455026455026454,
+      "max_gap_s": 1.0220595924183726,
+      "mean": 0.25735602634124144,
+      "min": 0.23809523809523814,
+      "sample_count": 1488,
+      "sample_span_s": 1499.2055311640725,
+      "series_count": 1
+    },
+    "vllm:num_preemptions_total": {
+      "delta": 0.0,
+      "max_gap_s": 1.0220595924183726,
+      "rate_per_s": 0.0,
+      "sample_count": 1489,
+      "sample_span_s": 1500.2138101700693,
+      "series_count": 1
+    },
+    "vllm:num_requests_running": {
+      "max": 32.0,
+      "max_gap_s": 1.0220595924183726,
+      "mean": 31.327956989247312,
+      "min": 29.0,
+      "sample_count": 1488,
+      "sample_span_s": 1499.2055311640725,
+      "series_count": 1
+    },
+    "vllm:num_requests_waiting": {
+      "max": 2.0,
+      "max_gap_s": 1.0220595924183726,
+      "mean": 0.2560483870967742,
+      "min": 0.0,
+      "sample_count": 1488,
+      "sample_span_s": 1499.2055311640725,
+      "series_count": 1
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "delta": 0.0,
+      "max_gap_s": 1.0220595924183726,
+      "rate_per_s": 0.0,
+      "sample_count": 1489,
+      "sample_span_s": 1500.2138101700693,
+      "series_count": 1
+    },
+    "vllm:prompt_tokens_total": {
+      "delta": 1369472.0,
+      "max_gap_s": 1.0220595924183726,
+      "rate_per_s": 912.8512154175891,
+      "sample_count": 1489,
+      "sample_span_s": 1500.2138101700693,
+      "series_count": 1
+    }
+  },
+  "warmup_extension_s": 97.08810240589082,
+  "warmup_s": 217.08810240589082,
+  "window_end_perf": 2360315.716955255,
+  "window_policy": "throughput: tokens received in window (all requests); latency/goodput: requests started in window, tracked to completion",
+  "window_start_perf": 2358815.716955255,
+  "window_start_unix": 1784594031.0152082,
+  "workload_buckets": [
+    {
+      "e2e_s": {
+        "mean": 46.316827097340635,
+        "p50": 46.0028942450881,
+        "p90": 47.89912910312414,
+        "p95": 48.22496339501813,
+        "p99": 48.92376918766647
+      },
+      "input_len": 128,
+      "mean_itl_s": {
+        "mean": 0.3466043851618288,
+        "p50": 0.34492416488828037,
+        "p90": 0.35452350220151657,
+        "p95": 0.36001488540292254,
+        "p99": 0.3759298111757952
+      },
+      "output_len": 128,
+      "requests_completed": 147,
+      "requests_failed": 0,
+      "requests_started": 147,
+      "ttft_s": {
+        "mean": 2.2980277127503945,
+        "p50": 1.8355098012834787,
+        "p90": 4.051625039614737,
+        "p95": 4.054988996870816,
+        "p99": 4.0596098234690725
+      }
+    },
+    {
+      "e2e_s": {
+        "mean": 92.24919857938147,
+        "p50": 91.67412937805057,
+        "p90": 94.62182080699131,
+        "p95": 94.93352088565007,
+        "p99": 95.46203856920823
+      },
+      "input_len": 1024,
+      "mean_itl_s": {
+        "mean": 0.3496429725066379,
+        "p50": 0.3492824212118399,
+        "p90": 0.353388026164589,
+        "p95": 0.35423111031452814,
+        "p99": 0.36058861285743904
+      },
+      "output_len": 256,
+      "requests_completed": 147,
+      "requests_failed": 0,
+      "requests_started": 147,
+      "ttft_s": {
+        "mean": 3.0901988598860193,
+        "p50": 1.5504946149885654,
+        "p90": 5.678067692834884,
+        "p95": 5.686824970506131,
+        "p99": 5.793353470843285
+      }
+    },
+    {
+      "e2e_s": {
+        "mean": 93.68683000422428,
+        "p50": 93.71198081597686,
+        "p90": 95.341859259177,
+        "p95": 95.49401596188545,
+        "p99": 96.02914392822422
+      },
+      "input_len": 4096,
+      "mean_itl_s": {
+        "mean": 0.35130289432043854,
+        "p50": 0.3500031759003725,
+        "p90": 0.3593892761223091,
+        "p95": 0.36197620998547575,
+        "p99": 0.36399552226632687
+      },
+      "output_len": 256,
+      "requests_completed": 146,
+      "requests_failed": 0,
+      "requests_started": 146,
+      "ttft_s": {
+        "mean": 4.104545405137748,
+        "p50": 3.065870401682332,
+        "p90": 6.7436048064846545,
+        "p95": 6.878377051558346,
+        "p99": 6.890738588944077
+      }
+    },
+    {
+      "e2e_s": {
+        "mean": 184.45574254492834,
+        "p50": 184.20999607490376,
+        "p90": 186.07249799473212,
+        "p95": 186.7303303744644,
+        "p99": 187.75001582162454
+      },
+      "input_len": 8192,
+      "mean_itl_s": {
+        "mean": 0.34995590411963245,
+        "p50": 0.34936009494700776,
+        "p90": 0.3530753094334804,
+        "p95": 0.35433463052301545,
+        "p99": 0.3563130530737588
+      },
+      "output_len": 512,
+      "requests_completed": 73,
+      "requests_failed": 0,
+      "requests_started": 73,
+      "ttft_s": {
+        "mean": 5.628236226724741,
+        "p50": 5.677546959836036,
+        "p90": 5.796059721708298,
+        "p95": 5.981413470767438,
+        "p99": 6.2223093848489235
+      }
+    }
+  ]
+}
