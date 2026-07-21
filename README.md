@@ -38,14 +38,14 @@ silently enter the benchmark process.
 ```bash
 python scripts/check_environment.py
 python -m bench.run_benchmark --help
-python plot_results.py --help
+python plotting/plot_results.py --help
 python -m unittest discover -s tests -v
 ```
 
 Before touching the GPUs, validate the complete default campaign definition:
 
 ```bash
-OUT_DIR=results-steady-exact-v3 PLAN_ONLY=1 scripts/run_job.sh
+OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
 ```
 
 Plan mode performs no hardware operations. It checks the isolated environment,
@@ -112,7 +112,7 @@ from the smoke step.
 
 ```bash
 OUT_DIR="${OUT_DIR:-results}"
-python plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
+python plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
 ```
 
 ## Repository Layout
@@ -146,7 +146,9 @@ scripts/
   run_models.sh               pinned multi-model launch/canary/sweep wrapper
   run_job.sh                  resumable unattended full campaign
   models_for_config.py        select models.yaml entries for a serving config
-plot_results.py               generate PDF/PNG figures from results/index.csv
+plotting/
+  plot_results.py             generate PDF/PNG figures from results/index.csv
+  plot_trends.py              cross-model trend figures from a multi-model index
 tests/                        standard-library regression tests for release paths
 requirements.txt              Python client and plotting dependencies
 requirements.lock             exact direct and transitive release environment
@@ -475,10 +477,7 @@ Command-line flags override the YAML for that run. Useful overrides include
 `--tokenizer-revision`, `--serving-fingerprint`, `--repeat-id`,
 `--trust-remote-code`, `--mode`, `--concurrency`, `--qps`, `--measure-s`,
 `--warmup-s`, `--cooldown-s`, `--base-url`, `--out-dir`, `--power-backend`,
-`--collect-hf-metadata`, and `--no-hf-metadata`. The multi-model wrapper
-computes the serving fingerprint from the complete launch policy; for a manual
-full-config run, supply that genuine 64-hex policy hash rather than leaving it
-blank or fabricating one.
+`--collect-hf-metadata`, and `--no-hf-metadata`.
 
 The benchmark log prints `point=<value>` for the x-axis load value being
 measured. In `closed` mode, `point` is the fixed concurrency. In `open` mode,
@@ -673,7 +672,7 @@ scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
 fingerprinted benchmark paths (`bench`, `configs`, `scripts`,
-`plot_results.py`, and the requirements files). Choose a fresh output directory
+`plotting/plot_results.py`, and the requirements files). Choose a fresh output directory
 for methodology `steady-exact-v3`; do not copy rows from an earlier
 methodology or checkout into it.
 
@@ -681,7 +680,7 @@ With the locked virtual environment active, run the hardware-free plan first:
 
 ```bash
 export PYTHONNOUSERSITE=1
-export OUT_DIR=results-steady-exact-v3
+export OUT_DIR=results
 PLAN_ONLY=1 scripts/run_job.sh
 ```
 
@@ -741,7 +740,7 @@ All runs append to one `OUT_DIR/index.csv` tagged by `model_label`, so a single
 plotting invocation compares across models (see Outputs). The benchmark also
 refuses an index whose header does not exactly match the current schema. Keep
 pre-`steady-exact-v3` results in separate directories and never copy their rows
-into the new index. Set `OUT_DIR=results-steady-exact-v3` consistently for
+into the new index. Set `OUT_DIR=results` consistently for
 canaries, policies, server logs, all three serving configs, validation, and
 plotting.
 
@@ -882,8 +881,8 @@ tag is prefixed with that label:
 Plot all rows in an index:
 
 ```bash
-OUT_DIR="${OUT_DIR:-results-steady-exact-v3}"
-python plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
+OUT_DIR="${OUT_DIR:-results}"
+python plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
 ```
 
 Available formats are `pdf`, `png`, and `both`. The plotting script writes
@@ -893,13 +892,7 @@ the colorblind-safe Okabe-Ito palette and are also distinguished by marker and
 line style, so identity never rests on hue alone. Add `--serif` for a Times-like
 body font matching an IEEE paper, and `--table` to also emit a paper-ready
 per-point summary as `OUT_DIR/figs/summary_table.tex` (booktabs) and
-`OUT_DIR/figs/summary_table.md`:
-
-```bash
-OUT_DIR="${OUT_DIR:-results-steady-exact-v3}"
-python plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both \
-  --serif --table
-```
+`OUT_DIR/figs/summary_table.md`.
 
 Two figures need a word on what they do and do not show:
 
@@ -1141,13 +1134,12 @@ reports the GPU device/board telemetry domain, not whole-GB10-module,
 whole-node, system, or wall power. The index records this as
 `power_scope=gpu_devices`, and plots label it as GPU energy.
 
-For dual-node runs, a local sampler only sees the head node's GPU. There is no
-SSH path from head to worker, so `scripts/run_all.sh` (for `tp2`/`pp2` labels)
-also passes `--worker-power-container`/`--worker-power-node-ip`, and the
-benchmark samples the worker's GPU through a tiny Ray actor pinned to
-`node:<worker ip>` inside the serving container. `mean_power_w` then totals
-both nodes and `power_nodes=2` marks the row as fully covered. The general
-harness can describe a head-only result when a worker sampler fails. The
+For dual-node runs, a local sampler only sees the head node's GPU, so
+`scripts/run_all.sh` (for `tp2`/`pp2` labels) also passes
+`--worker-power-container`/`--worker-power-node-ip` and samples the worker's GPU
+through a Ray actor, totaling both nodes into `mean_power_w` with `power_nodes=2`
+marking full coverage (see Metric Semantics for the mechanism). The general
+harness can describe a head-only result when a worker sampler fails; the
 shipped full config is stricter: `require_power_data: true` rejects the point
 instead of writing it unless a single run has one node and a tp2/pp2 run has
 both nodes with positive, dense samples bracketing the full window. It likewise sets
@@ -1281,12 +1273,12 @@ Useful checks after editing the repository:
 ```bash
 export PYTHONNOUSERSITE=1
 python scripts/check_environment.py
-OUT_DIR=results-steady-exact-v3 PLAN_ONLY=1 scripts/run_job.sh
-python -m compileall bench plot_results.py scripts/models_for_config.py
+OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
+python -m compileall bench plotting/plot_results.py plotting/plot_trends.py scripts/models_for_config.py
 bash -n scripts/*.sh
 python -m pip check
 python scripts/models_for_config.py configs/models.yaml single
-python plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png --table
+python plotting/plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png --table
 ```
 
 `shellcheck` and `ruff` are not required by the repository, but they are good

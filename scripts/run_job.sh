@@ -42,7 +42,7 @@ cd "$HERE"
 # scripts/load_env.sh gives already-exported values precedence over .env, so
 # exporting them here keeps a stale OUT_DIR/CONCURRENCIES in .env from
 # silently retargeting the paper campaign at an old result directory.
-export OUT_DIR="${OUT_DIR:-results-steady-exact-v3}"
+export OUT_DIR="${OUT_DIR:-results}"
 export CONCURRENCIES="${CONCURRENCIES-1 2 4 8 16 32 64 128}"
 export EXPECTED_CONCURRENCIES="$CONCURRENCIES"
 export FULL_REPEATS="${FULL_REPEATS-1}"
@@ -245,15 +245,15 @@ source_tree_ok() {
     log "repository has no recoverable Git commit"
     return 1
   }
-  if ! git diff --quiet -- bench configs scripts plot_results.py requirements.txt requirements.lock; then
+  if ! git diff --quiet -- bench configs scripts plotting/plot_results.py requirements.txt requirements.lock; then
     log "tracked benchmark sources have uncommitted changes"
     return 1
   fi
-  if ! git diff --cached --quiet -- bench configs scripts plot_results.py requirements.txt requirements.lock; then
+  if ! git diff --cached --quiet -- bench configs scripts plotting/plot_results.py requirements.txt requirements.lock; then
     log "benchmark sources are staged but not committed"
     return 1
   fi
-  untracked="$(git ls-files --others --exclude-standard -- bench configs scripts plot_results.py requirements.txt requirements.lock)"
+  untracked="$(git ls-files --others --exclude-standard -- bench configs scripts plotting/plot_results.py requirements.txt requirements.lock)"
   if [[ -n "$untracked" ]]; then
     log "untracked benchmark source/input files are not recoverable:"
     printf '%s\n' "$untracked"
@@ -376,7 +376,7 @@ prep "complete result grid + artifact verification" \
     --concurrencies "$CONCURRENCIES" --repeats "$FINAL_REPEATS"
 
 prep "plots + summary table" \
-  "$PYTHON" plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" \
+  "$PYTHON" plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" \
     --format both --table
 
 prep "pre-seal clean committed benchmark source tree" source_tree_ok

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -482,6 +483,42 @@ class PlanTests(unittest.TestCase):
                 validator.load_campaign(models, experiment)
 
 
+class AllreduceCsvTests(unittest.TestCase):
+    @staticmethod
+    def _write_csv(path, *, small_bw="0.000", extra_rows=()):
+        lines = [",".join(validator.ALLREDUCE_FIELDS)]
+        for exponent in range(3, 31):
+            size = 1 << exponent
+            bw = small_bw if exponent < 20 else "2.000"
+            lines.append(f"{size},1.0e-04,5.0e-05,{bw},{bw}")
+        lines.extend(extra_rows)
+        path.write_text("\n".join(lines) + "\n")
+
+    def test_zero_bandwidth_small_transfers_are_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "allreduce.csv"
+            self._write_csv(path, small_bw="0.000")
+            validator.validate_allreduce_csv(path)  # must not raise
+
+    def test_negative_bandwidth_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "allreduce.csv"
+            self._write_csv(path, small_bw="-0.001")
+            with self.assertRaises(validator.CampaignValidationError) as ctx:
+                validator.validate_allreduce_csv(path)
+            self.assertIn("non-negative", str(ctx.exception))
+
+    def test_trailing_nondata_lines_are_still_rejected(self):
+        # Log contamination (e.g. NCCL worker output) must fail, not pass.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "allreduce.csv"
+            self._write_csv(
+                path, extra_rows=("(_worker pid=1) NCCL WARN not initialized",)
+            )
+            with self.assertRaises(validator.CampaignValidationError):
+                validator.validate_allreduce_csv(path)
+
+
 class VerifyTests(unittest.TestCase):
     def test_verify_checks_artifacts_and_atomically_writes_hash_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -527,6 +564,105 @@ class VerifyTests(unittest.TestCase):
                 },
             )
             self.assertEqual(list(fixture.results.glob(".*.tmp")), [])
+
+    def test_completed_only_verifies_present_combos_and_skips_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))  # config="single"
+            fixture.add_point()
+            # Declare an extra config in the plan that was never run.
+            fixture.models.write_text(
+                yaml.safe_dump(
+                    {
+                        "models": [
+                            {
+                                "name": "org/model",
+                                "label": "model-a",
+                                "revision": REVISION,
+                                "configs": ["single", "pp2"],
+                                "max_model_len": 64,
+                            }
+                        ]
+                    }
+                )
+            )
+            # Full verification fails: the planned pp2 rectangle is absent.
+            with self.assertRaises(validator.CampaignValidationError) as ctx:
+                validator.verify_campaign(
+                    fixture.models, fixture.experiment, fixture.results, [1], 1
+                )
+            self.assertIn("missing", str(ctx.exception))
+            # completed-only verifies just the present single-node combo and
+            # does not demand the (unrun) dual-node all-reduce artifact.
+            report = validator.verify_campaign(
+                fixture.models,
+                fixture.experiment,
+                fixture.results,
+                [1],
+                1,
+                completed_only=True,
+            )
+            self.assertEqual(report["status"], "ok")
+            self.assertTrue(report["completed_only"])
+            self.assertEqual(report["skipped_combos"], ["model-a/pp2"])
+            self.assertEqual(report["verified_count"], 1)
+            self.assertEqual(report["expected_count"], 1)
+
+    def test_completed_only_still_requires_a_full_rectangle_per_combo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))  # config="single"
+            fixture.add_point()
+            # The present combo ran only concurrency 1; the sweep asked for 1,2.
+            with self.assertRaises(validator.CampaignValidationError) as ctx:
+                validator.verify_campaign(
+                    fixture.models,
+                    fixture.experiment,
+                    fixture.results,
+                    [1, 2],
+                    1,
+                    completed_only=True,
+                )
+            self.assertIn("missing", str(ctx.exception))
+
+    def test_allow_source_match_commits_accepts_commit_that_differs_from_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point()
+            # Simulate verifying from a HEAD that advanced past the run's commit
+            # (results committed incrementally) while the source is unchanged.
+            with mock.patch("bench.run_benchmark._git_commit", return_value="b" * 40):
+                with self.assertRaises(validator.CampaignValidationError) as ctx:
+                    validator.verify_campaign(
+                        fixture.models, fixture.experiment, fixture.results, [1], 1
+                    )
+                self.assertIn("harness_git_commit", str(ctx.exception))
+                report = validator.verify_campaign(
+                    fixture.models,
+                    fixture.experiment,
+                    fixture.results,
+                    [1],
+                    1,
+                    allow_source_match_commits=True,
+                )
+            self.assertEqual(report["status"], "ok")
+            self.assertTrue(report["allow_source_match_commits"])
+            self.assertEqual(report["harness_git_commits"], [_git_commit()])
+
+    def test_allow_source_match_commits_still_requires_matching_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point()
+            # Even with the commit relaxation, a source-hash mismatch is fatal.
+            fixture.mutate_index(harness_source_sha256="0" * 64)
+            with self.assertRaises(validator.CampaignValidationError) as ctx:
+                validator.verify_campaign(
+                    fixture.models,
+                    fixture.experiment,
+                    fixture.results,
+                    [1],
+                    1,
+                    allow_source_match_commits=True,
+                )
+            self.assertIn("harness_source_sha256", str(ctx.exception))
 
     def test_verify_rejects_noncurrent_source_and_trace_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -2,6 +2,7 @@ import asyncio
 import csv
 import hashlib
 import math
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,10 @@ from bench.client import (_extract_finish_reason, _extract_token_ids,
                           send_request)
 from bench.server_info import _cache_config, collect
 from bench.workload import Workload
-import plot_results
+
+# plot_results.py lives in plotting/; put it on the path for direct import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plotting"))
+import plot_results  # noqa: E402
 
 
 class WorkloadValidationTests(unittest.TestCase):
