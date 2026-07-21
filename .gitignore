@@ -217,9 +217,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-figs/
-
 .claude/
 
 results-*/server_*.log
 results-preflight
+
+# Scratch figures from manual plot_results.py/plot_trends.py runs (default --out).
+# Campaign figures live under a results dir (e.g. results/figs) and are not ignored.
+/figs/

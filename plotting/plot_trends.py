@@ -26,7 +26,7 @@ collapsing, and rectangle/identity guards are imported from plot_results so
 both scripts read an index identically.
 
 Usage:
-    python plot_trends.py --index results-steady-exact-v3/index.csv --out figs
+    python plot_trends.py --index results/index.csv --out figs
     python plot_trends.py --allow-incomplete   # mid-campaign diagnostics
 
 Model metadata (dense/MoE, precision, NVIDIA-optimized, parameter counts) is
@@ -529,7 +529,7 @@ def fig_scale_trend(df, out, fmts):
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Plot cross-model trend figures from a multi-model index")
-    ap.add_argument("--index", default="/home/kbhimani/dgx-spark-llm-serving-benchmark/results-steady-exact-v3/index.csv")
+    ap.add_argument("--index", default="results/index.csv")
     ap.add_argument("--out", default="figs")
     ap.add_argument("--format", default="pdf", choices=["pdf", "png", "both"])
     ap.add_argument("--dpi", type=int, default=200)

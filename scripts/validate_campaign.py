@@ -179,6 +179,13 @@ def _positive_float(value: object, context: str) -> float:
     return result
 
 
+def _nonnegative_float(value: object, context: str) -> float:
+    result = _finite_float(value, context)
+    if result < 0:
+        raise CampaignValidationError(f"{context} must be non-negative")
+    return result
+
+
 def _validate_gpu_util(value: object, context: str) -> float:
     number = _finite_float(value, context)
     if not 0 < number <= 1:
@@ -1156,8 +1163,16 @@ def validate_allreduce_csv(path: str | os.PathLike[str]) -> None:
             for row in rows
         ]
         for row_number, row in enumerate(rows, start=2):
-            for field in ALLREDUCE_FIELDS[1:]:
+            # Latencies must be strictly positive; bandwidths may be exactly
+            # zero at the smallest transfer sizes, where GB/s rounds to 0.000.
+            # The real 1 GiB busbw floor is enforced by ray_allreduce_bench.sh
+            # before the artifact is ever written.
+            for field in ("avg_s", "min_s"):
                 _positive_float(
+                    row.get(field), f"{source} row {row_number} {field}"
+                )
+            for field in ("algbw_GBps", "busbw_GBps"):
+                _nonnegative_float(
                     row.get(field), f"{source} row {row_number} {field}"
                 )
     except CampaignValidationError:
@@ -1253,6 +1268,10 @@ def _build_manifest(
     repeats: int,
     expected_count: int,
     artifacts: Mapping[str, Sequence[Path]],
+    completed_only: bool = False,
+    skipped_combos: Sequence[str] = (),
+    allow_source_match_commits: bool = False,
+    harness_git_commits: Sequence[str] = (),
 ) -> dict:
     return {
         "schema_version": 1,
@@ -1263,6 +1282,10 @@ def _build_manifest(
             "concurrencies": list(concurrencies),
             "repeats": repeats,
             "expected_count": expected_count,
+            "completed_only": completed_only,
+            "skipped_combos": list(skipped_combos),
+            "allow_source_match_commits": allow_source_match_commits,
+            "harness_git_commits": list(harness_git_commits),
         },
         "artifacts": {
             kind: [
@@ -1281,8 +1304,24 @@ def verify_campaign(
     concurrencies: Sequence[object] | str,
     repeats: object,
     manifest_path: str | os.PathLike[str] | None = None,
+    completed_only: bool = False,
+    allow_source_match_commits: bool = False,
 ) -> dict:
-    """Verify an exact finished campaign and optionally write its manifest."""
+    """Verify an exact finished campaign and optionally write its manifest.
+
+    With ``completed_only``, restrict the expected grid to the
+    (model_label, config_label) combos that actually appear in the index, so
+    combos that were intentionally not run are not required. Each present combo
+    must still carry its full concurrency/repeat rectangle, and every artifact,
+    provenance, and quality check runs unchanged on the rows that are present.
+
+    With ``allow_source_match_commits``, do not require every row to share one
+    ``harness_git_commit`` equal to current HEAD. The stronger, measurement
+    affecting guarantee still holds strictly: every row's
+    ``harness_source_sha256`` must be identical and equal the current source
+    fingerprint. Use for a campaign whose results were committed incrementally
+    without changing the fingerprinted harness source.
+    """
     campaign = load_campaign(models_path, experiment_path)
     loads = parse_concurrencies(concurrencies)
     repeat_count = _positive_integer(repeats, "repeats")
@@ -1315,6 +1354,27 @@ def verify_campaign(
         raise CampaignValidationError(
             "index contains duplicate expected identities: " + _format_points(duplicates)
         )
+
+    skipped_combos: list[str] = []
+    if completed_only:
+        present_combos = {(key[0], key[1]) for key in actual}
+        if not present_combos:
+            raise CampaignValidationError(
+                "completed-only verification found no rows in the index"
+            )
+        planned_combos = {
+            (model.label, config)
+            for model in campaign.models
+            for config in model.configs
+        }
+        skipped_combos = sorted(
+            f"{label}/{config}" for label, config in planned_combos - present_combos
+        )
+        expected = {
+            key: point
+            for key, point in expected.items()
+            if (key[0], key[1]) in present_combos
+        }
 
     missing = set(expected) - set(actual)
     extra = set(actual) - set(expected)
@@ -1356,6 +1416,7 @@ def verify_campaign(
     consistent_pair: dict[tuple[str, str, str], str] = {}
     consistent_experiment: dict[tuple[str, str, int], str] = {}
     consistent_policy: dict[str, str] = {}
+    commit_values: set[str] = set()
     runtime_fingerprints: dict[str, str] = {}
     runtime_policies: dict[str, Mapping[str, object]] = {}
     raw_paths: list[Path] = []
@@ -1449,13 +1510,19 @@ def verify_campaign(
             raise CampaignValidationError(
                 f"{context} is missing a valid harness_git_commit"
             )
-        previous_commit = consistent_global.setdefault("harness_git_commit", git_commit)
-        if previous_commit != git_commit:
-            raise CampaignValidationError("index mixes multiple harness_git_commit values")
-        if git_commit != current_commit:
-            raise CampaignValidationError(
-                f"{context} harness_git_commit does not match current HEAD"
+        commit_values.add(git_commit)
+        if not allow_source_match_commits:
+            previous_commit = consistent_global.setdefault(
+                "harness_git_commit", git_commit
             )
+            if previous_commit != git_commit:
+                raise CampaignValidationError(
+                    "index mixes multiple harness_git_commit values"
+                )
+            if git_commit != current_commit:
+                raise CampaignValidationError(
+                    f"{context} harness_git_commit does not match current HEAD"
+                )
 
         run_tag = str(row.get("run_tag") or "")
         if not SAFE_RUN_TAG_RE.fullmatch(run_tag):
@@ -1568,11 +1635,9 @@ def verify_campaign(
         if vllm_sample_path is not None:
             vllm_sample_paths.append(vllm_sample_path)
 
-    has_dual = any(
-        config in {"tp2", "pp2"}
-        for model in campaign.models
-        for config in model.configs
-    )
+    # Derived from the verified set, not the full plan, so a completed-only run
+    # of single-node combos does not demand a dual-node all-reduce artifact.
+    has_dual = any(key[1] in {"tp2", "pp2"} for key in expected)
     valid_allreduce: list[Path] = []
     if has_dual:
         dual_runtime = runtime_fingerprints.get("dual")
@@ -1622,7 +1687,7 @@ def verify_campaign(
     source_paths = list((ROOT / "bench").glob("*.py"))
     source_paths += list((ROOT / "scripts").glob("*.py"))
     source_paths += list((ROOT / "scripts").glob("*.sh"))
-    plot_source = ROOT / "plot_results.py"
+    plot_source = ROOT / "plotting" / "plot_results.py"
     if plot_source.is_file():
         source_paths.append(plot_source)
     environment_paths = [environment_path]
@@ -1663,8 +1728,12 @@ def verify_campaign(
             out_dir=output,
             concurrencies=loads,
             repeats=repeat_count,
-            expected_count=len(grid),
+            expected_count=len(expected),
             artifacts=artifacts,
+            completed_only=completed_only,
+            skipped_combos=skipped_combos,
+            allow_source_match_commits=allow_source_match_commits,
+            harness_git_commits=sorted(commit_values),
         )
         _write_json_atomic(destination, manifest)
         manifest_written = str(destination)
@@ -1672,10 +1741,14 @@ def verify_campaign(
     return {
         "status": "ok",
         "verified_count": len(rows),
-        "expected_count": len(grid),
+        "expected_count": len(expected),
         "model_config_count": sum(len(model.configs) for model in campaign.models),
         "concurrencies": list(loads),
         "repeats": repeat_count,
+        "completed_only": completed_only,
+        "skipped_combos": skipped_combos,
+        "allow_source_match_commits": allow_source_match_commits,
+        "harness_git_commits": sorted(commit_values),
         "manifest": manifest_written,
     }
 
@@ -1730,6 +1803,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--manifest",
         help="atomically write a JSON SHA-256 artifact manifest to this path",
     )
+    verify_parser.add_argument(
+        "--completed-only",
+        action="store_true",
+        help=(
+            "verify only the model/config combos present in the index "
+            "(each must still have its full concurrency/repeat rectangle); "
+            "use when some planned combos were intentionally not run"
+        ),
+    )
+    verify_parser.add_argument(
+        "--allow-source-match-commits",
+        action="store_true",
+        help=(
+            "do not require one harness_git_commit equal to HEAD; still require "
+            "harness_source_sha256 to be identical across rows and match the "
+            "current source. Use when results were committed incrementally "
+            "without changing the fingerprinted harness."
+        ),
+    )
     return parser
 
 
@@ -1756,6 +1848,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.concurrencies,
                 args.repeats,
                 args.manifest,
+                args.completed_only,
+                args.allow_source_match_commits,
             )
     except (CampaignValidationError, OSError, RuntimeError) as exc:
         print(f"validate_campaign.py: {exc}", file=sys.stderr)

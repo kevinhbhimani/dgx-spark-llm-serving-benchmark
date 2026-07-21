@@ -1,5 +1,6 @@
 import io
 import math
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from bench.monitors import PowerSampler, VLLMMetricsScraper, WorkerPowerSampler
-import plot_results
+
+# plot_results.py lives in plotting/; put it on the path for direct import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plotting"))
+import plot_results  # noqa: E402
 
 
 class PowerIntegrationTests(unittest.TestCase):
