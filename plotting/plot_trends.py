@@ -159,13 +159,48 @@ def _bar_labels(ax, xs, vals, fmt="{:.2f}x") -> None:
                         xytext=(0, 2), ha="center", fontsize=6, color="0.25")
 
 
-def _name_point(ax, x, y, label) -> None:
+def _name_point(ax, x, y, label):
     """Model-name annotation with a white halo so it survives grid/marker
-    crossings. Scatter figures call this once per model (not per point) to
-    keep labels from colliding."""
-    ax.annotate(label, (x, y), textcoords="offset points", xytext=(3, 3),
-                fontsize=5.5, color="0.25",
-                path_effects=[withStroke(linewidth=1.5, foreground="white")])
+    crossings. Scatter figures call this once per model (not per point) and
+    pass the returned texts to _spread_labels() to resolve collisions."""
+    return ax.annotate(label, (x, y), textcoords="offset points", xytext=(3, 3),
+                       fontsize=5.5, color="0.25",
+                       path_effects=[withStroke(linewidth=1.5,
+                                                foreground="white")])
+
+
+def _spread_labels(fig, ax, texts) -> None:
+    """Resolve point-label collisions by flipping and nudging (adjustText-lite).
+
+    With 19 (model, config) peaks the dense mid-cluster overlaps several
+    default up-right labels. Text extents exist only after a draw, so render
+    once, then (1) right-anchor any label that would run past the axes' right
+    edge and (2) walk labels left to right, pushing each one down by the
+    pixel overlap with every already-placed label. Offsets are in points, so
+    pixel gaps are converted via the renderer dpi.
+    """
+    if not texts:
+        return
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    px_to_pt = 72.0 / fig.dpi
+    ax_right = ax.get_window_extent(renderer).x1
+    for t in texts:
+        if t.get_window_extent(renderer).x1 > ax_right:
+            t.set_ha("right")
+            dx, dy = t.get_position()
+            t.set_position((-abs(dx), dy))
+    placed = []
+    for t in sorted(texts, key=lambda t: t.get_window_extent(renderer).x0):
+        bb = t.get_window_extent(renderer)
+        guard = 0
+        while any(bb.overlaps(p) for p in placed) and guard < 20:
+            worst = max(bb.y1 - p.y0 for p in placed if bb.overlaps(p))
+            dx, dy = t.get_position()
+            t.set_position((dx, dy - (worst + 2) * px_to_pt))
+            bb = t.get_window_extent(renderer)
+            guard += 1
+        placed.append(bb)
 
 
 # ---- figures -----------------------------------------------------------------
@@ -415,6 +450,7 @@ def fig_efficiency_frontier(df, out, fmts):
         return
     fig, ax = plt.subplots(figsize=(COL_W * 1.35, PANEL_H + 0.3))
     seen_classes, seen_cfgs = [], []
+    labels = []
     for model in models_by_size(df):
         cls = class_of(model)
         cs = CLASS_STYLE[cls]
@@ -437,7 +473,7 @@ def fig_efficiency_frontier(df, out, fmts):
         if pts:
             # one label per model, at its fastest config's point
             x, y = max(pts)
-            _name_point(ax, x, y, meta_for(model)["pretty"])
+            labels.append(_name_point(ax, x, y, meta_for(model)["pretty"]))
     if not seen_classes:
         plt.close(fig)
         print("  efficiency_frontier: no peak rows with power data, skipping")
@@ -456,6 +492,7 @@ def fig_efficiency_frontier(df, out, fmts):
                        color="0.45", label=CONFIG_STYLE[c]["label"])
                 for c in CONFIG_ORDER if c in seen_cfgs]
     ax.legend(handles=proxies, fontsize=6.5)
+    _spread_labels(fig, ax, labels)
     save(fig, "efficiency_frontier", out, fmts)
 
 
@@ -486,6 +523,7 @@ def fig_scale_trend(df, out, fmts):
         return float(v) * (2.0 if cfg in DUAL_NODE_CONFIGS else 1.0)
     fig, ax = plt.subplots(figsize=(COL_W * 1.35, PANEL_H + 0.3))
     seen_cfgs = []
+    labels = []
     for model in models_by_size(df):
         pts = []
         for cfg in ("single", "tp2", "pp2"):
@@ -506,7 +544,7 @@ def fig_scale_trend(df, out, fmts):
         if pts:
             # one label per model, at its highest-throughput point
             y, x = max(pts)
-            _name_point(ax, x, y, meta_for(model)["pretty"])
+            labels.append(_name_point(ax, x, y, meta_for(model)["pretty"]))
     if not seen_cfgs:
         plt.close(fig)
         print("  scale_trend: no peak rows with weight_gb, skipping")
@@ -522,6 +560,7 @@ def fig_scale_trend(df, out, fmts):
                       label=CONFIG_STYLE[c]["label"])
                for c in CONFIG_ORDER if c in seen_cfgs]
     ax.legend(handles=proxies, fontsize=6.5)
+    _spread_labels(fig, ax, labels)
     save(fig, "scale_trend", out, fmts)
 
 

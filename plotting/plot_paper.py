@@ -1,0 +1,606 @@
+#!/usr/bin/env python3
+"""One-command generator for the complete PMBS26 paper figure and table set.
+
+The per-model figure sets in plot_results.py spend one figure per model, which
+a 10-page paper cannot afford. This script consolidates the same data into
+paper-density figures and writes every candidate paper artifact into one
+output directory:
+
+  throughput_grid    small multiples: output tok/s vs concurrency, one panel
+                     per model (ordered by size), three serving configs each.
+  ttft_grid          median TTFT vs concurrency per model, with the 3 s SLO.
+  itl_grid           median inter-token latency vs concurrency per model, with
+                     the strict (0.10 s) and loose (0.20 s) ITL SLO tiers.
+  goodput_grid       SLO goodput vs concurrency per model, strict and loose.
+  energy_grid        per-token energy vs concurrency per model (both nodes
+                     sampled on dual-node rows; head-only points are marked).
+  kv_capacity        KV-cache capacity per (model, config): how many maximum
+                     length requests fit, the mechanism behind TP=2's wins.
+  allreduce          the dual-node all-reduce microbenchmark: latency and bus
+                     bandwidth vs message size, with the decode-payload band
+                     that explains the TP=2 throughput penalty.
+  peak_table         compact per-(model, config) headline table (.tex + .md).
+
+plus the cross-model trend figures re-rendered here for a uniform paper style
+(parallelism_scaling, dense_vs_moe, precision_ladder, efficiency_frontier,
+scale_trend from plot_trends.py; model_comparison, summary and capacity tables
+from plot_results.py).
+
+plot_results.py is part of the sealed v3 campaign source and is imported, not
+edited. This file follows the plot_trends.py pattern: figure development lives
+outside the sealed tree and reads the index through the exact same loading,
+repeat-collapsing, and identity guards.
+
+Usage:
+    python plotting/plot_paper.py                       # results/index.csv -> figs/paper
+    python plotting/plot_paper.py --index results/index.csv --out figs/paper
+    python plotting/plot_paper.py --sans                # keep the sans font
+
+Figures default to serif (Times-like) text to match the IEEE paper body, and
+are written as vector PDF for \\includegraphics plus PNG previews.
+"""
+from __future__ import annotations
+import argparse
+import glob
+import math
+import os
+import sys
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter, NullFormatter
+
+from plot_results import (
+    COL_W, CONFIG_ORDER, CONFIG_STYLE, DUAL_NODE_CONFIGS, TEXT_W,
+    _fmt, _model_values, _throughput_col, collapse_repeats, configs_present,
+    group, has, head_only_power, load_index, models_present, report_quality,
+    save, set_rc, style_for, warn_low_n, write_capacity_table,
+    write_summary_table, fig_model_comparison, MIN_SAMPLES,
+)
+from plot_trends import (
+    meta_for, models_by_size, fig_parallelism_scaling, fig_dense_vs_moe,
+    fig_precision_ladder, fig_efficiency_frontier, fig_scale_trend,
+)
+
+# SLO bounds drawn as reference lines. Values mirror configs/experiment.yaml
+# (ttft_slo_s, itl_slo_s, itl_slo_s2); the goodput columns in the index were
+# scored against these same bounds.
+TTFT_SLO_MS = 3000.0
+ITL_SLO_MS = 100.0
+ITL_SLO2_MS = 200.0
+
+# 200 GbE line rate, for the all-reduce efficiency annotation.
+LINE_RATE_GBPS = 25.0
+
+GRID_COLS = 4
+PANEL_TITLE_FS = 7.0
+PANEL_TICK_FS = 6.0
+PANEL_LABEL_FS = 7.5
+SLO_COLOR = "0.35"
+
+
+def _panel_load_axis(ax, loads) -> None:
+    """Compact log2 concurrency axis for small grid panels.
+
+    set_load_axis() labels every power of two, which collides at panel widths
+    of ~1.6 in; majors every other power keep the ticks readable.
+    """
+    loads = sorted({float(v) for v in loads if pd.notna(v)})
+    ax.set_xscale("log", base=2)
+    if loads:
+        ax.set_xlim(min(loads) / 1.35, max(loads) * 1.35)
+    ax.set_xticks([v for v in loads if int(v) in (1, 4, 16, 64)])
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{int(v)}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.tick_params(labelsize=PANEL_TICK_FS)
+    ax.tick_params(which="minor", length=1.5)
+
+
+def _mark_low_n_panel(ax, g, x, y, minimum=MIN_SAMPLES) -> bool:
+    """mark_low_n with a smaller circle so it fits grid-panel markers."""
+    ncol = ("requests_completed__min" if "requests_completed__min" in g.columns
+            else "requests_completed")
+    if ncol not in g.columns:
+        return False
+    mask = g[ncol] < minimum
+    if not mask.any():
+        return False
+    x = x if isinstance(x, pd.Series) else pd.Series(x, index=g.index)
+    y = y if isinstance(y, pd.Series) else pd.Series(y, index=g.index)
+    ax.scatter(x[mask], y[mask], s=45, facecolors="none",
+               edgecolors="0.15", linewidths=1.0, zorder=6, clip_on=False)
+    return True
+
+
+LOW_N_PROXY = Line2D([], [], marker="o", linestyle="none", markersize=5,
+                     markerfacecolor="none", markeredgecolor="0.15",
+                     label=f"n < {MIN_SAMPLES}")
+
+
+def _panel_title(model: str) -> str:
+    """Model title with its precision, unless the name already carries it."""
+    meta = meta_for(model)
+    quant = meta["quant"].upper()
+    if quant.lower() in str(meta["pretty"]).lower():
+        return meta["pretty"]
+    return f"{meta['pretty']} ({quant})"
+
+
+def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
+                finalize_panel=None, extra_proxies=(), footnote=None):
+    """Small-multiples frame: one panel per model plus a legend cell.
+
+    draw_panel(ax, g, load_col, style, cfg) plots one config series into a
+    panel and returns True when it circled any low-sample point; it must not
+    set scales or limits -- set_ylim/axhline freeze autoscaling and would clip
+    every config drawn after the first. Per-panel scale/limit/reference-line
+    work goes in finalize_panel(ax), called once after all configs. Panels get
+    per-model independent y ranges (throughput spans 26..520 tok/s across
+    models; a shared range would flatten the slow models) but one shared,
+    identically-ticked concurrency axis. Config identity keeps the paper-wide
+    hue and marker from CONFIG_STYLE.
+    """
+    models = models_by_size(df)
+    mv = _model_values(df)
+    n = len(models)
+    nrows = math.ceil((n + 1) / GRID_COLS)
+    fig, axes = plt.subplots(nrows, GRID_COLS,
+                             figsize=(TEXT_W, 1.72 * nrows + 0.30))
+    flat = np.atleast_2d(axes).ravel()
+    used_cfgs: list[str] = []
+    any_low = False
+    all_loads: list[float] = []
+    for ax, model in zip(flat, models):
+        msub = df[mv == model]
+        for cfg in configs_present(msub):
+            g, lc, _ = group(msub, cfg)
+            s = style_for(cfg, CONFIG_ORDER.index(cfg)
+                          if cfg in CONFIG_ORDER else 0)
+            any_low |= bool(draw_panel(ax, g, lc, s, cfg))
+            if cfg not in used_cfgs:
+                used_cfgs.append(cfg)
+            all_loads += g[lc].tolist()
+        if finalize_panel is not None:
+            finalize_panel(ax)
+        ax.set_title(_panel_title(model), fontsize=PANEL_TITLE_FS, pad=3)
+    for ax in flat[:n]:
+        _panel_load_axis(ax, all_loads)
+    # x labels on the lowest data panel of each column (the legend cell and
+    # empty cells below a column must not swallow that column's axis labels)
+    for col in range(GRID_COLS):
+        col_axes = [flat[r * GRID_COLS + col] for r in range(nrows)
+                    if r * GRID_COLS + col < n]
+        if col_axes:
+            col_axes[-1].set_xlabel("Concurrent requests",
+                                    fontsize=PANEL_LABEL_FS)
+    for r in range(nrows):
+        if r * GRID_COLS < n:
+            flat[r * GRID_COLS].set_ylabel(ylabel, fontsize=PANEL_LABEL_FS)
+    # legend cell, then blank any remaining cells
+    proxies = [Line2D([], [], color=CONFIG_STYLE[c]["color"],
+                      marker=CONFIG_STYLE[c]["marker"], markersize=4,
+                      label=CONFIG_STYLE[c]["label"])
+               for c in CONFIG_ORDER if c in used_cfgs]
+    proxies += list(extra_proxies)
+    if any_low:
+        proxies.append(LOW_N_PROXY)
+    legend_ax = flat[n]
+    legend_ax.axis("off")
+    legend_ax.legend(handles=proxies, loc="center", fontsize=6.5,
+                     frameon=False, handlelength=2.2)
+    for ax in flat[n + 1:]:
+        ax.axis("off")
+    if footnote:
+        fig.text(0.5, -0.02, footnote, ha="center", va="top",
+                 fontsize=6.0, color="0.30")
+    save(fig, name, out, fmts, tight=footnote is not None)
+    return any_low
+
+
+# ---- grid figures ------------------------------------------------------------
+def fig_throughput_grid(df, out, fmts):
+    tcol = _throughput_col(df)
+    if not has(df, [tcol]):
+        return
+
+    def panel(ax, g, lc, s, cfg):
+        ax.plot(g[lc], g[tcol], marker=s["marker"], color=s["color"],
+                markersize=3.2, linewidth=1.2)
+        return False
+
+    _model_grid(df, "throughput_grid", out, fmts, panel,
+                "Throughput (tok/s)",
+                finalize_panel=lambda ax: ax.set_ylim(bottom=0))
+
+
+def fig_ttft_grid(df, out, fmts):
+    if not has(df, ["ttft_p50"]):
+        return
+    slo = Line2D([], [], color=SLO_COLOR, linestyle=":", linewidth=1.0,
+                 label="TTFT SLO 3 s")
+
+    def panel(ax, g, lc, s, cfg):
+        y = g["ttft_p50"] * 1e3
+        ax.plot(g[lc], y, marker=s["marker"], color=s["color"],
+                markersize=3.2, linewidth=1.2)
+        return _mark_low_n_panel(ax, g, g[lc], y)
+
+    def finalize(ax):
+        ax.set_yscale("log")
+        ax.axhline(TTFT_SLO_MS, color=SLO_COLOR, linestyle=":",
+                   linewidth=0.9)
+
+    _model_grid(df, "ttft_grid", out, fmts, panel, "Median TTFT (ms)",
+                finalize_panel=finalize, extra_proxies=[slo])
+
+
+def fig_itl_grid(df, out, fmts):
+    if not has(df, ["itl_p50"]):
+        return
+    slo1 = Line2D([], [], color=SLO_COLOR, linestyle=":", linewidth=1.0,
+                  label="strict SLO 100 ms")
+    slo2 = Line2D([], [], color=SLO_COLOR, linestyle="-.", linewidth=1.0,
+                  label="loose SLO 200 ms")
+
+    def panel(ax, g, lc, s, cfg):
+        y = g["itl_p50"] * 1e3
+        ax.plot(g[lc], y, marker=s["marker"], color=s["color"],
+                markersize=3.2, linewidth=1.2)
+        return _mark_low_n_panel(ax, g, g[lc], y)
+
+    def finalize(ax):
+        ax.set_yscale("log")
+        ax.axhline(ITL_SLO_MS, color=SLO_COLOR, linestyle=":", linewidth=0.9)
+        ax.axhline(ITL_SLO2_MS, color=SLO_COLOR, linestyle="-.",
+                   linewidth=0.9)
+
+    _model_grid(df, "itl_grid", out, fmts, panel,
+                "Median inter-token latency (ms)",
+                finalize_panel=finalize, extra_proxies=[slo1, slo2])
+
+
+def fig_goodput_grid(df, out, fmts):
+    if not has(df, ["goodput_rps"]):
+        return
+    has_itl2 = has(df, ["goodput_itl2_rps"])
+    strict = Line2D([], [], color="0.15", linestyle="-",
+                    label="strict ITL tier")
+    loose = Line2D([], [], color="0.15", linestyle="--", alpha=0.7,
+                   label="loose ITL tier")
+
+    def panel(ax, g, lc, s, cfg):
+        ax.plot(g[lc], g["goodput_rps"], marker=s["marker"], color=s["color"],
+                markersize=3.2, linewidth=1.2)
+        if has_itl2:
+            ax.plot(g[lc], g["goodput_itl2_rps"], marker=s["marker"],
+                    linestyle="--", color=s["color"], alpha=0.65,
+                    markersize=2.6, linewidth=1.0)
+        return _mark_low_n_panel(ax, g, g[lc], g["goodput_rps"])
+
+    def finalize(ax):
+        # A dense model whose ITL floors above both tiers has goodput ~= 0
+        # everywhere; autoscaling those panels to their 0.0x req/s noise would
+        # dress the absence of an SLO-compliant operating point up as signal.
+        # A minimum y-span keeps such panels legibly flat at zero.
+        ax.set_ylim(0, max(0.25, ax.get_ylim()[1]))
+
+    _model_grid(df, "goodput_grid", out, fmts, panel,
+                "Goodput under SLO (req/s)",
+                finalize_panel=finalize,
+                extra_proxies=[strict, loose] if has_itl2 else [strict])
+
+
+def fig_energy_grid(df, out, fmts):
+    if not has(df, ["energy_per_token_j"]):
+        print("  energy_grid: no power data in index, skipping")
+        return
+    head_only = []
+
+    def panel(ax, g, lc, s, cfg):
+        ax.plot(g[lc], g["energy_per_token_j"], marker=s["marker"],
+                color=s["color"], markersize=3.2, linewidth=1.2)
+        if head_only_power(cfg, g):
+            head_only.append(cfg)
+            mask = (~(g["power_nodes"] >= 2)) if "power_nodes" in g.columns \
+                else pd.Series(True, index=g.index)
+            ax.scatter(g.loc[mask, lc], g.loc[mask, "energy_per_token_j"],
+                       marker="x", color="0.15", s=20, zorder=7)
+        return False
+
+    gpu_scope = ("power_scope" in df.columns
+                 and df["power_scope"].dropna().eq("gpu_devices").all())
+    note = (r"$\times$ power sampled on the head node only: per-token energy "
+            "is a lower bound at those points.")
+    _model_grid(df, "energy_grid", out, fmts, panel,
+                "GPU energy per token (J)" if gpu_scope
+                else "Sampled energy per token (J)",
+                finalize_panel=lambda ax: ax.set_ylim(bottom=0),
+                footnote=note if head_only else None)
+    if head_only:
+        print("  WARNING: energy_grid has head-node-only dual points; "
+              "check power_nodes before quoting those numbers")
+
+
+# ---- single figures ----------------------------------------------------------
+def fig_kv_capacity(df, out, fmts):
+    """KV capacity per (model, config): maximum-length requests that fit.
+
+    max_concurrency = total KV tokens / max_model_len, from the vLLM startup
+    log. Doubling a model over two Sparks roughly doubles it (weights are
+    split, freeing memory for KV) -- the mechanism behind TP=2 winning on the
+    small models whose single-node ceiling is KV-bound. Log scale: the span is
+    14.5 (Qwen3-32B single) to ~2000 (hybrid-cache Nemotron Nano dual).
+    """
+    if not has(df, ["max_concurrency"]):
+        print("  kv_capacity: no max_concurrency in index, skipping")
+        return
+    models = models_by_size(df)
+    mv = _model_values(df)
+    configs = [c for c in CONFIG_ORDER if (df["config_label"] == c).any()]
+    fig, ax = plt.subplots(figsize=(TEXT_W, 2.4))
+    x = np.arange(len(models))
+    width = min(0.8 / max(len(configs), 1), 0.26)
+    maxlen = None
+    for j, cfg in enumerate(configs):
+        s = CONFIG_STYLE.get(cfg, dict(color="0.5", label=cfg))
+        vals = []
+        for m in models:
+            sub = df[(mv == m) & (df["config_label"] == cfg)]
+            v = sub["max_concurrency"].dropna()
+            vals.append(float(v.iloc[0]) if len(v) else np.nan)
+            ml = sub["max_model_len"].dropna() if "max_model_len" in sub else []
+            maxlen = int(ml.iloc[0]) if len(ml) else maxlen
+        off = (j - (len(configs) - 1) / 2) * width
+        ax.bar(x + off, vals, width, color=s["color"], label=s["label"])
+        for xi, v in zip(x + off, vals):
+            if pd.notna(v):
+                ax.annotate(f"{v:,.0f}", (xi, v), textcoords="offset points",
+                            xytext=(0, 1.5), ha="center", fontsize=5.5,
+                            color="0.25")
+    ax.set_yscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels([meta_for(m)["pretty"] for m in models],
+                       rotation=25, ha="right", fontsize=7)
+    unit = f"{maxlen:,}-token" if maxlen else "max-length"
+    ax.set_ylabel(f"KV capacity ({unit} requests)", fontsize=8)
+    ax.grid(axis="x", visible=False)
+    ax.legend(fontsize=7, ncol=len(configs), loc="upper left")
+    save(fig, "kv_capacity", out, fmts, tight=True)
+
+
+def _bytes_fmt(v, _):
+    for unit, div in (("GiB", 2 ** 30), ("MiB", 2 ** 20), ("KiB", 2 ** 10)):
+        if v >= div:
+            return f"{v / div:g} {unit}"
+    return f"{int(v)} B"
+
+
+def fig_allreduce(df, out, fmts, results_dir):
+    """Dual-node all-reduce microbenchmark: latency and bus bandwidth vs size.
+
+    The macro explanation figure: TP=2 inserts two all-reduces per decoded
+    token per layer, whose payloads (batch x hidden state) sit exactly in the
+    region where the 200 GbE link still pays its ~150 us floor and delivers a
+    small fraction of line rate. The shaded band marks those decode payloads
+    for the 8K-hidden Llama-70B sweep (c=1..128 at bf16 activations).
+    """
+    paths = sorted(glob.glob(os.path.join(results_dir, "allreduce_*.csv")))
+    if not paths:
+        print(f"  allreduce: no allreduce_*.csv under {results_dir}, skipping")
+        return
+    runs = [pd.read_csv(p) for p in paths]
+    merged = pd.concat(runs).groupby("bytes", as_index=False).agg(
+        avg_s=("avg_s", "mean"), avg_lo=("avg_s", "min"),
+        avg_hi=("avg_s", "max"), bw=("busbw_GBps", "mean"),
+        bw_lo=("busbw_GBps", "min"), bw_hi=("busbw_GBps", "max"))
+    merged = merged.sort_values("bytes")
+    color = "#0072B2"
+    fig, (axt, axb) = plt.subplots(2, 1, figsize=(COL_W, 3.4), sharex=True)
+
+    axt.plot(merged["bytes"], merged["avg_s"] * 1e6, marker="o",
+             markersize=3.0, linewidth=1.2, color=color)
+    axt.fill_between(merged["bytes"], merged["avg_lo"] * 1e6,
+                     merged["avg_hi"] * 1e6, color=color, alpha=0.15,
+                     linewidth=0)
+    axt.set_yscale("log")
+    axt.set_ylabel("All-reduce latency (µs)", fontsize=8)
+
+    bw = merged[merged["bw"] > 0]
+    axb.plot(bw["bytes"], bw["bw"], marker="o", markersize=3.0,
+             linewidth=1.2, color=color)
+    axb.fill_between(bw["bytes"], bw["bw_lo"], bw["bw_hi"], color=color,
+                     alpha=0.15, linewidth=0)
+    axb.set_yscale("log")
+    axb.set_ylabel("Bus bandwidth (GB/s)", fontsize=8)
+    axb.set_xlabel("Message size", fontsize=8)
+
+    peak = float(merged["bw"].max())
+    axb.axhline(peak, color=SLO_COLOR, linestyle=":", linewidth=0.9)
+    axb.annotate(
+        f"plateau {peak:.1f} GB/s "
+        f"({peak / LINE_RATE_GBPS * 100:.0f}% of 200 GbE)",
+        xy=(float(merged['bytes'].iloc[0]) * 2, peak),
+        xytext=(0, -8), textcoords="offset points",
+        fontsize=6.0, color="0.25", va="top")
+
+    # Llama-3.3-70B decode all-reduce payloads: tokens_in_flight x hidden 8192
+    # x 2 B (bf16 activations), c = 1 .. 128.
+    lo, hi = 1 * 8192 * 2, 128 * 8192 * 2
+    for ax in (axt, axb):
+        ax.axvspan(lo, hi, color="0.75", alpha=0.25, linewidth=0)
+    axt.annotate("decode payloads\n(70B, c=1–128)",
+                 xy=(math.sqrt(lo * hi), 1), xycoords=("data", "axes fraction"),
+                 xytext=(0, -5), textcoords="offset points",
+                 ha="center", va="top", fontsize=6.0, color="0.25")
+
+    axb.set_xscale("log", base=2)
+    ticks = [2 ** k for k in (3, 7, 11, 15, 19, 23, 27, 30)]
+    axb.set_xticks([t for t in ticks
+                    if merged["bytes"].min() <= t <= merged["bytes"].max()])
+    axb.xaxis.set_major_formatter(FuncFormatter(_bytes_fmt))
+    axb.xaxis.set_minor_formatter(NullFormatter())
+    for ax in (axt, axb):
+        ax.tick_params(labelsize=6.5)
+    plt.setp(axb.get_xticklabels(), rotation=30, ha="right")
+    save(fig, "allreduce", out, fmts)
+
+
+# ---- peak table --------------------------------------------------------------
+def write_peak_table(df, out) -> None:
+    """Compact headline table: one row per (model, config) at its best load.
+
+    The 152-point summary table is an artifact appendix; this is the table
+    that fits in the paper body. Peak throughput is each config's best exact
+    token-in-window rate over the sweep; latency columns are the unloaded
+    (c=1) medians; energy columns describe the peak-throughput point.
+    """
+    tcol = _throughput_col(df)
+    energy = has(df, ["energy_per_token_j"])
+    mv = _model_values(df)
+    rows = []
+    for model in models_by_size(df):
+        msub = df[mv == model]
+        for cfg in configs_present(msub):
+            g, lc, _ = group(msub, cfg)
+            if not g[tcol].notna().any():
+                continue
+            pk = g.loc[g[tcol].idxmax()]
+            c1 = g[g[lc] == 1]
+            c1 = c1.iloc[0] if len(c1) else None
+            nodes = 2 if cfg in DUAL_NODE_CONFIGS else 1
+            rows.append({
+                "model": meta_for(model)["pretty"],
+                "quant": meta_for(model)["quant"].upper(),
+                "cfg": CONFIG_STYLE.get(cfg, {}).get("label", cfg),
+                "peak": float(pk[tcol]),
+                "at": pk[lc],
+                "pernode": float(pk[tcol]) / nodes,
+                "ttft1": (float(c1["ttft_p50"]) * 1e3
+                          if c1 is not None and pd.notna(c1.get("ttft_p50"))
+                          else np.nan),
+                "itl1": (float(c1["itl_p50"]) * 1e3
+                         if c1 is not None and pd.notna(c1.get("itl_p50"))
+                         else np.nan),
+                "jtok": (float(pk.get("energy_per_token_j", np.nan))
+                         if energy else np.nan),
+                "star": head_only_power(cfg, pd.DataFrame([pk])),
+            })
+    os.makedirs(out, exist_ok=True)
+
+    headers = ["Model", "Prec.", "Config", "Peak tok/s", "@c",
+               "tok/s/node", "TTFT@1 (ms)", "ITL@1 (ms)"]
+    if energy:
+        headers.append("J/tok@peak")
+    md = ["| " + " | ".join(headers) + " |",
+          "|---|---|---|" + "--:|" * (len(headers) - 3)]
+    for r in rows:
+        cells = [r["model"], r["quant"], r["cfg"], _fmt(r["peak"], ".0f"),
+                 _fmt(r["at"], ".0f"), _fmt(r["pernode"], ".0f"),
+                 _fmt(r["ttft1"], ".0f"), _fmt(r["itl1"], ".0f")]
+        if energy:
+            cells.append(f"{_fmt(r['jtok'], '.2f')}{'*' if r['star'] else ''}")
+        md.append("| " + " | ".join(cells) + " |")
+    if energy and any(r["star"] for r in rows):
+        md += ["", "* head-node power only; J/tok is a lower bound."]
+    path = os.path.join(out, "peak_table.md")
+    with open(path, "w") as f:
+        f.write("\n".join(md) + "\n")
+    print(f"  wrote {path}")
+
+    ecol = "r" if energy else ""
+    ehead = r" & J/tok\textsuperscript{peak}" if energy else ""
+    lines = [
+        r"% Requires \usepackage{booktabs}.",
+        r"\begin{tabular}{l l l r r r r r " + ecol + "}",
+        r"\toprule",
+        r"Model & Prec. & Config & Peak tok/s & @$c$ & tok/s/node & "
+        r"TTFT$^{c=1}_{50}$ (ms) & ITL$^{c=1}_{50}$ (ms)" + ehead + r" \\",
+        r"\midrule",
+    ]
+    last_model = None
+    for r in rows:
+        if last_model is not None and r["model"] != last_model:
+            lines.append(r"\addlinespace")
+        last_model = r["model"]
+        eic = ""
+        if energy:
+            star = r"\rlap{$^*$}" if r["star"] else ""
+            eic = f" & {_fmt(r['jtok'], '.2f')}{star}"
+        lines.append(
+            f"{r['model']} & {r['quant']} & {r['cfg']} & "
+            f"{_fmt(r['peak'], '.0f')} & {_fmt(r['at'], '.0f')} & "
+            f"{_fmt(r['pernode'], '.0f')} & {_fmt(r['ttft1'], '.0f')} & "
+            f"{_fmt(r['itl1'], '.0f')}{eic} \\\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    if energy and any(r["star"] for r in rows):
+        lines.append(r"% $^*$ head-node power only; J/tok is a lower bound.")
+    path = os.path.join(out, "peak_table.tex")
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"  wrote {path}")
+
+
+# ---- main --------------------------------------------------------------------
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Generate the complete PMBS26 paper figure/table set")
+    ap.add_argument("--index", default="results/index.csv")
+    ap.add_argument("--out", default="figs/paper")
+    ap.add_argument("--format", default="both", choices=["pdf", "png", "both"])
+    ap.add_argument("--dpi", type=int, default=200)
+    ap.add_argument("--sans", action="store_true",
+                    help="keep the sans-serif font (default is the IEEE "
+                         "Times-like serif)")
+    ap.add_argument(
+        "--allow-incomplete", action="store_true",
+        help="diagnostic only: plot an index with missing loads/repeats")
+    args = ap.parse_args()
+
+    fmts = ["pdf", "png"] if args.format == "both" else [args.format]
+    set_rc(args.dpi, serif=not args.sans)
+    df = load_index(args.index)
+    models = models_present(df)
+    if len(models) < 2:
+        sys.exit("the paper set needs a multi-model index; use "
+                 "plot_results.py for a single model")
+    print(f"loaded {len(df)} rows, {len(models)} models, "
+          f"configs: {', '.join(configs_present(df))}")
+    df = collapse_repeats(df, allow_incomplete=args.allow_incomplete)
+    report_quality(df)
+    warn_low_n(df)
+
+    print("paper grids")
+    fig_throughput_grid(df, args.out, fmts)
+    fig_ttft_grid(df, args.out, fmts)
+    fig_itl_grid(df, args.out, fmts)
+    fig_goodput_grid(df, args.out, fmts)
+    fig_energy_grid(df, args.out, fmts)
+    print("mechanism figures")
+    fig_kv_capacity(df, args.out, fmts)
+    fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".")
+    print("cross-model trends")
+    fig_parallelism_scaling(df, args.out, fmts)
+    fig_dense_vs_moe(df, args.out, fmts)
+    fig_precision_ladder(df, args.out, fmts)
+    fig_efficiency_frontier(df, args.out, fmts)
+    fig_scale_trend(df, args.out, fmts)
+    # fig_model_comparison labels its bars with the index's model values;
+    # hand it a size-ordered copy carrying the curated pretty names so its
+    # axis matches the rest of the paper set.
+    mv = _model_values(df)
+    pretty = pd.concat([df[mv == m] for m in models_by_size(df)]).copy()
+    pretty["model_label"] = _model_values(pretty).map(
+        lambda m: _panel_title(m))
+    fig_model_comparison(pretty, args.out, fmts)
+    print("tables")
+    write_peak_table(df, args.out)
+    write_summary_table(df, args.out)
+    write_capacity_table(df, args.out)
+    print("done")
+
+
+if __name__ == "__main__":
+    main()
