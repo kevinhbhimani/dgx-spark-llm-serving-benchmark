@@ -61,14 +61,15 @@ from plot_results import (
     write_summary_table, fig_model_comparison, MIN_SAMPLES,
 )
 from plot_trends import (
-    meta_for, models_by_size, fig_parallelism_scaling, fig_dense_vs_moe,
-    fig_precision_ladder, fig_efficiency_frontier, fig_scale_trend,
+    clean_log_ticks, meta_for, models_by_size, fig_parallelism_scaling,
+    fig_dense_vs_moe, fig_precision_ladder, fig_efficiency_frontier,
+    fig_scale_trend,
 )
 
 # SLO bounds drawn as reference lines. Values mirror configs/experiment.yaml
 # (ttft_slo_s, itl_slo_s, itl_slo_s2); the goodput columns in the index were
 # scored against these same bounds.
-TTFT_SLO_MS = 3000.0
+TTFT_SLO_S = 3.0
 ITL_SLO_MS = 100.0
 ITL_SLO2_MS = 200.0
 
@@ -80,6 +81,21 @@ PANEL_TITLE_FS = 7.0
 PANEL_TICK_FS = 6.0
 PANEL_LABEL_FS = 7.5
 SLO_COLOR = "0.35"
+
+
+def _publication_rc() -> None:
+    """Camera-ready hardening on top of set_rc().
+
+    IEEE PDF eXpress rejects matplotlib's default Type 3 font subsetting, so
+    embed TrueType (Type 42) outlines instead. That rules out the CFF-only
+    Nimbus Roman fallback; Liberation Serif is metric-compatible with Times
+    and ships as TrueType on this machine.
+    """
+    plt.rcParams.update({
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "font.serif": ["Times New Roman", "Liberation Serif", "DejaVu Serif"],
+    })
 
 
 def _panel_load_axis(ax, loads) -> None:
@@ -130,7 +146,8 @@ def _panel_title(model: str) -> str:
 
 
 def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
-                finalize_panel=None, extra_proxies=(), footnote=None):
+                finalize_panel=None, panel_note=None, extra_proxies=(),
+                footnote=None):
     """Small-multiples frame: one panel per model plus a legend cell.
 
     draw_panel(ax, g, load_col, style, cfg) plots one config series into a
@@ -155,7 +172,8 @@ def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
     all_loads: list[float] = []
     for ax, model in zip(flat, models):
         msub = df[mv == model]
-        for cfg in configs_present(msub):
+        cfgs = configs_present(msub)
+        for cfg in cfgs:
             g, lc, _ = group(msub, cfg)
             s = style_for(cfg, CONFIG_ORDER.index(cfg)
                           if cfg in CONFIG_ORDER else 0)
@@ -165,7 +183,15 @@ def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
             all_loads += g[lc].tolist()
         if finalize_panel is not None:
             finalize_panel(ax)
-        ax.set_title(_panel_title(model), fontsize=PANEL_TITLE_FS, pad=3)
+        if panel_note is not None:
+            panel_note(ax, msub)
+        # a single-series panel is a skipped-config finding (e.g. FP8-70B
+        # runs TP=2 only); say so in the title so it cannot read as missing
+        # data
+        title = _panel_title(model)
+        if cfgs == ["tp2"]:
+            title += " (TP=2 only)"
+        ax.set_title(title, fontsize=PANEL_TITLE_FS, pad=3)
     for ax in flat[:n]:
         _panel_load_axis(ax, all_loads)
     # x labels on the lowest data panel of each column (the legend cell and
@@ -223,17 +249,18 @@ def fig_ttft_grid(df, out, fmts):
                  label="TTFT SLO 3 s")
 
     def panel(ax, g, lc, s, cfg):
-        y = g["ttft_p50"] * 1e3
+        y = g["ttft_p50"]
         ax.plot(g[lc], y, marker=s["marker"], color=s["color"],
                 markersize=3.2, linewidth=1.2)
         return _mark_low_n_panel(ax, g, g[lc], y)
 
     def finalize(ax):
         ax.set_yscale("log")
-        ax.axhline(TTFT_SLO_MS, color=SLO_COLOR, linestyle=":",
+        ax.axhline(TTFT_SLO_S, color=SLO_COLOR, linestyle=":",
                    linewidth=0.9)
+        clean_log_ticks(ax)
 
-    _model_grid(df, "ttft_grid", out, fmts, panel, "Median TTFT (ms)",
+    _model_grid(df, "ttft_grid", out, fmts, panel, "Median TTFT (s)",
                 finalize_panel=finalize, extra_proxies=[slo])
 
 
@@ -256,6 +283,7 @@ def fig_itl_grid(df, out, fmts):
         ax.axhline(ITL_SLO_MS, color=SLO_COLOR, linestyle=":", linewidth=0.9)
         ax.axhline(ITL_SLO2_MS, color=SLO_COLOR, linestyle="-.",
                    linewidth=0.9)
+        clean_log_ticks(ax)
 
     _model_grid(df, "itl_grid", out, fmts, panel,
                 "Median inter-token latency (ms)",
@@ -287,9 +315,18 @@ def fig_goodput_grid(df, out, fmts):
         # A minimum y-span keeps such panels legibly flat at zero.
         ax.set_ylim(0, max(0.25, ax.get_ylim()[1]))
 
+    def note(ax, msub):
+        # flat-zero panels are the finding, not missing data -- say so on the
+        # panel itself (32B/70B dense: the ITL floor sits above both tiers)
+        cols = ["goodput_rps"] + (["goodput_itl2_rps"] if has_itl2 else [])
+        if float(msub[cols].max().max()) < 0.05:
+            ax.text(0.5, 0.62, "goodput $\\approx$ 0\nat every load",
+                    transform=ax.transAxes, ha="center", va="center",
+                    fontsize=6.0, color="0.35", style="italic")
+
     _model_grid(df, "goodput_grid", out, fmts, panel,
                 "Goodput under SLO (req/s)",
-                finalize_panel=finalize,
+                finalize_panel=finalize, panel_note=note,
                 extra_proxies=[strict, loose] if has_itl2 else [strict])
 
 
@@ -361,13 +398,17 @@ def fig_kv_capacity(df, out, fmts):
                             xytext=(0, 1.5), ha="center", fontsize=5.5,
                             color="0.25")
     ax.set_yscale("log")
+    clean_log_ticks(ax)
     ax.set_xticks(x)
     ax.set_xticklabels([meta_for(m)["pretty"] for m in models],
                        rotation=25, ha="right", fontsize=7)
     unit = f"{maxlen:,}-token" if maxlen else "max-length"
     ax.set_ylabel(f"KV capacity ({unit} requests)", fontsize=8)
     ax.grid(axis="x", visible=False)
-    ax.legend(fontsize=7, ncol=len(configs), loc="upper left")
+    # legend above the axes: inside the frame it overlaps the tall Nano bars
+    # and their value labels
+    ax.legend(fontsize=7, ncol=len(configs), loc="lower left",
+              bbox_to_anchor=(0, 1.01), borderaxespad=0)
     save(fig, "kv_capacity", out, fmts, tight=True)
 
 
@@ -446,6 +487,114 @@ def fig_allreduce(df, out, fmts, results_dir):
         ax.tick_params(labelsize=6.5)
     plt.setp(axb.get_xticklabels(), rotation=30, ha="right")
     save(fig, "allreduce", out, fmts)
+
+
+# Transport hues (Okabe-Ito, CVD-safe) for the interconnect comparison; the
+# collective (TP's all-reduce vs PP's p2p) is carried by linestyle+marker so
+# neither dimension relies on colour alone.
+TRANSPORT_STYLE = {
+    "tcp":   dict(color="#0072B2", label="TCP sockets"),
+    "roce":  dict(color="#D55E00", label="RoCE / RDMA"),
+}
+_TCP_TUNED_COLOR = "#009E73"
+COLLECTIVE_STYLE = {
+    "allreduce": dict(linestyle="-", marker="o", label="all-reduce (TP)"),
+    "sendrecv":  dict(linestyle="--", marker="s", label="send/recv (PP)"),
+}
+
+
+def _transport_style(transport: str) -> dict:
+    if transport in TRANSPORT_STYLE:
+        return TRANSPORT_STYLE[transport]
+    if str(transport).startswith("tcp-tuned"):
+        return dict(color=_TCP_TUNED_COLOR, label=str(transport))
+    return dict(color="0.5", label=str(transport))
+
+
+def fig_interconnect(out, fmts, results_dir):
+    """Transport x collective interconnect comparison from the extra microbench.
+
+    Reads scripts/interconnect_extra_bench.sh output (interconnect_extra_*.csv:
+    collective, transport, bytes, avg_s, ...). Overlays each transport (TCP vs
+    RoCE vs tuned sockets, by hue) and each collective (all-reduce = the TP=2
+    primitive, send/recv = the PP=2 primitive, by linestyle) on shared latency
+    and bandwidth panels, so the paper can show directly (a) whether RoCE moves
+    the plateau/floor the TP conclusion rests on, and (b) that PP's one p2p
+    hand-off is far cheaper than TP's per-layer all-reduce. Draws nothing when
+    no such CSV exists yet, so it is safe to call before the run.
+    """
+    paths = sorted(glob.glob(os.path.join(results_dir,
+                                          "interconnect_extra_*.csv")))
+    if not paths:
+        print("  interconnect: no interconnect_extra_*.csv, skipping "
+              "(run scripts/interconnect_extra_bench.sh under each transport)")
+        return
+    frames = []
+    for p in paths:
+        try:
+            frames.append(pd.read_csv(p))
+        except Exception as exc:
+            print(f"  interconnect: skipping unreadable {p}: {exc}")
+    df = pd.concat(frames, ignore_index=True) if frames else None
+    if df is None or df.empty or not {"collective", "transport", "bytes",
+                                      "avg_s"}.issubset(df.columns):
+        print("  interconnect: CSVs present but columns unexpected, skipping")
+        return
+    agg = (df.groupby(["collective", "transport", "bytes"], as_index=False)
+             .agg(avg_s=("avg_s", "mean"),
+                  bw=("busbw_GBps", "mean")))
+
+    fig, (axt, axb) = plt.subplots(2, 1, figsize=(COL_W, 3.4), sharex=True)
+    transports = [t for t in ["tcp"] + sorted(
+        x for x in agg["transport"].unique() if x != "tcp")]
+    collectives = [c for c in ("allreduce", "sendrecv")
+                   if c in set(agg["collective"])]
+    for transport in transports:
+        ts = _transport_style(transport)
+        for coll in collectives:
+            cs = COLLECTIVE_STYLE[coll]
+            sub = agg[(agg["transport"] == transport)
+                      & (agg["collective"] == coll)].sort_values("bytes")
+            if sub.empty:
+                continue
+            axt.plot(sub["bytes"], sub["avg_s"] * 1e6, color=ts["color"],
+                     linestyle=cs["linestyle"], marker=cs["marker"],
+                     markersize=2.6, linewidth=1.1)
+            bw = sub[sub["bw"] > 0]
+            axb.plot(bw["bytes"], bw["bw"], color=ts["color"],
+                     linestyle=cs["linestyle"], marker=cs["marker"],
+                     markersize=2.6, linewidth=1.1)
+    axt.set_yscale("log")
+    axt.set_ylabel("One-hop latency (µs)", fontsize=8)
+    axb.set_yscale("log")
+    axb.set_ylabel("Bus bandwidth (GB/s)", fontsize=8)
+    axb.set_xlabel("Message size", fontsize=8)
+    axb.axhline(LINE_RATE_GBPS, color=SLO_COLOR, linestyle=":", linewidth=0.9)
+    axb.annotate(f"200 GbE line rate ({LINE_RATE_GBPS:.0f} GB/s)",
+                 xy=(float(agg["bytes"].min()) * 2, LINE_RATE_GBPS),
+                 xytext=(0, -8), textcoords="offset points",
+                 fontsize=6.0, color="0.25", va="top")
+    # decode all-reduce payloads for the 70B sweep, as in fig_allreduce
+    lo, hi = 1 * 8192 * 2, 128 * 8192 * 2
+    for ax in (axt, axb):
+        ax.axvspan(lo, hi, color="0.75", alpha=0.25, linewidth=0)
+    axb.set_xscale("log", base=2)
+    ticks = [2 ** k for k in (3, 7, 11, 15, 19, 23, 27, 30)]
+    axb.set_xticks([t for t in ticks
+                    if agg["bytes"].min() <= t <= agg["bytes"].max()])
+    axb.xaxis.set_major_formatter(FuncFormatter(_bytes_fmt))
+    axb.xaxis.set_minor_formatter(NullFormatter())
+    for ax in (axt, axb):
+        ax.tick_params(labelsize=6.5)
+    plt.setp(axb.get_xticklabels(), rotation=30, ha="right")
+    proxies = [Line2D([], [], color=_transport_style(t)["color"],
+                      label=_transport_style(t)["label"]) for t in transports]
+    proxies += [Line2D([], [], color="0.35", linestyle=COLLECTIVE_STYLE[c][
+        "linestyle"], marker=COLLECTIVE_STYLE[c]["marker"], markersize=3,
+        label=COLLECTIVE_STYLE[c]["label"]) for c in collectives]
+    axt.legend(handles=proxies, fontsize=5.8, ncol=2, frameon=False,
+               loc="upper left")
+    save(fig, "interconnect", out, fmts)
 
 
 # ---- peak table --------------------------------------------------------------
@@ -561,6 +710,7 @@ def main() -> None:
 
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
     set_rc(args.dpi, serif=not args.sans)
+    _publication_rc()
     df = load_index(args.index)
     models = models_present(df)
     if len(models) < 2:
@@ -581,6 +731,7 @@ def main() -> None:
     print("mechanism figures")
     fig_kv_capacity(df, args.out, fmts)
     fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".")
+    fig_interconnect(args.out, fmts, os.path.dirname(args.index) or ".")
     print("cross-model trends")
     fig_parallelism_scaling(df, args.out, fmts)
     fig_dense_vs_moe(df, args.out, fmts)
