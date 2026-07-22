@@ -35,6 +35,7 @@ labels the table does not know.
 """
 from __future__ import annotations
 import argparse
+import math
 import re
 import sys
 import numpy as np
@@ -42,6 +43,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patheffects import withStroke
+from matplotlib.ticker import FuncFormatter, NullFormatter
+from matplotlib.transforms import Bbox
 
 from plot_results import (
     COL_W, DUAL_NODE_CONFIGS, PANEL_H, TEXT_W, CONFIG_ORDER, CONFIG_STYLE,
@@ -65,6 +68,15 @@ MODEL_META = {
     "qwen3-30b-a3b": dict(
         pretty="Qwen3-30B-A3B", arch="moe", quant="bf16", nvidia=False,
         params_b=30.5, active_b=3.3),
+    "llama3.1-8b": dict(
+        pretty="Llama-3.1-8B", arch="dense", quant="bf16", nvidia=False,
+        params_b=8.0, active_b=8.0, ladder_base="llama3.1-8b"),
+    "llama3.1-8b-fp8": dict(
+        pretty="Llama-3.1-8B FP8", arch="dense", quant="fp8", nvidia=True,
+        params_b=8.0, active_b=8.0, ladder_base="llama3.1-8b"),
+    "llama3.1-8b-nvfp4": dict(
+        pretty="Llama-3.1-8B NVFP4", arch="dense", quant="nvfp4", nvidia=True,
+        params_b=8.0, active_b=8.0, ladder_base="llama3.1-8b"),
     "llama3.3-70b": dict(
         pretty="Llama-3.3-70B", arch="dense", quant="bf16", nvidia=False,
         params_b=70.6, active_b=70.6, ladder_base="llama3.3-70b"),
@@ -117,6 +129,44 @@ def models_by_size(df: pd.DataFrame) -> list[str]:
     return sorted(models_present(df), key=lambda m: meta_for(m)["params_b"])
 
 
+def gpu_power_scope(df: pd.DataFrame) -> bool:
+    """True when every power sample in the index is GPU-device scope, so axis
+    labels can say "GPU energy"/"GPU watt" instead of the vaguer "sampled"."""
+    return ("power_scope" in df.columns
+            and df["power_scope"].dropna().eq("gpu_devices").all())
+
+
+def clean_log_ticks(ax, axis: str = "y", max_ticks: int = 6) -> None:
+    """Round-number major ticks for a log axis, replacing scientific notation.
+
+    Log axes spanning less than a couple of decades pick up matplotlib's
+    labeled minor ticks in 2x10^2-style notation, which is noisy at paper
+    sizes and inconsistent from panel to panel. Mantissa sets are tried from
+    densest to sparsest (1-2-5, then 1-3, then decades) and the first that
+    fits max_ticks wins; labels are plain numbers. Axes whose span defeats
+    even decade ticks keep the defaults.
+    """
+    lo, hi = ax.get_ylim() if axis == "y" else ax.get_xlim()
+    if not (lo > 0 and hi > lo):
+        return
+    ticks: list[float] = []
+    for mants in ((1, 2, 5), (1, 3), (1,)):
+        ticks = [m * 10.0 ** e
+                 for e in range(math.floor(math.log10(lo)),
+                                math.ceil(math.log10(hi)) + 1)
+                 for m in mants]
+        ticks = [t for t in ticks if lo <= t <= hi]
+        if len(ticks) <= max_ticks:
+            break
+    if len(ticks) < 2:
+        return
+    which = ax.yaxis if axis == "y" else ax.xaxis
+    which.set_ticks(ticks)
+    which.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    which.set_minor_formatter(NullFormatter())
+    (ax.set_ylim if axis == "y" else ax.set_xlim)(lo, hi)
+
+
 # Precision hues (Okabe-Ito, adjacent-pair CVD dE >= 12.4 under
 # protan/deutan/tritan simulation, normal-vision dE >= 24). Identity is also
 # carried by the legend order and per-config linestyle/marker, never hue alone.
@@ -164,7 +214,7 @@ def _name_point(ax, x, y, label):
     crossings. Scatter figures call this once per model (not per point) and
     pass the returned texts to _spread_labels() to resolve collisions."""
     return ax.annotate(label, (x, y), textcoords="offset points", xytext=(3, 3),
-                       fontsize=5.5, color="0.25",
+                       fontsize=5.5, color="0.25", zorder=7,
                        path_effects=[withStroke(linewidth=1.5,
                                                 foreground="white")])
 
@@ -176,8 +226,9 @@ def _spread_labels(fig, ax, texts) -> None:
     default up-right labels. Text extents exist only after a draw, so render
     once, then (1) right-anchor any label that would run past the axes' right
     edge and (2) walk labels left to right, pushing each one down by the
-    pixel overlap with every already-placed label. Offsets are in points, so
-    pixel gaps are converted via the renderer dpi.
+    pixel overlap with every already-placed label and with every data marker
+    (a label sitting on someone else's point misattributes it). Offsets are
+    in points, so pixel gaps are converted via the renderer dpi.
     """
     if not texts:
         return
@@ -190,12 +241,17 @@ def _spread_labels(fig, ax, texts) -> None:
             t.set_ha("right")
             dx, dy = t.get_position()
             t.set_position((-abs(dx), dy))
+    pad = 3.5  # px half-extent of a scatter marker
+    markers = [Bbox([[x - pad, y - pad], [x + pad, y + pad]])
+               for coll in ax.collections
+               for x, y in ax.transData.transform(coll.get_offsets())]
     placed = []
     for t in sorted(texts, key=lambda t: t.get_window_extent(renderer).x0):
         bb = t.get_window_extent(renderer)
         guard = 0
-        while any(bb.overlaps(p) for p in placed) and guard < 20:
-            worst = max(bb.y1 - p.y0 for p in placed if bb.overlaps(p))
+        while any(bb.overlaps(p) for p in placed + markers) and guard < 20:
+            worst = max(bb.y1 - p.y0 for p in placed + markers
+                        if bb.overlaps(p))
             dx, dy = t.get_position()
             t.set_position((dx, dy - (worst + 2) * px_to_pt))
             bb = t.get_window_extent(renderer)
@@ -252,14 +308,17 @@ def fig_parallelism_scaling(df, out, fmts):
         axl.set_xticklabels([meta_for(m)["pretty"] for m in ms],
                             rotation=30, ha="right", fontsize=7)
         axl.set_ylabel("Peak throughput vs single Spark")
-        axl.set_ylim(0, max(2.2, np.nanmax(tp + pp) * 1.12))
+        # headroom above the ideal-2x line so the legend does not sit on it;
+        # the white patch keeps the reference lines from striking the text
+        axl.set_ylim(0, max(2.55, np.nanmax(tp + pp) * 1.12))
         axl.grid(axis="x", visible=False)
         handles, labels = axl.get_legend_handles_labels()
         handles += [Line2D([], [], color="0.4", linewidth=0.8),
                     Line2D([], [], color="0.4", linewidth=0.8,
                            linestyle="--")]
         labels += ["single-node parity", "ideal 2x"]
-        axl.legend(handles, labels, fontsize=6.5, ncol=2)
+        axl.legend(handles, labels, fontsize=6.5, ncol=2, loc="upper left",
+                   frameon=True, framealpha=0.9, edgecolor="none")
     else:
         axl.axis("off")
         axl.text(0.5, 0.5, "no single-node baselines in index",
@@ -335,7 +394,8 @@ def fig_dense_vs_moe(df, out, fmts):
         axl.set_ylabel("Output token throughput (tok/s)")
         axl.set_ylim(bottom=0)
         if energy_ok:
-            axr.set_ylabel("Sampled energy per token (J)")
+            axr.set_ylabel("GPU energy per token (J)" if gpu_power_scope(df)
+                           else "Sampled energy per token (J)")
             axr.set_ylim(bottom=0)
         else:
             axr.set_ylabel("Median inter token latency (ms)")
@@ -413,7 +473,8 @@ def fig_precision_ladder(df, out, fmts):
         axl.set_ylim(bottom=0)
         if energy_ok:
             set_load_axis(axr, all_loads, mode)
-            axr.set_ylabel("Sampled energy per token (J)")
+            axr.set_ylabel("GPU energy per token (J)" if gpu_power_scope(df)
+                           else "Sampled energy per token (J)")
             axr.set_ylim(bottom=0)
         else:
             axr.axis("off")
@@ -429,10 +490,10 @@ def fig_precision_ladder(df, out, fmts):
                            label=CONFIG_STYLE[c]["label"])
                     for c in CONFIG_ORDER if c in used_cfgs]
         axl.legend(handles=proxies, fontsize=7)
-        name = "precision_ladder"
-        if len(ladders) > 1:
-            name += f"_{_slug(base)}"
-        save(fig, name, out, fmts)
+        # Always suffix by base slug so a figure's filename is stable whether
+        # the index carries one ladder or several: adding a second base must
+        # not rename the first out from under the paper's \includegraphics.
+        save(fig, f"precision_ladder_{_slug(base)}", out, fmts)
 
 
 def fig_efficiency_frontier(df, out, fmts):
@@ -482,8 +543,10 @@ def fig_efficiency_frontier(df, out, fmts):
     # headroom so the per-point name labels stay inside the axes
     ax.margins(x=0.15, y=0.10)
     ax.set_xlabel("Peak output token throughput (tok/s)")
-    ax.set_ylabel("Tokens per sampled watt (tok/s/W)")
+    ax.set_ylabel("Tokens per GPU watt (tok/s/W)" if gpu_power_scope(df)
+                  else "Tokens per sampled watt (tok/s/W)")
     ax.set_ylim(bottom=0)
+    clean_log_ticks(ax, axis="x")
     proxies = [Line2D([], [], linestyle="none", marker="o",
                       color=CLASS_STYLE[c]["color"],
                       label=CLASS_STYLE[c]["label"])
@@ -554,6 +617,10 @@ def fig_scale_trend(df, out, fmts):
     ax.margins(x=0.15, y=0.10)
     ax.set_xlabel("Model weight footprint (GiB)")
     ax.set_ylabel("Peak output token throughput (tok/s)")
+    # plain numbers on both log axes: 16/32/64 GiB, not 2^k tok/s powers
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    clean_log_ticks(ax, axis="y")
     proxies = [Line2D([], [], linestyle="none",
                       marker=CONFIG_STYLE[c]["marker"],
                       color=CONFIG_STYLE[c]["color"],

@@ -93,6 +93,41 @@ models:
     configs: [single, tp2, pp2]
     max_model_len: 8704
 
+  # ---- Llama-3.1-8B precision ladder (single quantization toolchain) --------
+  # Same base weights served at BF16 / FP8 / NVFP4 to isolate precision as the
+  # only variable, complementing the Llama-3.3-70B ladder at the small-model
+  # end and turning "NVFP4 is what Blackwell is for" into a two-size trend
+  # rather than a single-model anecdote. 8B fits one GB10 comfortably at every
+  # precision (~16 GiB bf16), so all three configs run and the c=1
+  # successful-request floor that skipped the 70B bf16/fp8 single/pp2 legs
+  # does not bite here. FP8 and NVFP4 are NVIDIA ModelOpt PRE-QUANTIZED
+  # checkpoints from the same base: both carry their own quant metadata
+  # (NVFP4 in config.json quantization_config, FP8 in hf_quant_config.json,
+  # both producer=modelopt) which vLLM auto-detects, so -- exactly like the
+  # other pre-quantized entries -- they set no quant field (forcing
+  # --quantization would abort on a method-name mismatch). The FP8 checkpoint
+  # additionally quantizes the KV cache to FP8 (kv_cache_quant_algo=FP8), which
+  # is NVIDIA's reference FP8 recipe; note this when reading the ladder.
+  # meta-llama base is gated (manual): the campaign HF_TOKEN must already have
+  # accepted its license, same as the Llama-3.3-70B entries.
+  - name: meta-llama/Llama-3.1-8B-Instruct
+    label: llama3.1-8b
+    revision: 0e9e39f249a16976918f6564b8830bc894c89659
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+
+  - name: nvidia/Llama-3.1-8B-Instruct-FP8
+    label: llama3.1-8b-fp8
+    revision: 42d9515ebd69eea3a87351d079c671c3c5ff0a31
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+
+  - name: nvidia/Llama-3.1-8B-Instruct-NVFP4
+    label: llama3.1-8b-nvfp4
+    revision: bdb54e24298451af785c0ac63c1b485e9b7400a2
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+
   # NVIDIA-optimized sparse model. Pre-quantized NVFP4 checkpoint: the config
   # declares its method as modelopt_fp4, so passing --quantization nvfp4 aborts
   # the launch with a method mismatch; let vLLM auto-detect instead.
@@ -114,32 +149,3 @@ models:
     configs: [single, tp2, pp2]
     max_model_len: 8704
     trust_remote_code: true
-
-  # ------------------------------------------------------------------
-  # Cut from the paper matrix. Re-enable by uncommenting.
-  # ------------------------------------------------------------------
-
-  # Qwen3-VL-8B on the text-only workload reproduced Qwen3-8B within noise
-  # across the whole sweep (identical text backbone), so it spends a model slot
-  # saying nothing. Re-add it only together with an image workload that
-  # actually exercises the vision encoder.
-  # - name: Qwen/Qwen3-VL-8B-Instruct
-  #   label: qwen3-vl-8b
-  #   configs: [single, tp2]
-  #   max_model_len: 8704
-
-  # Large open multimodal models for UD researchers' on-prem VLM evaluation;
-  # never yet benchmarked, not part of the PMBS matrix, and each adds ~5h per
-  # dual-node config. The default workload is text-only, so these would measure
-  # the text path at scale anyway. Note llama4-scout previously needed
-  # gpu_util 0.88 to fit at all, which breaks the uniform-0.80 comparison
-  # policy; treat any run of it as a capability demo, not a comparable point.
-  # - name: Qwen/Qwen2.5-VL-72B-Instruct
-  #   label: qwen2.5-vl-72b
-  #   configs: [tp2, pp2]
-  #   max_model_len: 8704
-  # - name: meta-llama/Llama-4-Scout-17B-16E-Instruct
-  #   label: llama4-scout-17b-16e
-  #   configs: [tp2, pp2]
-  #   max_model_len: 8704
-  #   gpu_util: 0.88
