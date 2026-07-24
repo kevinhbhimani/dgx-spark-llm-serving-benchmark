@@ -366,12 +366,20 @@ def fig_parallelism_scaling(df, out, fmts):
             continue
         axp.scatter(value, yi, color=pp_style["color"], marker="D",
                     s=24, zorder=3)
+        # Clear the marker before the text starts: s=24 pt^2 is ~4.9 pt wide,
+        # so a 3 pt offset from the centre left the label touching the
+        # diamond. Offset past the half-width plus a gap, and carry the same
+        # white halo as _name_point so a label never reads as part of a mark.
         axp.annotate(f"{value:.2f}×", (value, yi),
-                     textcoords="offset points", xytext=(3, 0),
-                     ha="left", va="center", fontsize=6, color="0.25")
+                     textcoords="offset points", xytext=(7, 0),
+                     ha="left", va="center", fontsize=6, color="0.25",
+                     zorder=7,
+                     path_effects=[withStroke(linewidth=1.5,
+                                              foreground="white")])
     axp.axvline(1.0, color="0.35", linewidth=0.8)
     ratio_values = list(ratio.values())
-    axp.set_xlim(0.95, max(1.75, max(ratio_values, default=1.0) * 1.17))
+    # Headroom for the widest label at the rightmost point (offset + ~5 chars).
+    axp.set_xlim(0.95, max(1.75, max(ratio_values, default=1.0) * 1.26))
     axp.set_xlabel("PP peak / TP peak")
     axp.set_title(
         "(b) PP versus TP\n"
