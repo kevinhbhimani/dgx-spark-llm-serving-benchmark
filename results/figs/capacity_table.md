@@ -19,5 +19,14 @@
 | nemotron3-super-120b-a12b-nvfp4 | Single Spark | -- | -- | 69.5 | 24.0 | 1,048,320 | 757 | 8320 | fp8_e4m3 | 0.80 | 8,704 | 108.1 | yes | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
 | nemotron3-super-120b-a12b-nvfp4 | Dual Spark, TP=2 | -- | -- | 36.6 | 56.4 | 4,925,440 | 3,556 | 8320 | fp8_e4m3 | 0.80 | 8,704 | 508.0 | yes | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
 | nemotron3-super-120b-a12b-nvfp4 | Dual Spark, PP=2 | -- | -- | 35.6 | 57.6 | 5,033,600 | 3,632 | 8320 | fp8_e4m3 | 0.80 | 8,704 | 518.9 | yes | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b | Single Spark | -- | -- | 15.0 | 78.2 | 640,608 | 40,038 | 16 | auto | 0.80 | 8,704 | 73.6 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b | Dual Spark, TP=2 | -- | -- | 7.5 | 86.5 | 1,414,096 | 88,381 | 16 | auto | 0.80 | 8,704 | 162.5 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b | Dual Spark, PP=2 | -- | -- | 7.5 | 86.8 | 1,415,120 | 88,445 | 16 | auto | 0.80 | 8,704 | 162.6 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b-fp8 | Single Spark | -- | -- | 8.5 | 84.7 | 1,387,888 | 86,743 | 16 | fp8_e4m3 | 0.80 | 8,704 | 159.4 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b-fp8 | Dual Spark, TP=2 | -- | -- | 4.3 | 89.7 | 2,935,040 | 183,440 | 16 | fp8_e4m3 | 0.80 | 8,704 | 337.2 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b-fp8 | Dual Spark, PP=2 | -- | -- | 4.3 | 90.0 | 2,942,928 | 183,933 | 16 | fp8_e4m3 | 0.80 | 8,704 | 338.1 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b-nvfp4 | Single Spark | -- | -- | 5.7 | 87.7 | 1,436,352 | 89,772 | 16 | fp8_e4m3 | 0.80 | 8,704 | 165.0 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b-nvfp4 | Dual Spark, TP=2 | -- | -- | 2.9 | 91.2 | 2,987,536 | 186,721 | 16 | fp8_e4m3 | 0.80 | 8,704 | 343.2 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| llama3.1-8b-nvfp4 | Dual Spark, PP=2 | -- | -- | 2.8 | 91.3 | 2,993,120 | 187,070 | 16 | fp8_e4m3 | 0.80 | 8,704 | 343.9 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
 
 HF weight/KV cache columns are optional full-model estimates. Worker weight/KV columns come from the vLLM startup log and describe the actual per-worker serving process when a server log was captured.
