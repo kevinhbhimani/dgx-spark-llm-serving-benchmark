@@ -394,9 +394,12 @@ def fig_kv_capacity(df, out, fmts):
         ax.bar(x + off, vals, width, color=s["color"], label=s["label"])
         for xi, v in zip(x + off, vals):
             if pd.notna(v):
+                # stagger adjacent value labels: with 10 model groups the
+                # bars are narrow enough that same-height neighbours
+                # (e.g. Nano's 2,007 / 2,002) run together on one baseline
                 ax.annotate(f"{v:,.0f}", (xi, v), textcoords="offset points",
-                            xytext=(0, 1.5), ha="center", fontsize=5.5,
-                            color="0.25")
+                            xytext=(0, 1.5 + 5.0 * (j % 2)), ha="center",
+                            fontsize=5.5, color="0.25")
     ax.set_yscale("log")
     clean_log_ticks(ax)
     ax.set_xticks(x)
@@ -706,12 +709,33 @@ def main() -> None:
     ap.add_argument(
         "--allow-incomplete", action="store_true",
         help="diagnostic only: plot an index with missing loads/repeats")
+    ap.add_argument(
+        "--drop-incomplete", action="store_true",
+        help="EXCLUDE any (model, config) series whose load rectangle is "
+             "still incomplete instead of failing: for mid-campaign paper "
+             "snapshots, a partial series must not fake a peak at the "
+             "highest load it happens to have reached")
     args = ap.parse_args()
 
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
     set_rc(args.dpi, serif=not args.sans)
     _publication_rc()
     df = load_index(args.index)
+    if args.drop_incomplete:
+        keep = []
+        for (model, cfg), g in df.groupby(["model_label", "config_label"]):
+            expected = set()
+            for raw in g.get("expected_concurrencies", pd.Series(dtype=str)):
+                expected |= {int(t) for t in str(raw or "").split()
+                             if t.isdigit()}
+            observed = set(pd.to_numeric(g["concurrency"],
+                                         errors="coerce").dropna().astype(int))
+            if expected and observed != expected:
+                print(f"  drop-incomplete: excluding {model}/{cfg} "
+                      f"({len(observed)}/{len(expected)} loads measured)")
+                continue
+            keep.append(g)
+        df = pd.concat(keep, ignore_index=True)
     models = models_present(df)
     if len(models) < 2:
         sys.exit("the paper set needs a multi-model index; use "
