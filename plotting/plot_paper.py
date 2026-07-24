@@ -14,6 +14,8 @@ output directory:
   goodput_grid       SLO goodput vs concurrency per model, strict and loose.
   energy_grid        per-token energy vs concurrency per model (both nodes
                      sampled on dual-node rows; head-only points are marked).
+  operating_regimes  representative fast-dense, large-dense, and sparse-MoE
+                     load sweeps: throughput over median ITL in one figure.
   kv_capacity        KV-cache capacity per (model, config): how many maximum
                      length requests fit, the mechanism behind TP=2's wins.
   allreduce          the dual-node all-reduce microbenchmark: latency and bus
@@ -361,6 +363,86 @@ def fig_energy_grid(df, out, fmts):
               "check power_nodes before quoting those numbers")
 
 
+# ---- compact representative figure ------------------------------------------
+def fig_operating_regimes(df, out, fmts):
+    """Representative load curves for the three regimes behind the paper.
+
+    The complete ten-model grids remain audit artifacts.  This two-by-three
+    figure is the body-sized view: a fast quantized dense model, a large dense
+    bandwidth-bound model, and a sparse MoE model.  Throughput and ITL share a
+    concurrency axis, so the reader sees the saturation knee and its
+    user-facing latency consequence without spending two full-page grid slots.
+    """
+    candidates = [
+        ("llama3.1-8b-nvfp4", "Fast dense\nL3.1-8B NVFP4"),
+        ("qwen3-32b", "Large dense\nQwen3-32B BF16"),
+        ("nemotron3-nano-30b-a3b-nvfp4",
+         "Sparse MoE\nN3-Nano-30B-A3B NVFP4"),
+    ]
+    mv = _model_values(df)
+    chosen = [(model, title) for model, title in candidates
+              if (mv == model).any()]
+    if not chosen or not has(df, [_throughput_col(df), "itl_p50"]):
+        print("  operating_regimes: representative series unavailable, "
+              "skipping")
+        return
+
+    tcol = _throughput_col(df)
+    fig, axes = plt.subplots(2, len(chosen), figsize=(TEXT_W, 3.9),
+                             squeeze=False, layout="none")
+    used_cfgs = []
+    for col, (model, title) in enumerate(chosen):
+        msub = df[mv == model]
+        axt, axl = axes[:, col]
+        all_loads = []
+        for cfg in configs_present(msub):
+            g, lc, _ = group(msub, cfg)
+            style = style_for(cfg, CONFIG_ORDER.index(cfg)
+                              if cfg in CONFIG_ORDER else 0)
+            axt.plot(g[lc], g[tcol], color=style["color"],
+                     marker=style["marker"], markersize=3.4,
+                     linewidth=1.2)
+            axl.plot(g[lc], g["itl_p50"] * 1e3, color=style["color"],
+                     marker=style["marker"], markersize=3.4,
+                     linewidth=1.2)
+            all_loads += g[lc].tolist()
+            if cfg not in used_cfgs:
+                used_cfgs.append(cfg)
+        axt.set_title(title, fontsize=8, pad=3)
+        axt.set_ylim(bottom=0)
+        axl.set_yscale("log")
+        axl.axhline(ITL_SLO_MS, color=SLO_COLOR, linestyle=":",
+                    linewidth=0.9)
+        axl.axhline(ITL_SLO2_MS, color=SLO_COLOR, linestyle="-.",
+                    linewidth=0.9)
+        clean_log_ticks(axl)
+        _panel_load_axis(axt, all_loads)
+        _panel_load_axis(axl, all_loads)
+        axt.tick_params(labelbottom=False)
+        axl.set_xlabel("Concurrent requests", fontsize=7.5)
+        if col == 0:
+            axt.set_ylabel("Throughput (tok/s)", fontsize=7.5)
+            axl.set_ylabel("Median ITL (ms)", fontsize=7.5)
+
+    proxies = [
+        Line2D([], [], color=CONFIG_STYLE[c]["color"],
+               marker=CONFIG_STYLE[c]["marker"], markersize=4,
+               label=CONFIG_STYLE[c]["label"])
+        for c in CONFIG_ORDER if c in used_cfgs
+    ]
+    proxies += [
+        Line2D([], [], color=SLO_COLOR, linestyle=":", linewidth=1.0,
+               label="strict ITL SLO (100 ms)"),
+        Line2D([], [], color=SLO_COLOR, linestyle="-.", linewidth=1.0,
+               label="loose ITL SLO (200 ms)"),
+    ]
+    fig.legend(handles=proxies, loc="upper center", ncol=len(proxies),
+               fontsize=6.4, frameon=False, bbox_to_anchor=(0.5, -0.01),
+               handlelength=1.8, columnspacing=0.9)
+    fig.subplots_adjust(top=0.92, bottom=0.17, hspace=0.15)
+    save(fig, "operating_regimes", out, fmts, tight=True)
+
+
 # ---- single figures ----------------------------------------------------------
 def fig_kv_capacity(df, out, fmts):
     """KV capacity per (model, config): maximum-length requests that fit.
@@ -425,11 +507,11 @@ def _bytes_fmt(v, _):
 def fig_allreduce(df, out, fmts, results_dir):
     """Dual-node all-reduce microbenchmark: latency and bus bandwidth vs size.
 
-    The macro explanation figure: TP=2 inserts two all-reduces per decoded
-    token per layer, whose payloads (batch x hidden state) sit exactly in the
-    region where the 200 GbE link still pays its ~150 us floor and delivers a
-    small fraction of line rate. The shaded band marks those decode payloads
-    for the 8K-hidden Llama-70B sweep (c=1..128 at bf16 activations).
+    A transport diagnostic to compare with the TP=2 serving results. The
+    campaign used NCCL over TCP sockets, and the shaded band marks plausible
+    activation-sized payloads for the 8K-hidden Llama-70B sweep (c=1..128 at
+    bf16). This supports a correlation, not a causal decomposition: there is no
+    matched point-to-point pipeline-stage microbenchmark in the campaign.
     """
     paths = sorted(glob.glob(os.path.join(results_dir, "allreduce_*.csv")))
     if not paths:
@@ -464,11 +546,14 @@ def fig_allreduce(df, out, fmts, results_dir):
     peak = float(merged["bw"].max())
     axb.axhline(peak, color=SLO_COLOR, linestyle=":", linewidth=0.9)
     axb.annotate(
-        f"plateau {peak:.1f} GB/s "
-        f"({peak / LINE_RATE_GBPS * 100:.0f}% of 200 GbE)",
+        f"NCCL/TCP plateau {peak:.1f} GB/s "
+        f"({peak / LINE_RATE_GBPS * 100:.0f}% of 200 GbE line rate)",
         xy=(float(merged['bytes'].iloc[0]) * 2, peak),
         xytext=(0, -8), textcoords="offset points",
         fontsize=6.0, color="0.25", va="top")
+    axt.text(0.02, 0.96, "campaign transport: TCP sockets",
+             transform=axt.transAxes, ha="left", va="top",
+             fontsize=6.0, color="0.25")
 
     # Llama-3.3-70B decode all-reduce payloads: tokens_in_flight x hidden 8192
     # x 2 B (bf16 activations), c = 1 .. 128.
@@ -747,6 +832,7 @@ def main() -> None:
     warn_low_n(df)
 
     print("paper grids")
+    fig_operating_regimes(df, args.out, fmts)
     fig_throughput_grid(df, args.out, fmts)
     fig_ttft_grid(df, args.out, fmts)
     fig_itl_grid(df, args.out, fmts)

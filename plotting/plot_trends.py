@@ -261,87 +261,170 @@ def _spread_labels(fig, ax, texts) -> None:
 
 # ---- figures -----------------------------------------------------------------
 def fig_parallelism_scaling(df, out, fmts):
-    """Dual-node payoff per model: TP=2/PP=2 peak over the single-Spark peak,
-    and PP=2 relative to TP=2.
+    """Compact, paper-scale summary of the second-node trade-off.
 
-    Speedups compare each configuration's *peak* exact token-in-window
-    throughput over its own concurrency sweep, so a config is credited with its
-    best operating point rather than penalized at a load it would never be run
-    at. The parity line at 1.0 marks where two Sparks merely match one; the
-    dashed line at 2.0 is the ideal for doubled hardware. Models whose bf16
-    weights do not fit one node (no single config) appear only in the PP/TP
-    panel.
+    Each row is one deployment recipe. The three panels answer three separate
+    questions without crowded, rotated bar labels: whether TP/PP beat one
+    Spark, how much PP beats TP, and whether the second node changes energy per
+    token at the throughput-optimal operating point. All ratios compare each
+    configuration at its own peak exact token-in-window throughput.
     """
     tcol = _throughput_col(df)
     models = models_by_size(df)
-    speed, ratio = {}, {}
-    for m in models:
-        peaks = {c: _peak(df, m, c, tcol) for c in ("single", "tp2", "pp2")}
-        vals = {c: float(r[tcol]) if r is not None else np.nan
-                for c, r in peaks.items()}
+    speed, ratio, energy = {}, {}, {}
+    for model in models:
+        peaks = {
+            cfg: _peak(df, model, cfg, tcol)
+            for cfg in ("single", "tp2", "pp2")
+        }
+        vals = {
+            cfg: (float(row[tcol]) if row is not None else np.nan)
+            for cfg, row in peaks.items()
+        }
         if pd.notna(vals["single"]) and (
                 pd.notna(vals["tp2"]) or pd.notna(vals["pp2"])):
-            speed[m] = (vals["tp2"] / vals["single"],
-                        vals["pp2"] / vals["single"])
+            speed[model] = (
+                vals["tp2"] / vals["single"],
+                vals["pp2"] / vals["single"],
+            )
         if pd.notna(vals["tp2"]) and pd.notna(vals["pp2"]):
-            ratio[m] = vals["pp2"] / vals["tp2"]
-    if not speed and not ratio:
-        print("  parallelism_scaling: no model has both a single and a "
-              "dual-node series yet, skipping")
+            ratio[model] = vals["pp2"] / vals["tp2"]
+
+        joules = {
+            cfg: (
+                float(row["energy_per_token_j"])
+                if row is not None
+                and pd.notna(row.get("energy_per_token_j", np.nan))
+                else np.nan
+            )
+            for cfg, row in peaks.items()
+        }
+        if pd.notna(joules["single"]) and (
+                pd.notna(joules["tp2"]) or pd.notna(joules["pp2"])):
+            energy[model] = (
+                joules["tp2"] / joules["single"],
+                joules["pp2"] / joules["single"],
+            )
+
+    shown = [
+        model for model in models
+        if model in speed or model in ratio or model in energy
+    ]
+    if not shown:
+        print("  parallelism_scaling: no comparable placement series, "
+              "skipping")
         return
 
-    fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H + 0.6))
-    if speed:
-        ms = [m for m in models if m in speed]
-        x = np.arange(len(ms))
-        tp = [speed[m][0] for m in ms]
-        pp = [speed[m][1] for m in ms]
-        axl.bar(x - 0.19, tp, 0.36, color=CONFIG_STYLE["tp2"]["color"],
-                label=CONFIG_STYLE["tp2"]["label"])
-        axl.bar(x + 0.19, pp, 0.36, color=CONFIG_STYLE["pp2"]["color"],
-                label=CONFIG_STYLE["pp2"]["label"])
-        _bar_labels(axl, x - 0.19, tp)
-        _bar_labels(axl, x + 0.19, pp)
-        axl.axhline(1.0, color="0.4", linewidth=0.8)
-        axl.axhline(2.0, color="0.4", linewidth=0.8, linestyle="--")
-        axl.set_xticks(x)
-        axl.set_xticklabels([meta_for(m)["pretty"] for m in ms],
-                            rotation=30, ha="right", fontsize=7)
-        axl.set_ylabel("Peak throughput vs single Spark")
-        # headroom above the ideal-2x line so the legend does not sit on it;
-        # the white patch keeps the reference lines from striking the text
-        axl.set_ylim(0, max(2.55, np.nanmax(tp + pp) * 1.12))
-        axl.grid(axis="x", visible=False)
-        handles, labels = axl.get_legend_handles_labels()
-        handles += [Line2D([], [], color="0.4", linewidth=0.8),
-                    Line2D([], [], color="0.4", linewidth=0.8,
-                           linestyle="--")]
-        labels += ["single-node parity", "ideal 2x"]
-        axl.legend(handles, labels, fontsize=6.5, ncol=2, loc="upper left",
-                   frameon=True, framealpha=0.9, edgecolor="none")
+    def short_name(model: str) -> str:
+        name = meta_for(model)["pretty"]
+        return (name.replace("Llama-3.1", "L3.1")
+                    .replace("Llama-3.3", "L3.3")
+                    .replace("Nemotron3-", "N3-"))
+
+    y = np.arange(len(shown))
+    fig, axes = plt.subplots(
+        1, 3, figsize=(TEXT_W, 3.55), sharey=True, layout="none",
+        gridspec_kw={"width_ratios": (1.35, 0.92, 1.18), "wspace": 0.10},
+    )
+    axt, axp, axe = axes
+    tp_style, pp_style = CONFIG_STYLE["tp2"], CONFIG_STYLE["pp2"]
+
+    def paired_points(ax, records):
+        for yi, model in zip(y, shown):
+            values = records.get(model)
+            if values is None:
+                continue
+            tp, pp = values
+            finite = [v for v in (tp, pp) if pd.notna(v)]
+            if len(finite) == 2:
+                ax.plot(finite, [yi, yi], color="0.78", linewidth=1.0,
+                        zorder=1)
+            if pd.notna(tp):
+                ax.scatter(tp, yi, color=tp_style["color"],
+                           marker=tp_style["marker"], s=26, zorder=3)
+            if pd.notna(pp):
+                ax.scatter(pp, yi, color=pp_style["color"],
+                           marker=pp_style["marker"], s=30, zorder=3)
+
+    paired_points(axt, speed)
+    axt.axvline(1.0, color="0.35", linewidth=0.8)
+    axt.axvline(2.0, color="0.45", linewidth=0.8, linestyle="--")
+    axt.set_xlim(0.45, 2.08)
+    axt.set_xlabel("Peak throughput / single")
+    tp_speed = [v[0] for v in speed.values() if pd.notna(v[0])]
+    pp_speed = [v[1] for v in speed.values() if pd.notna(v[1])]
+    axt.set_title(
+        "(a) Does a second Spark help?\n"
+        f"median TP={np.median(tp_speed):.2f}×, "
+        f"PP={np.median(pp_speed):.2f}×",
+        fontsize=8,
+    )
+
+    for yi, model in zip(y, shown):
+        value = ratio.get(model)
+        if value is None:
+            continue
+        axp.scatter(value, yi, color=pp_style["color"], marker="D",
+                    s=24, zorder=3)
+        axp.annotate(f"{value:.2f}×", (value, yi),
+                     textcoords="offset points", xytext=(3, 0),
+                     ha="left", va="center", fontsize=6, color="0.25")
+    axp.axvline(1.0, color="0.35", linewidth=0.8)
+    ratio_values = list(ratio.values())
+    axp.set_xlim(0.95, max(1.75, max(ratio_values, default=1.0) * 1.17))
+    axp.set_xlabel("PP peak / TP peak")
+    axp.set_title(
+        "(b) PP versus TP\n"
+        f"median={np.median(ratio_values):.2f}×",
+        fontsize=8,
+    )
+
+    if energy:
+        paired_points(axe, energy)
+        tp_energy = [v[0] for v in energy.values() if pd.notna(v[0])]
+        pp_energy = [v[1] for v in energy.values() if pd.notna(v[1])]
+        all_energy = tp_energy + pp_energy
+        axe.axvline(1.0, color="0.35", linewidth=0.8)
+        axe.set_xlim(min(0.85, min(all_energy) * 0.96),
+                     max(1.25, max(all_energy) * 1.08))
+        axe.set_xlabel("J/token at peak / single")
+        axe.set_title(
+            "(c) Energy cost at each peak\n"
+            f"median TP={np.median(tp_energy):.2f}×, "
+            f"PP={np.median(pp_energy):.2f}×",
+            fontsize=8,
+        )
     else:
-        axl.axis("off")
-        axl.text(0.5, 0.5, "no single-node baselines in index",
-                 transform=axl.transAxes, ha="center", va="center",
-                 fontsize=8, color="0.4")
-    if ratio:
-        ms = [m for m in models if m in ratio]
-        x = np.arange(len(ms))
-        vals = [ratio[m] for m in ms]
-        axr.bar(x, vals, 0.55, color="0.55")
-        _bar_labels(axr, x, vals)
-        axr.axhline(1.0, color="0.4", linewidth=0.8)
-        axr.set_xticks(x)
-        axr.set_xticklabels([meta_for(m)["pretty"] for m in ms],
-                            rotation=30, ha="right", fontsize=7)
-        axr.set_ylabel("PP=2 peak relative to TP=2")
-        axr.set_ylim(bottom=0)
-        axr.grid(axis="x", visible=False)
-    else:
-        axr.axis("off")
-        axr.text(0.5, 0.5, "no model ran both TP=2 and PP=2",
-                 transform=axr.transAxes, ha="center", va="center",
-                 fontsize=8, color="0.4")
+        axe.axis("off")
+        axe.text(0.5, 0.5, "no energy data", transform=axe.transAxes,
+                 ha="center", va="center", fontsize=8, color="0.4")
+
+    axt.set_yticks(y)
+    axt.set_yticklabels([short_name(model) for model in shown], fontsize=7)
+    axt.invert_yaxis()
+    for ax in axes:
+        if not ax.axison:
+            continue
+        ax.grid(axis="y", visible=False)
+        ax.tick_params(labelsize=6.5)
+        ax.spines["left"].set_visible(False)
+        ax.tick_params(axis="y", length=0)
+    for ax in (axp, axe):
+        ax.tick_params(labelleft=False)
+
+    fig.legend(
+        handles=[
+            Line2D([], [], color=tp_style["color"],
+                   marker=tp_style["marker"], linestyle="none",
+                   label=tp_style["label"]),
+            Line2D([], [], color=pp_style["color"],
+                   marker=pp_style["marker"], linestyle="none",
+                   label=pp_style["label"]),
+        ],
+        loc="upper center", ncol=2, frameon=False, fontsize=7,
+        bbox_to_anchor=(0.5, -0.01),
+    )
+    fig.subplots_adjust(top=0.90, bottom=0.18)
     save(fig, "parallelism_scaling", out, fmts, tight=True)
 
 
