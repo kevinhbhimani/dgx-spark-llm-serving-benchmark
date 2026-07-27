@@ -910,10 +910,20 @@ def fig_prefill_scaling(df, out, fmts, results_dir):
                     .replace("Llama-3.3", "L3.3")
                     .replace("Nemotron3-", "N3-"))
 
-    fig, (axa, axb, axc) = plt.subplots(
-        1, 3, figsize=(TEXT_W, 3.2), layout="none",
-        gridspec_kw={"width_ratios": (1.15, 1.0, 0.78), "wspace": 0.34},
-    )
+    # Four columns, the second one an empty spacer. Panel (b) labels its rows
+    # with model names, right-aligned so they grow leftward: with a uniform
+    # wspace wide enough for them the (b)/(c) seam wasted the same width for
+    # nothing (panel (c) carries no row labels), and wspace narrow enough to
+    # keep (c) close let the longest name ("N3-Super-120B-A12B") reach 0.38 in
+    # back across panel (a)'s right spine and sit on its data. A dedicated
+    # spacer sizes the two seams independently; the tighter (b)/(c) gap that
+    # buys leaves panel (a) wider than the single-wspace layout did.
+    fig = plt.figure(figsize=(TEXT_W, 3.2))
+    gs = fig.add_gridspec(1, 4, width_ratios=(1.15, 0.18, 1.0, 0.78),
+                          wspace=0.06)
+    axa = fig.add_subplot(gs[0, 0])
+    axb = fig.add_subplot(gs[0, 2])
+    axc = fig.add_subplot(gs[0, 3])
 
     # ---- (a) TTFT is linear in prompt length -------------------------------
     rep = (REPRESENTATIVE_PREFILL_MODEL
