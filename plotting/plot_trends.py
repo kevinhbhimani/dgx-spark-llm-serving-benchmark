@@ -36,6 +36,7 @@ labels the table does not know.
 from __future__ import annotations
 import argparse
 import math
+import os
 import re
 import sys
 import numpy as np
@@ -722,6 +723,259 @@ def fig_scale_trend(df, out, fmts):
     save(fig, "scale_trend", out, fmts)
 
 
+# ---- prefill / input-length scaling ------------------------------------------
+# Per-request fields pulled straight out of raw.jsonl. The records also carry
+# the full token_times / inter_token_latencies arrays, which dominate the 1.9 GB
+# of raw logs and are not needed here, so the scan matches scalar fields with
+# regexes instead of parsing each line as JSON.
+_RAW_FIELDS = {
+    "input_len": re.compile(rb'"input_len":\s*(\d+)'),
+    "output_len": re.compile(rb'"output_len":\s*(\d+)'),
+    "ttft": re.compile(rb'"ttft":\s*([-\d.eE+]+)'),
+    "mean_itl": re.compile(rb'"mean_itl":\s*([-\d.eE+]+)'),
+}
+_RAW_SUCCESS = re.compile(rb'"success":\s*(true|false)')
+
+# The workload's four (input, output) buckets are a fixed property of the
+# trace, so the unloaded sweep over them is a prefill-cost measurement with
+# four x points per (model, config).
+REPRESENTATIVE_PREFILL_MODEL = "llama3.1-8b-nvfp4"
+
+
+def bucket_medians(df: pd.DataFrame, results_dir: str,
+                   concurrency: int = 1) -> pd.DataFrame:
+    """Per-workload-bucket TTFT/ITL medians for one load level.
+
+    The index aggregates every bucket into one row per (model, config, load),
+    which is the right unit for throughput but hides how latency scales with
+    prompt length. This re-reads the retained per-request logs and splits them
+    by the trace's (input_len, output_len) buckets.
+
+    Defaults to ``concurrency=1`` because that is the only load level where
+    TTFT is pure prefill: from Sec. "TTFT decomposition" onward the intercept
+    is queueing delay, which is bucket-independent and would otherwise be
+    charged to prefill. Returns median plus quartiles -- at c=1 a handful of
+    requests per bucket carry rare multi-second stragglers that wreck a mean
+    but leave the median's interquartile spread inside 10%.
+    """
+    sub = df[pd.to_numeric(df["concurrency"], errors="coerce") == concurrency]
+    if sub.empty or "raw_path" not in sub.columns:
+        return pd.DataFrame()
+    rows = []
+    missing = 0
+    for _, r in sub.iterrows():
+        path = str(r["raw_path"])
+        if not os.path.isabs(path):
+            path = os.path.join(results_dir, os.path.basename(path))
+        if not os.path.exists(path):
+            missing += 1
+            continue
+        recs: dict[tuple[int, int], list[tuple[float, float]]] = {}
+        with open(path, "rb") as fh:
+            for line in fh:
+                if len(line) < 10:
+                    continue
+                ok = _RAW_SUCCESS.search(line)
+                if not ok or ok.group(1) != b"true":
+                    continue
+                try:
+                    key = (int(_RAW_FIELDS["input_len"].search(line).group(1)),
+                           int(_RAW_FIELDS["output_len"].search(line).group(1)))
+                    vals = (float(_RAW_FIELDS["ttft"].search(line).group(1)),
+                            float(_RAW_FIELDS["mean_itl"].search(line).group(1)))
+                except (AttributeError, ValueError):
+                    continue
+                recs.setdefault(key, []).append(vals)
+        for (ilen, olen), vals in recs.items():
+            a = np.array(vals, dtype=float)
+            rows.append(dict(
+                model_label=r["model_label"], config_label=r["config_label"],
+                input_len=ilen, output_len=olen, n=len(a),
+                ttft_p50=float(np.median(a[:, 0])),
+                ttft_q1=float(np.percentile(a[:, 0], 25)),
+                ttft_q3=float(np.percentile(a[:, 0], 75)),
+                mean_itl_p50=float(np.median(a[:, 1])),
+            ))
+    if missing:
+        print(f"  bucket_medians: {missing} run(s) had no readable raw log")
+    return pd.DataFrame(rows)
+
+
+def _prefill_fit(g: pd.DataFrame):
+    """Least-squares TTFT = queue + slope*input_len over a curve's buckets.
+
+    Returns (tokens/s, intercept seconds, r2) or None when the curve has too
+    few distinct prompt lengths to fit a line.
+    """
+    g = g.sort_values("input_len")
+    x = g["input_len"].to_numpy(dtype=float)
+    y = g["ttft_p50"].to_numpy(dtype=float)
+    if len(x) < 3 or not np.isfinite(y).all():
+        return None
+    slope, intercept = np.polyfit(x, y, 1)
+    if slope <= 0:
+        return None
+    resid = y - (intercept + slope * x)
+    denom = ((y - y.mean()) ** 2).sum()
+    r2 = 1.0 - (resid ** 2).sum() / denom if denom > 0 else float("nan")
+    return 1.0 / slope, intercept, r2
+
+
+def fig_prefill_scaling(df, out, fmts, results_dir):
+    """How serving cost scales with prompt length, and what that costs TP=2.
+
+    The campaign's headline numbers are decode-side: peak token throughput and
+    ITL both describe the generation phase. This figure covers the other phase.
+    Panel (a) establishes that unloaded TTFT is linear in prompt length, which
+    makes the fitted slope a prefill rate in tokens/s. Panel (b) reports that
+    rate per placement, normalized to one Spark: PP=2 speeds prefill up, TP=2
+    slows it below a single node for every model measured -- a second,
+    compute-bound instance of the TP penalty that the all-reduce diagnostic
+    already shows on the decode side. Panel (c) is the control: 64x more
+    context barely moves per-token decode cost, so the prompt-length term lives
+    almost entirely in prefill.
+    """
+    buckets = bucket_medians(df, results_dir)
+    if buckets.empty:
+        print("  prefill_scaling: no per-request logs available, skipping")
+        return
+    fits = {}
+    for (model, cfg), g in buckets.groupby(["model_label", "config_label"]):
+        fit = _prefill_fit(g)
+        if fit is not None:
+            fits[(model, cfg)] = fit
+
+    # (c) decode's own prompt-length sensitivity: longest bucket vs shortest.
+    context = {}
+    for (model, cfg), g in buckets.groupby(["model_label", "config_label"]):
+        s = g.set_index("input_len")["mean_itl_p50"]
+        lo, hi = s.index.min(), s.index.max()
+        if lo != hi and s.get(lo, 0) > 0:
+            context[(model, cfg)] = s[hi] / s[lo]
+
+    models = [m for m in models_by_size(df)
+              if any(k[0] == m for k in fits)]
+    if not models:
+        print("  prefill_scaling: no fittable curves, skipping")
+        return
+
+    def short_name(model: str) -> str:
+        name = meta_for(model)["pretty"]
+        return (name.replace("Llama-3.1", "L3.1")
+                    .replace("Llama-3.3", "L3.3")
+                    .replace("Nemotron3-", "N3-"))
+
+    fig, (axa, axb, axc) = plt.subplots(
+        1, 3, figsize=(TEXT_W, 3.2), layout="none",
+        gridspec_kw={"width_ratios": (1.15, 1.0, 0.78), "wspace": 0.34},
+    )
+
+    # ---- (a) TTFT is linear in prompt length -------------------------------
+    rep = (REPRESENTATIVE_PREFILL_MODEL
+           if any(k[0] == REPRESENTATIVE_PREFILL_MODEL for k in fits)
+           else models[0])
+    used_cfgs = []
+    for cfg in CONFIG_ORDER:
+        g = buckets[(buckets.model_label == rep)
+                    & (buckets.config_label == cfg)].sort_values("input_len")
+        if g.empty or (rep, cfg) not in fits:
+            continue
+        style = CONFIG_STYLE[cfg]
+        x = g["input_len"].to_numpy(dtype=float)
+        y = g["ttft_p50"].to_numpy(dtype=float) * 1e3
+        err = np.vstack([y - g["ttft_q1"].to_numpy() * 1e3,
+                         g["ttft_q3"].to_numpy() * 1e3 - y])
+        axa.errorbar(x, y, yerr=err, color=style["color"],
+                     marker=style["marker"], markersize=3.6, linewidth=0,
+                     elinewidth=0.9, capsize=2, zorder=5)
+        rate, intercept, r2 = fits[(rep, cfg)]
+        xs = np.linspace(0, x.max(), 32)
+        axa.plot(xs, (intercept + xs / rate) * 1e3, color=style["color"],
+                 linewidth=1.1, linestyle="--", alpha=0.85, zorder=4)
+        used_cfgs.append(cfg)
+    axa.set_xlim(left=0)
+    axa.set_ylim(bottom=0)
+    axa.margins(y=0.08)
+    axa.set_xlabel("Prompt length (tokens)", fontsize=7.5)
+    axa.set_ylabel("Median TTFT (ms), unloaded", fontsize=7.5)
+    axa.set_title(f"(a) {short_name(rep)}", fontsize=8, pad=3)
+    # Quote the weakest fit over every curve in the campaign, not just the
+    # three drawn here: panel (b) reads a prefill rate off all of them, so the
+    # linearity claim has to hold campaign-wide to license that.
+    r2_all = [f[2] for f in fits.values() if np.isfinite(f[2])]
+    if r2_all:
+        axa.annotate(f"linear fit, all {len(r2_all)} curves:\n"
+                     f"$R^2 \\geq {math.floor(min(r2_all) * 1000) / 1000:.3f}$",
+                     xy=(0.04, 0.95), xycoords="axes fraction", fontsize=6.2,
+                     color="0.25", va="top", linespacing=1.35)
+    axa.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+
+    # ---- (b) prefill rate per placement, normalized to one Spark -----------
+    y = np.arange(len(models))
+    shown_b = []
+    for yi, model in zip(y, models):
+        base = fits.get((model, "single"))
+        if base is None:
+            continue
+        vals = {cfg: fits.get((model, cfg)) for cfg in ("tp2", "pp2")}
+        pts = {cfg: v[0] / base[0] for cfg, v in vals.items() if v}
+        if len(pts) == 2:
+            axb.plot([pts["tp2"], pts["pp2"]], [yi, yi], color="0.75",
+                     linewidth=0.9, zorder=2)
+        for cfg, v in pts.items():
+            axb.scatter([v], [yi], marker=CONFIG_STYLE[cfg]["marker"],
+                        color=CONFIG_STYLE[cfg]["color"], s=26, zorder=5)
+        if pts:
+            shown_b.append(model)
+    axb.axvline(1.0, color="0.35", linewidth=0.9, linestyle=":", zorder=1)
+    axb.set_yticks(y)
+    axb.set_yticklabels([short_name(m) for m in models], fontsize=6.4)
+    axb.set_ylim(-0.7, len(models) - 0.3)
+    axb.invert_yaxis()
+    axb.set_xlabel("Prefill rate vs single Spark", fontsize=7.5)
+    axb.set_title("(b) Prompt processing", fontsize=8, pad=3)
+    axb.grid(axis="y", alpha=0.15)
+
+    # ---- (c) decode barely notices the prompt ------------------------------
+    for yi, model in zip(y, models):
+        for cfg in CONFIG_ORDER:
+            v = context.get((model, cfg))
+            if v is None:
+                continue
+            axc.scatter([v], [yi], marker=CONFIG_STYLE[cfg]["marker"],
+                        color=CONFIG_STYLE[cfg]["color"], s=22, zorder=5)
+    axc.axvline(1.0, color="0.35", linewidth=0.9, linestyle=":", zorder=1)
+    axc.set_yticks(y)
+    axc.set_yticklabels([])
+    axc.set_ylim(-0.7, len(models) - 0.3)
+    axc.invert_yaxis()
+    axc.set_xlabel("ITL, 8K vs 128 prompt", fontsize=7.5)
+    axc.set_title("(c) Decode", fontsize=8, pad=3)
+    axc.grid(axis="y", alpha=0.15)
+
+    proxies = [Line2D([], [], linestyle="none",
+                      marker=CONFIG_STYLE[c]["marker"],
+                      color=CONFIG_STYLE[c]["color"],
+                      label=CONFIG_STYLE[c]["label"])
+               for c in CONFIG_ORDER
+               if any(k[1] == c for k in fits)]
+    fig.legend(handles=proxies, loc="upper center", ncol=len(proxies),
+               fontsize=6.6, frameon=False, bbox_to_anchor=(0.5, 0.02),
+               handlelength=1.6, columnspacing=1.1)
+    fig.subplots_adjust(top=0.90, bottom=0.20, left=0.075, right=0.985)
+    save(fig, "prefill_scaling", out, fmts, tight=True)
+
+    med_tp = np.median([fits[(m, "tp2")][0] / fits[(m, "single")][0]
+                        for m in models
+                        if (m, "tp2") in fits and (m, "single") in fits])
+    med_pp = np.median([fits[(m, "pp2")][0] / fits[(m, "single")][0]
+                        for m in models
+                        if (m, "pp2") in fits and (m, "single") in fits])
+    print(f"  prefill_scaling: {len(fits)} fitted curves, "
+          f"median prefill rate vs single: TP=2 {med_tp:.2f}x, "
+          f"PP=2 {med_pp:.2f}x")
+
+
 # ---- main --------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -758,6 +1012,8 @@ def main() -> None:
     fig_precision_ladder(df, args.out, fmts)
     fig_efficiency_frontier(df, args.out, fmts)
     fig_scale_trend(df, args.out, fmts)
+    fig_prefill_scaling(df, args.out, fmts,
+                        os.path.dirname(args.index) or ".")
     print("done")
 
 

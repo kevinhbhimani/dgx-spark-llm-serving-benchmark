@@ -66,7 +66,7 @@ from plot_results import (
 from plot_trends import (
     clean_log_ticks, meta_for, models_by_size, fig_parallelism_scaling,
     fig_dense_vs_moe, fig_precision_ladder, fig_efficiency_frontier,
-    fig_scale_trend,
+    fig_scale_trend, fig_prefill_scaling,
 )
 
 # SLO bounds drawn as reference lines. Values mirror configs/experiment.yaml
@@ -984,6 +984,8 @@ def main() -> None:
     fig_kv_capacity(df, args.out, fmts)
     fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".")
     fig_interconnect(args.out, fmts, os.path.dirname(args.index) or ".")
+    fig_prefill_scaling(df, args.out, fmts,
+                        os.path.dirname(args.index) or ".")
     print("cross-model trends")
     fig_parallelism_scaling(df, args.out, fmts)
     fig_dense_vs_moe(df, args.out, fmts)
