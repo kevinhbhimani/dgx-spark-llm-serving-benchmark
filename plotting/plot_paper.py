@@ -53,6 +53,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, NullFormatter
 
@@ -93,12 +94,34 @@ def _publication_rc() -> None:
     embed TrueType (Type 42) outlines instead. That rules out the CFF-only
     Nimbus Roman fallback; Liberation Serif is metric-compatible with Times
     and ships as TrueType on this machine.
+
+    set_rc() points mathtext at ``dejavuserif``, which is a different typeface
+    from the text family: any panel carrying a ``$\\approx$`` or ``$R^2$``
+    embedded DejaVu Serif next to Liberation Serif, so the math glyphs came out
+    wider and heavier than the words around them. Mapping mathtext at the same
+    family keeps one serif per figure.
     """
+    serif = ["Times New Roman", "Liberation Serif", "DejaVu Serif"]
     plt.rcParams.update({
         "pdf.fonttype": 42,
         "ps.fonttype": 42,
-        "font.serif": ["Times New Roman", "Liberation Serif", "DejaVu Serif"],
+        "font.serif": serif,
     })
+    # mathtext.rm takes a concrete family, not font.serif's fallback chain, so
+    # it has to be resolved here: naming a font that is not installed drops
+    # mathtext to DejaVu *Sans* rather than down the serif list, which is how a
+    # sans "R" ends up inside a serif figure. Resolve the first family actually
+    # present and only switch to a custom fontset once one is found.
+    installed = {f.name for f in font_manager.fontManager.ttflist}
+    family = next((f for f in serif if f in installed), None)
+    if family is not None:
+        plt.rcParams.update({
+            "mathtext.fontset": "custom",
+            "mathtext.rm": family,
+            "mathtext.it": f"{family}:italic",
+            "mathtext.bf": f"{family}:bold",
+            "mathtext.default": "regular",
+        })
 
 
 def _panel_load_axis(ax, loads) -> None:
