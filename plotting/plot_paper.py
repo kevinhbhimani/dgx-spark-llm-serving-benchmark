@@ -111,7 +111,20 @@ def _panel_load_axis(ax, loads) -> None:
     ax.set_xscale("log", base=2)
     if loads:
         ax.set_xlim(min(loads) / 1.35, max(loads) * 1.35)
-    ax.set_xticks([v for v in loads if int(v) in (1, 4, 16, 64)])
+    # Every other power of two, but anchored at the TOP of the sweep so the
+    # highest load always carries a label: the paper quotes c=128 repeatedly
+    # (queueing collapse, TP/PP crossovers), and an unlabelled final point
+    # makes the reader count doublings to find it.
+    ticks = []
+    if loads:
+        v = max(loads)
+        while v >= min(loads):
+            ticks.append(v)
+            v /= 4
+        ticks = sorted(ticks)
+        if min(loads) not in ticks:
+            ticks.insert(0, min(loads))
+    ax.set_xticks(ticks)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{int(v)}"))
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.tick_params(labelsize=PANEL_TICK_FS)
@@ -546,12 +559,16 @@ def fig_allreduce(df, out, fmts, results_dir):
 
     peak = float(merged["bw"].max())
     axb.axhline(peak, color=SLO_COLOR, linestyle=":", linewidth=0.9)
-    axb.annotate(
-        f"NCCL/TCP plateau {peak:.1f} GB/s "
+    # Park the label in the empty lower-right corner, in axes coordinates so
+    # it cannot drift back onto the data when the sweep range changes. Anchored
+    # on the plateau line it ran along the dotted rule and through the rising
+    # curve; one step down it still grazed the knee near 1 MiB.
+    axb.text(
+        0.98, 0.06,
+        f"NCCL/TCP plateau {peak:.1f} GB/s\n"
         f"({peak / LINE_RATE_GBPS * 100:.0f}% of 200 GbE line rate)",
-        xy=(float(merged['bytes'].iloc[0]) * 2, peak),
-        xytext=(0, -8), textcoords="offset points",
-        fontsize=6.0, color="0.25", va="top")
+        transform=axb.transAxes, ha="right", va="bottom",
+        fontsize=6.0, color="0.25", linespacing=1.3)
     axt.text(0.02, 0.96, "campaign transport: TCP sockets",
              transform=axt.transAxes, ha="left", va="top",
              fontsize=6.0, color="0.25")
