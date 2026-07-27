@@ -918,9 +918,13 @@ def fig_prefill_scaling(df, out, fmts, results_dir):
     # back across panel (a)'s right spine and sit on its data. A dedicated
     # spacer sizes the two seams independently; the tighter (b)/(c) gap that
     # buys leaves panel (a) wider than the single-wspace layout did.
+    # The spacer is sized against the measured extent of the longest row label
+    # rather than by eye: 0.06 leaves it about 23 px (0.19 in) clear of panel
+    # (a) at this figure width. Widening it pushes panel (b) right and buys
+    # nothing; shrinking it below ~0.02 puts the label back on panel (a).
     fig = plt.figure(figsize=(TEXT_W, 3.2))
-    gs = fig.add_gridspec(1, 4, width_ratios=(1.15, 0.18, 1.0, 0.78),
-                          wspace=0.06)
+    gs = fig.add_gridspec(1, 4, width_ratios=(1.15, 0.06, 1.0, 0.78),
+                          wspace=0.04)
     axa = fig.add_subplot(gs[0, 0])
     axb = fig.add_subplot(gs[0, 2])
     axc = fig.add_subplot(gs[0, 3])
