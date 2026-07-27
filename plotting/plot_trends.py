@@ -45,7 +45,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patheffects import withStroke
 from matplotlib.ticker import FuncFormatter, NullFormatter
-from matplotlib.transforms import Bbox
+from matplotlib.transforms import Bbox, blended_transform_factory
 
 from plot_results import (
     COL_W, DUAL_NODE_CONFIGS, PANEL_H, TEXT_W, CONFIG_ORDER, CONFIG_STYLE,
@@ -351,6 +351,19 @@ def fig_parallelism_scaling(df, out, fmts):
     axt.axvline(1.0, color="0.35", linewidth=0.8)
     axt.axvline(2.0, color="0.45", linewidth=0.8, linestyle="--")
     axt.set_xlim(0.45, 2.08)
+    # Name both reference rules in the panel. Unlabelled, the dashed line at
+    # 2.0 reads as an axis artifact rather than the linear-scaling ideal that
+    # no placement reaches -- which is the point of drawing it. Blended
+    # transform: x in data units so a label tracks its rule, y in axes units
+    # so it sits just inside the bottom spine whichever way the model axis
+    # happens to be inverted.
+    ref_tr = blended_transform_factory(axt.transData, axt.transAxes)
+    for xv, text in ((1.0, "parity"), (2.0, "ideal 2×")):
+        axt.text(xv, 0.015, text, transform=ref_tr, rotation=90,
+                 ha="right", va="bottom", fontsize=5.8, color="0.35",
+                 zorder=6,
+                 path_effects=[withStroke(linewidth=1.6,
+                                          foreground="white")])
     axt.set_xlabel("Peak throughput / single")
     tp_speed = [v[0] for v in speed.values() if pd.notna(v[0])]
     pp_speed = [v[1] for v in speed.values() if pd.notna(v[1])]
@@ -365,6 +378,12 @@ def fig_parallelism_scaling(df, out, fmts):
         value = ratio.get(model)
         if value is None:
             continue
+        # Deliberately a diamond, not PP's triangle: this panel plots a
+        # PP-relative-to-TP ratio, which is a different quantity from the
+        # PP series in panels (a) and (c). Keeping PP's hue ties it to the
+        # placement; changing the shape stops it being read as the same
+        # measurement. It is left out of the shared legend for the same
+        # reason -- the caption names it.
         axp.scatter(value, yi, color=pp_style["color"], marker="D",
                     s=24, zorder=3)
         # Clear the marker before the text starts: s=24 pt^2 is ~4.9 pt wide,
@@ -536,56 +555,82 @@ def fig_precision_ladder(df, out, fmts):
         members = sorted(
             members, key=lambda m: ["bf16", "fp8", "nvfp4"].index(
                 meta_for(m)["quant"]))
-        fig, (axl, axr) = plt.subplots(1, 2, figsize=(TEXT_W, PANEL_H))
+        # Small multiples, one column per precision, rather than one panel with
+        # precision on hue. Hue is the paper's placement channel everywhere
+        # else (CONFIG_STYLE); spending it on precision here would make the
+        # same three colors mean two different things across figures, and the
+        # blue/vermillion/green trio leaves no CVD-safe room for a second
+        # 3-hue set anyway (a violet ramp collides with the config blue at
+        # protan dE 3.6). Precision becomes the column, so every curve in the
+        # paper keeps its placement color.
+        ncol = len(members)
+        nrow = 2 if energy_ok else 1
+        # 1.62 in per row is the floor at which an eight-tick concurrency axis
+        # and a 0-based y axis both stay legible at 10 pt; the figure competes
+        # for a strict 8-page budget that counts figures.
+        fig, axes = plt.subplots(
+            nrow, ncol, figsize=(TEXT_W, 1.62 * nrow + 0.5), squeeze=False,
+            sharex=True, sharey="row", layout="none")
         all_loads, mode = [], "closed"
-        used_cfgs, used_quants = [], []
-        for model in members:
+        used_cfgs = []
+        for col, model in enumerate(members):
             quant = meta_for(model)["quant"]
-            ps = PRECISION_STYLE[quant]
             msub = df[mv == model]
+            axt = axes[0][col]
+            axe = axes[1][col] if energy_ok else None
             for cfg in configs_present(msub):
-                ls = CONFIG_LINESTYLE.get(cfg, "-")
-                mk = CONFIG_STYLE.get(cfg, {}).get("marker", "D")
+                style = CONFIG_STYLE.get(cfg, dict(color="0.3", marker="D"))
                 g, lc, mode = group(msub, cfg)
                 if cfg not in used_cfgs:
                     used_cfgs.append(cfg)
-                if quant not in used_quants:
-                    used_quants.append(quant)
-                axl.plot(g[lc], g[tcol], marker=mk, linestyle=ls,
-                         color=ps["color"])
-                draw_band(axl, g, g[lc], tcol, ps["color"])
-                if energy_ok and g["energy_per_token_j"].notna().any():
-                    axr.plot(g[lc], g["energy_per_token_j"], marker=mk,
-                             linestyle=ls, color=ps["color"])
-                    draw_band(axr, g, g[lc], "energy_per_token_j",
-                              ps["color"])
+                axt.plot(g[lc], g[tcol], marker=style["marker"],
+                         markersize=3.4, linewidth=1.2, color=style["color"])
+                draw_band(axt, g, g[lc], tcol, style["color"])
+                if axe is not None and g["energy_per_token_j"].notna().any():
+                    axe.plot(g[lc], g["energy_per_token_j"],
+                             marker=style["marker"], markersize=3.4,
+                             linewidth=1.2, color=style["color"])
+                    draw_band(axe, g, g[lc], "energy_per_token_j",
+                              style["color"])
                 all_loads += g[lc].tolist()
-        set_load_axis(axl, all_loads, mode)
-        axl.set_ylabel("Output token throughput (tok/s)")
-        axl.set_ylim(bottom=0)
+            axt.set_title(PRECISION_STYLE[quant]["label"], fontsize=8, pad=3)
+        # Rows share a y axis on purpose -- reading the precision jump off the
+        # figure is the point -- so the limits have to be set once, after every
+        # column is drawn, from the maximum across the row. Setting them per
+        # column froze each shared axis at the first column's autoscale and
+        # clipped the faster rungs straight off the top.
+        for row in axes:
+            top = max((line.get_ydata().max() for ax in row
+                       for line in ax.get_lines() if len(line.get_ydata())),
+                      default=1.0)
+            row[0].set_ylim(0, float(top) * 1.08)
+        for ax in axes[-1]:
+            set_load_axis(ax, all_loads, mode)
+            ax.set_xlabel("Concurrent requests", fontsize=7.5)
         if energy_ok:
-            set_load_axis(axr, all_loads, mode)
-            axr.set_ylabel("GPU energy per token (J)" if gpu_power_scope(df)
-                           else "Sampled energy per token (J)")
-            axr.set_ylim(bottom=0)
-        else:
-            axr.axis("off")
-            axr.text(0.5, 0.5, "no power data in index",
-                     transform=axr.transAxes, ha="center", va="center",
-                     fontsize=8, color="0.4")
-        proxies = [Line2D([], [], color=PRECISION_STYLE[q]["color"],
-                          label=PRECISION_STYLE[q]["label"])
-                   for q in ("bf16", "fp8", "nvfp4") if q in used_quants]
-        proxies += [Line2D([], [], color="0.15",
-                           linestyle=CONFIG_LINESTYLE[c],
-                           marker=CONFIG_STYLE[c]["marker"],
-                           label=CONFIG_STYLE[c]["label"])
-                    for c in CONFIG_ORDER if c in used_cfgs]
-        axl.legend(handles=proxies, fontsize=7)
+            for ax in axes[0]:
+                ax.tick_params(labelbottom=False)
+        axes[0][0].set_ylabel("Output token\nthroughput (tok/s)", fontsize=7.5)
+        if energy_ok:
+            axes[1][0].set_ylabel(
+                "GPU energy\nper token (J)" if gpu_power_scope(df)
+                else "Sampled energy\nper token (J)", fontsize=7.5)
+        for row in axes:
+            for ax in row:
+                ax.tick_params(labelsize=7)
+        proxies = [Line2D([], [], color=CONFIG_STYLE[c]["color"],
+                          marker=CONFIG_STYLE[c]["marker"], markersize=4,
+                          label=CONFIG_STYLE[c]["label"])
+                   for c in CONFIG_ORDER if c in used_cfgs]
+        fig.legend(handles=proxies, loc="upper center", ncol=len(proxies),
+                   fontsize=6.8, frameon=False, bbox_to_anchor=(0.5, 0.03),
+                   handlelength=1.8, columnspacing=1.2)
+        fig.subplots_adjust(top=0.91, bottom=0.20, left=0.085, right=0.99,
+                            hspace=0.16, wspace=0.10)
         # Always suffix by base slug so a figure's filename is stable whether
         # the index carries one ladder or several: adding a second base must
         # not rename the first out from under the paper's \includegraphics.
-        save(fig, f"precision_ladder_{_slug(base)}", out, fmts)
+        save(fig, f"precision_ladder_{_slug(base)}", out, fmts, tight=True)
 
 
 def fig_efficiency_frontier(df, out, fmts):
