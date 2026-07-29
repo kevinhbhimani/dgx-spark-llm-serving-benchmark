@@ -6,8 +6,9 @@ peak-bar model comparison). This module draws the figures whose subject is a
 *trend across models* rather than one model's load sweep:
 
   parallelism_scaling  dual-node speedup over single per model (TP=2 and PP=2
-                       peaks normalized to the single-Spark peak), plus PP=2
-                       relative to TP=2 for every model that ran both.
+                       maxima normalized to the single-Spark maximum), PP=2
+                       relative to TP=2, and energy at a baseline-selected
+                       matched concurrency.
   dense_vs_moe         matched-pair load sweeps for same-family, same-precision
                        dense vs MoE checkpoints (Qwen3-32B vs Qwen3-30B-A3B).
   precision_ladder     the same weights served at bf16 / fp8 / NVFP4
@@ -267,8 +268,10 @@ def fig_parallelism_scaling(df, out, fmts):
     Each row is one deployment recipe. The three panels answer three separate
     questions without crowded, rotated bar labels: whether TP/PP beat one
     Spark, how much PP beats TP, and whether the second node changes energy per
-    token at the throughput-optimal operating point. All ratios compare each
-    configuration at its own peak exact token-in-window throughput.
+    token at one matched concurrency. Throughput ratios compare each
+    configuration's maximum exact token-in-window throughput for c <= 128.
+    Energy selects the concurrency maximizing the single-Spark strict goodput
+    and compares every placement at that same c.
     """
     tcol = _throughput_col(df)
     models = models_by_size(df)
@@ -291,21 +294,37 @@ def fig_parallelism_scaling(df, out, fmts):
         if pd.notna(vals["tp2"]) and pd.notna(vals["pp2"]):
             ratio[model] = vals["pp2"] / vals["tp2"]
 
-        joules = {
-            cfg: (
-                float(row["energy_per_token_j"])
-                if row is not None
-                and pd.notna(row.get("energy_per_token_j", np.nan))
-                else np.nan
-            )
-            for cfg, row in peaks.items()
-        }
-        if pd.notna(joules["single"]) and (
-                pd.notna(joules["tp2"]) or pd.notna(joules["pp2"])):
-            energy[model] = (
-                joules["tp2"] / joules["single"],
-                joules["pp2"] / joules["single"],
-            )
+        single_rows = _series_rows(df, model, "single")
+        if (has(df, ["energy_per_token_j", "goodput_rps"])
+                and len(single_rows)
+                and "concurrency" in single_rows.columns
+                and single_rows["goodput_rps"].notna().any()):
+            best_idx = single_rows["goodput_rps"].idxmax()
+            best_single = single_rows.loc[best_idx]
+            if (float(best_single["goodput_rps"]) > 0
+                    and pd.notna(best_single.get("energy_per_token_j",
+                                                 np.nan))):
+                matched_c = float(best_single["concurrency"])
+                joules = {"single": float(
+                    best_single["energy_per_token_j"])}
+                for cfg in ("tp2", "pp2"):
+                    rows = _series_rows(df, model, cfg)
+                    loads = pd.to_numeric(
+                        rows.get("concurrency", pd.Series(dtype=float)),
+                        errors="coerce")
+                    match = rows[np.isclose(loads, matched_c)]
+                    joules[cfg] = (
+                        float(match.iloc[0]["energy_per_token_j"])
+                        if len(match)
+                        and pd.notna(match.iloc[0].get(
+                            "energy_per_token_j", np.nan))
+                        else np.nan
+                    )
+                if pd.notna(joules["tp2"]) or pd.notna(joules["pp2"]):
+                    energy[model] = (
+                        joules["tp2"] / joules["single"],
+                        joules["pp2"] / joules["single"],
+                    )
 
     shown = [
         model for model in models
@@ -317,10 +336,12 @@ def fig_parallelism_scaling(df, out, fmts):
         return
 
     def short_name(model: str) -> str:
-        name = meta_for(model)["pretty"]
-        return (name.replace("Llama-3.1", "L3.1")
-                    .replace("Llama-3.3", "L3.3")
-                    .replace("Nemotron3-", "N3-"))
+        meta = meta_for(model)
+        name = (meta["pretty"].replace("Llama-3.1", "L3.1")
+                              .replace("Llama-3.3", "L3.3")
+                              .replace("Nemotron3-", "N3-"))
+        quant = meta["quant"].upper()
+        return name if quant.lower() in name.lower() else f"{name} {quant}"
 
     y = np.arange(len(shown))
     fig, axes = plt.subplots(
@@ -364,11 +385,11 @@ def fig_parallelism_scaling(df, out, fmts):
                  zorder=6,
                  path_effects=[withStroke(linewidth=1.6,
                                           foreground="white")])
-    axt.set_xlabel("Peak throughput / single")
+    axt.set_xlabel("Dual / single maximum")
     tp_speed = [v[0] for v in speed.values() if pd.notna(v[0])]
     pp_speed = [v[1] for v in speed.values() if pd.notna(v[1])]
     axt.set_title(
-        "(a) Does a second Spark help?\n"
+        "(a) Maximum measured, $c\\leq128$\n"
         f"median TP={np.median(tp_speed):.2f}×, "
         f"PP={np.median(pp_speed):.2f}×",
         fontsize=8,
@@ -400,9 +421,9 @@ def fig_parallelism_scaling(df, out, fmts):
     ratio_values = list(ratio.values())
     # Headroom for the widest label at the rightmost point (offset + ~5 chars).
     axp.set_xlim(0.95, max(1.75, max(ratio_values, default=1.0) * 1.26))
-    axp.set_xlabel("PP peak / TP peak")
+    axp.set_xlabel("PP maximum / TP maximum")
     axp.set_title(
-        "(b) PP versus TP\n"
+        "(b) PP versus TP maximum\n"
         f"median={np.median(ratio_values):.2f}×",
         fontsize=8,
     )
@@ -415,11 +436,15 @@ def fig_parallelism_scaling(df, out, fmts):
         axe.axvline(1.0, color="0.35", linewidth=0.8)
         axe.set_xlim(min(0.85, min(all_energy) * 0.96),
                      max(1.25, max(all_energy) * 1.08))
-        axe.set_xlabel("J/token at peak / single")
+        axe.set_xlabel("J/token / single at matched $c$")
+        n_energy = sum(
+            pd.notna(tp) and pd.notna(pp)
+            for tp, pp in energy.values()
+        )
         axe.set_title(
-            "(c) Energy cost at each peak\n"
+            "(c) Energy at baseline-SLO load\n"
             f"median TP={np.median(tp_energy):.2f}×, "
-            f"PP={np.median(pp_energy):.2f}×",
+            f"PP={np.median(pp_energy):.2f}× ($n$={n_energy})",
             fontsize=8,
         )
     else:
