@@ -97,12 +97,14 @@ def set_rc(dpi: int, serif: bool) -> None:
         "lines.linewidth": 1.6,
         "lines.markersize": 5,
         "figure.constrained_layout.use": True,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
     })
     if serif:
         # Times-like body text to match an IEEE paper. Falls back gracefully if
         # the exact family is unavailable; mathtext is switched to match.
         plt.rcParams["font.family"] = "serif"
-        plt.rcParams["font.serif"] = ["Times New Roman", "Nimbus Roman",
+        plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif",
                                       "DejaVu Serif"]
         plt.rcParams["mathtext.fontset"] = "dejavuserif"
 

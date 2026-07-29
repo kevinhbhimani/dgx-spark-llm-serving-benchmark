@@ -9,18 +9,18 @@ output directory:
   throughput_grid    small multiples: output tok/s vs concurrency, one panel
                      per model (ordered by size), three serving configs each.
   ttft_grid          median TTFT vs concurrency per model, with the 3 s SLO.
-  itl_grid           median inter-token latency vs concurrency per model, with
-                     the strict (0.10 s) and loose (0.20 s) ITL SLO tiers.
+  itl_grid           median request-mean inter-token latency vs concurrency
+                     per model, with strict (0.10 s) and loose (0.20 s) tiers.
   goodput_grid       SLO goodput vs concurrency per model, strict and loose.
   energy_grid        per-token energy vs concurrency per model (both nodes
                      sampled on dual-node rows; head-only points are marked).
   operating_regimes  representative fast-dense, large-dense, and sparse-MoE
-                     load sweeps: throughput over median ITL in one figure.
+                     load sweeps: throughput over request-mean ITL.
   kv_capacity        KV-cache capacity per (model, config): how many maximum
                      length requests fit, the mechanism behind TP=2's wins.
   allreduce          the dual-node all-reduce microbenchmark: latency and bus
-                     bandwidth vs message size, with the decode-payload band
-                     that explains the TP=2 throughput penalty.
+                     bandwidth vs message size, with an estimated
+                     activation-payload band for transport context.
   peak_table         compact per-(model, config) headline table (.tex + .md).
 
 plus the cross-model trend figures re-rendered here for a uniform paper style
@@ -44,6 +44,8 @@ are written as vector PDF for \\includegraphics plus PNG previews.
 from __future__ import annotations
 import argparse
 import glob
+import hashlib
+import json
 import math
 import os
 import re
@@ -77,13 +79,10 @@ TTFT_SLO_S = 3.0
 ITL_SLO_MS = 100.0
 ITL_SLO2_MS = 200.0
 
-# 200 GbE line rate, for the all-reduce efficiency annotation.
-LINE_RATE_GBPS = 25.0
-
 GRID_COLS = 4
-PANEL_TITLE_FS = 7.0
-PANEL_TICK_FS = 6.0
-PANEL_LABEL_FS = 7.5
+PANEL_TITLE_FS = 7.5
+PANEL_TICK_FS = 7.0
+PANEL_LABEL_FS = 8.0
 SLO_COLOR = "0.35"
 
 
@@ -175,18 +174,23 @@ LOW_N_PROXY = Line2D([], [], marker="o", linestyle="none", markersize=5,
                      label=f"n < {MIN_SAMPLES}")
 
 
-def _panel_title(model: str) -> str:
+def _panel_title(model: str, *, compact: bool = False) -> str:
     """Model title with its precision, unless the name already carries it."""
     meta = meta_for(model)
+    pretty = str(meta["pretty"])
+    if compact:
+        pretty = (pretty.replace("Llama-3.1", "L3.1")
+                        .replace("Llama-3.3", "L3.3")
+                        .replace("Nemotron3-", "N3-"))
     quant = meta["quant"].upper()
-    if quant.lower() in str(meta["pretty"]).lower():
-        return meta["pretty"]
-    return f"{meta['pretty']} ({quant})"
+    if quant.lower() in pretty.lower():
+        return pretty
+    return f"{pretty} ({quant})"
 
 
 def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
                 finalize_panel=None, panel_note=None, extra_proxies=(),
-                footnote=None):
+                footnote=None, compact_titles=False):
     """Small-multiples frame: one panel per model plus a legend cell.
 
     draw_panel(ax, g, load_col, style, cfg) plots one config series into a
@@ -227,7 +231,7 @@ def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
         # a single-series panel is a skipped-config finding (e.g. FP8-70B
         # runs TP=2 only); say so in the title so it cannot read as missing
         # data
-        title = _panel_title(model)
+        title = _panel_title(model, compact=compact_titles)
         if cfgs == ["tp2"]:
             title += " (TP=2 only)"
         ax.set_title(title, fontsize=PANEL_TITLE_FS, pad=3)
@@ -254,7 +258,7 @@ def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
         proxies.append(LOW_N_PROXY)
     legend_ax = flat[n]
     legend_ax.axis("off")
-    legend_ax.legend(handles=proxies, loc="center", fontsize=6.5,
+    legend_ax.legend(handles=proxies, loc="center", fontsize=7.0,
                      frameon=False, handlelength=2.2)
     for ax in flat[n + 1:]:
         ax.axis("off")
@@ -304,7 +308,7 @@ def fig_ttft_grid(df, out, fmts):
 
 
 def fig_itl_grid(df, out, fmts):
-    if not has(df, ["itl_p50"]):
+    if not has(df, ["mean_itl_p50"]):
         return
     slo1 = Line2D([], [], color=SLO_COLOR, linestyle=":", linewidth=1.0,
                   label="strict SLO 100 ms")
@@ -312,7 +316,7 @@ def fig_itl_grid(df, out, fmts):
                   label="loose SLO 200 ms")
 
     def panel(ax, g, lc, s, cfg):
-        y = g["itl_p50"] * 1e3
+        y = g["mean_itl_p50"] * 1e3
         ax.plot(g[lc], y, marker=s["marker"], color=s["color"],
                 markersize=3.2, linewidth=1.2)
         return _mark_low_n_panel(ax, g, g[lc], y)
@@ -325,7 +329,7 @@ def fig_itl_grid(df, out, fmts):
         clean_log_ticks(ax)
 
     _model_grid(df, "itl_grid", out, fmts, panel,
-                "Median inter-token latency (ms)",
+                "Median request-mean ITL (ms)",
                 finalize_panel=finalize, extra_proxies=[slo1, slo2])
 
 
@@ -335,7 +339,7 @@ def fig_goodput_grid(df, out, fmts):
     has_itl2 = has(df, ["goodput_itl2_rps"])
     strict = Line2D([], [], color="0.15", linestyle="-",
                     label="strict ITL tier")
-    loose = Line2D([], [], color="0.15", linestyle="--", alpha=0.7,
+    loose = Line2D([], [], color="0.15", linestyle="--",
                    label="loose ITL tier")
 
     def panel(ax, g, lc, s, cfg):
@@ -343,8 +347,8 @@ def fig_goodput_grid(df, out, fmts):
                 markersize=3.2, linewidth=1.2)
         if has_itl2:
             ax.plot(g[lc], g["goodput_itl2_rps"], marker=s["marker"],
-                    linestyle="--", color=s["color"], alpha=0.65,
-                    markersize=2.6, linewidth=1.0)
+                    linestyle="--", color=s["color"],
+                    markersize=3.0, linewidth=1.1)
         return _mark_low_n_panel(ax, g, g[lc], g["goodput_rps"])
 
     def finalize(ax):
@@ -355,18 +359,27 @@ def fig_goodput_grid(df, out, fmts):
         ax.set_ylim(0, max(0.25, ax.get_ylim()[1]))
 
     def note(ax, msub):
-        # flat-zero panels are the finding, not missing data -- say so on the
-        # panel itself (32B/70B dense: the ITL floor sits above both tiers)
-        cols = ["goodput_rps"] + (["goodput_itl2_rps"] if has_itl2 else [])
-        if float(msub[cols].max().max()) < 0.05:
-            ax.text(0.5, 0.62, "goodput $\\approx$ 0\nat every load",
-                    transform=ax.transAxes, ha="center", va="center",
-                    fontsize=6.0, color="0.35", style="italic")
+        # A zero strict curve is a finding, not missing data. Keep the note
+        # tier-specific: some dense checkpoints have zero strict goodput but a
+        # small, measurable loose-tier operating range.
+        strict_max = float(msub["goodput_rps"].max())
+        if strict_max > 0:
+            return
+        loose_max = (float(msub["goodput_itl2_rps"].max())
+                     if has_itl2 else 0.0)
+        if loose_max > 0:
+            text = f"strict = 0\nloose $\\leq$ {loose_max:.3f} req/s"
+        else:
+            text = "strict and loose\n= 0"
+        ax.text(0.5, 0.62, text, transform=ax.transAxes,
+                ha="center", va="center", fontsize=6.5,
+                color="0.35", style="italic")
 
     _model_grid(df, "goodput_grid", out, fmts, panel,
                 "Goodput under SLO (req/s)",
                 finalize_panel=finalize, panel_note=note,
-                extra_proxies=[strict, loose] if has_itl2 else [strict])
+                extra_proxies=[strict, loose] if has_itl2 else [strict],
+                compact_titles=True)
 
 
 def fig_energy_grid(df, out, fmts):
@@ -419,7 +432,7 @@ def fig_operating_regimes(df, out, fmts):
     mv = _model_values(df)
     chosen = [(model, title) for model, title in candidates
               if (mv == model).any()]
-    if not chosen or not has(df, [_throughput_col(df), "itl_p50"]):
+    if not chosen or not has(df, [_throughput_col(df), "mean_itl_p50"]):
         print("  operating_regimes: representative series unavailable, "
               "skipping")
         return
@@ -439,7 +452,8 @@ def fig_operating_regimes(df, out, fmts):
             axt.plot(g[lc], g[tcol], color=style["color"],
                      marker=style["marker"], markersize=3.4,
                      linewidth=1.2)
-            axl.plot(g[lc], g["itl_p50"] * 1e3, color=style["color"],
+            axl.plot(g[lc], g["mean_itl_p50"] * 1e3,
+                     color=style["color"],
                      marker=style["marker"], markersize=3.4,
                      linewidth=1.2)
             all_loads += g[lc].tolist()
@@ -459,7 +473,7 @@ def fig_operating_regimes(df, out, fmts):
         axl.set_xlabel("Concurrent requests", fontsize=7.5)
         if col == 0:
             axt.set_ylabel("Throughput (tok/s)", fontsize=7.5)
-            axl.set_ylabel("Median ITL (ms)", fontsize=7.5)
+            axl.set_ylabel("Median request-mean ITL (ms)", fontsize=7.5)
 
     proxies = [
         Line2D([], [], color=CONFIG_STYLE[c]["color"],
@@ -541,7 +555,71 @@ def _bytes_fmt(v, _):
     return f"{int(v)} B"
 
 
-def fig_allreduce(df, out, fmts, results_dir):
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _resolve_allreduce_paths(results_dir: str,
+                             manifest_path: str | None = None) -> list[str]:
+    """Select one reproducible set of all-reduce sweeps.
+
+    The campaign manifest is authoritative when present: every selected file
+    is checked for size and SHA-256 before plotting. A directory of CSVs
+    without a manifest is rejected instead of silently selecting or mixing
+    campaigns.
+    """
+    if manifest_path is None:
+        candidate = os.path.join(results_dir, "campaign_manifest.json")
+        manifest_path = candidate if os.path.exists(candidate) else None
+
+    if manifest_path is not None:
+        manifest_path = os.path.abspath(manifest_path)
+        with open(manifest_path) as handle:
+            manifest = json.load(handle)
+        entries = manifest.get("artifacts", {}).get("allreduce", [])
+        if not entries:
+            raise ValueError(
+                f"{manifest_path} contains no artifacts.allreduce entries")
+        paths: list[str] = []
+        for entry in entries:
+            # Campaign manifests record artifact paths relative to the results
+            # output directory, even when a copied manifest is supplied from
+            # another location.
+            path = os.path.abspath(os.path.join(results_dir, entry["path"]))
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"manifest-sealed all-reduce file is missing: {path}")
+            actual_bytes = os.path.getsize(path)
+            expected_bytes = int(entry["bytes"])
+            if actual_bytes != expected_bytes:
+                raise ValueError(
+                    f"size mismatch for {path}: manifest={expected_bytes}, "
+                    f"actual={actual_bytes}")
+            actual_sha = _sha256(path)
+            expected_sha = str(entry["sha256"]).lower()
+            if actual_sha != expected_sha:
+                raise ValueError(
+                    f"SHA-256 mismatch for {path}: "
+                    f"manifest={expected_sha}, actual={actual_sha}")
+            paths.append(path)
+        print(f"  allreduce: verified {len(paths)} sweep(s) from "
+              f"{manifest_path}")
+        return paths
+
+    paths = sorted(glob.glob(os.path.join(results_dir, "allreduce_*.csv")))
+    if paths:
+        raise ValueError(
+            f"{results_dir} contains {len(paths)} all-reduce sweep(s) but no "
+            "campaign manifest; pass --allreduce-manifest to select and "
+            "verify a sealed set")
+    return []
+
+
+def fig_allreduce(df, out, fmts, results_dir, manifest_path=None):
     """Dual-node all-reduce microbenchmark: latency and bus bandwidth vs size.
 
     A transport diagnostic to compare with the TP=2 serving results. The
@@ -550,37 +628,61 @@ def fig_allreduce(df, out, fmts, results_dir):
     bf16). This supports a correlation, not a causal decomposition: there is no
     matched point-to-point pipeline-stage microbenchmark in the campaign.
     """
-    paths = sorted(glob.glob(os.path.join(results_dir, "allreduce_*.csv")))
+    paths = _resolve_allreduce_paths(results_dir, manifest_path)
     if not paths:
         print(f"  allreduce: no allreduce_*.csv under {results_dir}, skipping")
         return
-    runs = [pd.read_csv(p) for p in paths]
+    runs = []
+    for path in paths:
+        run = pd.read_csv(path).sort_values("bytes").copy()
+        if not {"bytes", "avg_s"}.issubset(run.columns):
+            raise ValueError(f"{path} is missing bytes or avg_s")
+        run["bytes"] = pd.to_numeric(run["bytes"], errors="coerce")
+        run["avg_s"] = pd.to_numeric(run["avg_s"], errors="coerce")
+        if (run[["bytes", "avg_s"]].isna().any().any()
+                or (run["bytes"] <= 0).any()
+                or (run["avg_s"] <= 0).any()):
+            raise ValueError(f"{path} contains nonpositive or nonnumeric data")
+        if run["bytes"].duplicated().any():
+            raise ValueError(f"{path} contains duplicate message sizes")
+        # This is a two-rank all-reduce, for which NCCL's bus-bandwidth
+        # correction 2*(n-1)/n is exactly one. Deriving from unrounded latency
+        # preserves the 8--32 B points that the CSV's 0.001-GB/s formatting
+        # rounds to zero.
+        run["bw_exact"] = run["bytes"] / run["avg_s"] / 1e9
+        runs.append(run)
     merged = pd.concat(runs).groupby("bytes", as_index=False).agg(
         avg_s=("avg_s", "mean"), avg_lo=("avg_s", "min"),
-        avg_hi=("avg_s", "max"), bw=("busbw_GBps", "mean"),
-        bw_lo=("busbw_GBps", "min"), bw_hi=("busbw_GBps", "max"))
+        avg_hi=("avg_s", "max"), bw=("bw_exact", "mean"),
+        bw_lo=("bw_exact", "min"), bw_hi=("bw_exact", "max"))
     merged = merged.sort_values("bytes")
     color = "#0072B2"
     fig, (axt, axb) = plt.subplots(2, 1, figsize=(COL_W, 3.4), sharex=True)
 
+    for run in runs:
+        axt.plot(run["bytes"], run["avg_s"] * 1e6, color=color,
+                 linewidth=0.7, alpha=0.25, zorder=1)
+        axb.plot(run["bytes"], run["bw_exact"], color=color,
+                 linewidth=0.7, alpha=0.25, zorder=1)
     axt.plot(merged["bytes"], merged["avg_s"] * 1e6, marker="o",
-             markersize=3.0, linewidth=1.2, color=color)
+             markersize=3.0, linewidth=1.2, color=color, zorder=3)
     axt.fill_between(merged["bytes"], merged["avg_lo"] * 1e6,
                      merged["avg_hi"] * 1e6, color=color, alpha=0.15,
-                     linewidth=0)
+                     linewidth=0, zorder=2)
     axt.set_yscale("log")
     axt.set_ylabel("All-reduce latency (µs)", fontsize=8)
 
-    bw = merged[merged["bw"] > 0]
-    axb.plot(bw["bytes"], bw["bw"], marker="o", markersize=3.0,
-             linewidth=1.2, color=color)
-    axb.fill_between(bw["bytes"], bw["bw_lo"], bw["bw_hi"], color=color,
-                     alpha=0.15, linewidth=0)
+    axb.plot(merged["bytes"], merged["bw"], marker="o", markersize=3.0,
+             linewidth=1.2, color=color, zorder=3)
+    axb.fill_between(merged["bytes"], merged["bw_lo"], merged["bw_hi"],
+                     color=color, alpha=0.15, linewidth=0, zorder=2)
     axb.set_yscale("log")
-    axb.set_ylabel("Bus bandwidth (GB/s)", fontsize=8)
+    axb.set_ylabel("NCCL bus bandwidth (GB/s)", fontsize=8)
     axb.set_xlabel("Message size", fontsize=8)
 
-    peak = float(merged["bw"].max())
+    # The largest payload is already on the plateau; using its mean avoids
+    # cherry-picking a smaller-size noise maximum.
+    peak = float(merged.iloc[-1]["bw"])
     axb.axhline(peak, color=SLO_COLOR, linestyle=":", linewidth=0.9)
     # Park the label in the empty lower-right corner, in axes coordinates so
     # it cannot drift back onto the data when the sweep range changes. Anchored
@@ -588,23 +690,24 @@ def fig_allreduce(df, out, fmts, results_dir):
     # curve; one step down it still grazed the knee near 1 MiB.
     axb.text(
         0.98, 0.06,
-        f"NCCL/TCP plateau {peak:.1f} GB/s\n"
-        f"({peak / LINE_RATE_GBPS * 100:.0f}% of 200 GbE line rate)",
+        f"NCCL/TCP mean plateau {peak:.1f} GB/s\n"
+        f"({len(runs)} manifest-sealed sweeps)",
         transform=axb.transAxes, ha="right", va="bottom",
-        fontsize=6.0, color="0.25", linespacing=1.3)
-    axt.text(0.02, 0.96, "campaign transport: TCP sockets",
+        fontsize=6.8, color="0.25", linespacing=1.3)
+    axt.text(0.02, 0.78,
+             f"TCP sockets\nmean of {len(runs)} sealed sweeps; band=min–max",
              transform=axt.transAxes, ha="left", va="top",
-             fontsize=6.0, color="0.25")
+             fontsize=6.6, color="0.25", linespacing=1.25)
 
     # Llama-3.3-70B decode all-reduce payloads: tokens_in_flight x hidden 8192
     # x 2 B (bf16 activations), c = 1 .. 128.
     lo, hi = 1 * 8192 * 2, 128 * 8192 * 2
     for ax in (axt, axb):
         ax.axvspan(lo, hi, color="0.75", alpha=0.25, linewidth=0)
-    axt.annotate("decode payloads\n(70B, c=1–128)",
+    axt.annotate("estimated activation payloads\n(70B, c=1–128)",
                  xy=(math.sqrt(lo * hi), 1), xycoords=("data", "axes fraction"),
                  xytext=(0, -5), textcoords="offset points",
-                 ha="center", va="top", fontsize=6.0, color="0.25")
+                 ha="center", va="top", fontsize=6.8, color="0.25")
 
     axb.set_xscale("log", base=2)
     ticks = [2 ** k for k in (3, 7, 11, 15, 19, 23, 27, 30)]
@@ -733,7 +836,8 @@ def write_peak_table(df, out) -> None:
     The 152-point summary table is an artifact appendix; this is the table
     that fits in the paper body. Peak throughput is each config's best exact
     token-in-window rate over the sweep; latency columns are the unloaded
-    (c=1) medians; energy columns describe the peak-throughput point.
+    (c=1) medians; the ITL column is the pooled token-gap summary and energy
+    columns describe the peak-throughput point.
     """
     tcol = _throughput_col(df)
     energy = has(df, ["energy_per_token_j"])
@@ -769,7 +873,7 @@ def write_peak_table(df, out) -> None:
     os.makedirs(out, exist_ok=True)
 
     headers = ["Model", "Prec.", "Config", "Peak tok/s", "@c",
-               "tok/s/node", "TTFT@1 (ms)", "ITL@1 (ms)"]
+               "tok/s/node", "TTFT@1 (ms)", "Pooled ITL@1 (ms)"]
     if energy:
         headers.append("J/tok@peak")
     md = ["| " + " | ".join(headers) + " |",
@@ -795,7 +899,8 @@ def write_peak_table(df, out) -> None:
         r"\begin{tabular}{l l l r r r r r " + ecol + "}",
         r"\toprule",
         r"Model & Prec. & Config & Peak tok/s & @$c$ & tok/s/node & "
-        r"TTFT$^{c=1}_{50}$ (ms) & ITL$^{c=1}_{50}$ (ms)" + ehead + r" \\",
+        r"TTFT$^{c=1}_{50}$ (ms) & Pooled ITL$^{c=1}_{50}$ (ms)"
+        + ehead + r" \\",
         r"\midrule",
     ]
     last_model = None
@@ -877,10 +982,17 @@ def write_models_table(df, out) -> None:
                 weight = 2.0 * float(w)   # dual-only checkpoint: whole model
             mc = row.get("max_concurrency", np.nan)
             cap[cfg] = float(mc) if pd.notna(mc) else np.nan
+        # max_concurrency is a capacity bound, so round down rather than to the
+        # nearest integer: rounding up would claim that a fractional request
+        # fits in the cache.
+        capacity_cells = []
+        for cfg in ("single", "tp2", "pp2"):
+            value = cap.get(cfg, np.nan)
+            capacity_cells.append(
+                "--" if pd.isna(value) else str(math.floor(value))
+            )
         cells = [_table_name(model), arch, meta["quant"].upper(),
-                 _fmt(weight, ".1f")] + [
-                 _fmt(cap.get(c, np.nan), ".0f")
-                 for c in ("single", "tp2", "pp2")]
+                 _fmt(weight, ".1f")] + capacity_cells
         lines.append(" & ".join(cells) + r" \\")
         md.append("| " + " | ".join(cells) + " |")
     lines += [r"\bottomrule", r"\end{tabular}"]
@@ -970,6 +1082,11 @@ def main() -> None:
     ap.add_argument("--out", default="figs/paper")
     ap.add_argument("--format", default="both", choices=["pdf", "png", "both"])
     ap.add_argument("--dpi", type=int, default=200)
+    ap.add_argument(
+        "--allreduce-manifest",
+        help="campaign manifest whose artifacts.allreduce entries select and "
+             "verify the sweeps (default: campaign_manifest.json beside "
+             "--index when present)")
     ap.add_argument("--sans", action="store_true",
                     help="keep the sans-serif font (default is the IEEE "
                          "Times-like serif)")
@@ -1022,7 +1139,8 @@ def main() -> None:
     fig_energy_grid(df, args.out, fmts)
     print("mechanism figures")
     fig_kv_capacity(df, args.out, fmts)
-    fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".")
+    fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".",
+                  args.allreduce_manifest)
     fig_interconnect(args.out, fmts, os.path.dirname(args.index) or ".")
     fig_prefill_scaling(df, args.out, fmts,
                         os.path.dirname(args.index) or ".")
