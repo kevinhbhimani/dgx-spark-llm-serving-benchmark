@@ -688,16 +688,16 @@ def fig_allreduce(df, out, fmts, results_dir, manifest_path=None):
     # it cannot drift back onto the data when the sweep range changes. Anchored
     # on the plateau line it ran along the dotted rule and through the rising
     # curve; one step down it still grazed the knee near 1 MiB.
-    axb.text(
-        0.98, 0.06,
-        f"NCCL/TCP mean plateau {peak:.1f} GB/s\n"
-        f"({len(runs)} manifest-sealed sweeps)",
-        transform=axb.transAxes, ha="right", va="bottom",
-        fontsize=6.8, color="0.25", linespacing=1.3)
-    axt.text(0.02, 0.78,
-             f"TCP sockets\nmean of {len(runs)} sealed sweeps; band=min–max",
-             transform=axt.transAxes, ha="left", va="top",
-             fontsize=6.6, color="0.25", linespacing=1.25)
+    # axb.text(
+    #     0.98, 0.06,
+    #     f"NCCL/TCP mean plateau {peak:.1f} GB/s\n"
+    #     f"({len(runs)} benchmark runs)",
+    #     transform=axb.transAxes, ha="right", va="bottom",
+    #     fontsize=6.8, color="0.25", linespacing=1.3)
+    # axt.text(0.02, 0.78,
+    #          f"TCP sockets\nmean of {len(runs)} benchmark runs; band=min–max",
+    #          transform=axt.transAxes, ha="left", va="top",
+    #          fontsize=6.6, color="0.25", linespacing=1.25)
 
     # Llama-3.3-70B decode all-reduce payloads: tokens_in_flight x hidden 8192
     # x 2 B (bf16 activations), c = 1 .. 128.
