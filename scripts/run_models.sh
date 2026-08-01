@@ -696,11 +696,11 @@ run_one() {
   echo "[models] serving policy: $policy_file"
 
   # Resume at exact (repeat, concurrency) granularity. Only rows produced by
-  # the current methodology/config/source/server identity count as complete.
+  # the current methodology/config/source/serving-policy identity count as
+  # complete; live KV capacity is allowed to differ from launch to launch.
   if [[ "$SKIP_DONE" == "1" ]]; then
     if ! schedule="$(POWER_BACKEND="$POWER_BACKEND" \
                        EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES" \
-                       DEPLOYMENT_FINGERPRINT= \
                        "$PYTHON" "$HERE/swept_concurrencies.py" \
                           "$OUT_DIR/index.csv" "$label" "$CONFIG" "$CONFIG_YAML" \
                           "$fingerprint" "$REPEATS" $CONCURRENCIES)"; then
@@ -771,9 +771,11 @@ run_one() {
     return 1
   fi
 
-  # Hash the runtime/capacity actually observed after startup. This prevents a
-  # crash-resume from filling one curve with points from a subtly different
-  # server deployment (different vLLM build, KV capacity, block size, etc.).
+  # Hash the runtime/capacity actually observed after startup. Recorded on
+  # every row, and re-checked by run_benchmark.py after the window so a server
+  # that changes underneath a measurement (different vLLM build, KV capacity,
+  # block size) is caught. It is deliberately not part of resume identity:
+  # repeats collected across launches never reproduce the same block count.
   if ! deployment="$("$PYTHON" - "$BASE_URL" "$name" "$log" "$fingerprint" <<'PY'
 import sys
 from bench.run_benchmark import collect_deployment_info, deployment_fingerprint
@@ -794,11 +796,10 @@ PY
   if [[ "$SKIP_DONE" == "1" ]]; then
     if ! schedule="$(POWER_BACKEND="$POWER_BACKEND" \
                        EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES" \
-                       DEPLOYMENT_FINGERPRINT="$deployment" \
                        "$PYTHON" "$HERE/swept_concurrencies.py" \
                           "$OUT_DIR/index.csv" "$label" "$CONFIG" "$CONFIG_YAML" \
                           "$fingerprint" "$REPEATS" $CONCURRENCIES)"; then
-      echo "[models] live deployment resume validation failed" >&2
+      echo "[models] post-launch resume validation failed" >&2
       teardown
       return 1
     fi

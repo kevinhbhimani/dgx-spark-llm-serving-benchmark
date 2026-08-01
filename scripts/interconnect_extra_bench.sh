@@ -35,7 +35,8 @@ fi
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/interconnect_extra_$(date +%Y%m%d-%H%M%S).csv"
 TMP="$OUT.tmp.$$"
-trap 'rm -f "$TMP"' EXIT
+RAW="$OUT.raw.$$"
+trap 'rm -f "$TMP" "$RAW"' EXIT
 # The driver env below is for ray.init on the head; the measured transport is
 # the Ray *workers'* NCCL_IB_DISABLE (set by start_ray.sh), which the Python
 # reads and writes into the transport column.
@@ -43,11 +44,27 @@ docker exec -i \
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" \
   "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" "$PORT" \
-  < "$HERE/ray_interconnect_bench.py" | tee "$TMP"
+  < "$HERE/ray_interconnect_bench.py" | tee "$RAW"
+
+# Ray writes cluster status and log-deduplication notices to stdout, the same
+# stream the benchmark prints its CSV on, so the two interleave. Keep the whole
+# stream for triage and filter the artifact down to header plus data rows:
+# unfiltered, those stray lines are parsed as data and land in the transport
+# column, which silently corrupts any plot built from the file.
+grep -E '^(collective|allreduce|sendrecv),' "$RAW" > "$TMP" || true
+for want in allreduce sendrecv; do
+  if ! grep -q "^${want}," "$TMP"; then
+    echo "[microbench] no $want rows in the output; keeping the raw stream at" \
+         "${OUT%.csv}_raw.log for triage" >&2
+    mv "$RAW" "${OUT%.csv}_raw.log"
+    exit 1
+  fi
+done
 
 # Only a complete run becomes an artifact; a failed docker/Ray/NCCL run leaves
 # no partial CSV behind.
 mv "$TMP" "$OUT"
+mv "$RAW" "${OUT%.csv}_raw.log"
 trap - EXIT
 echo "[microbench] wrote $OUT"
 echo "[microbench] rows carry a 'collective' (allreduce|sendrecv) and"

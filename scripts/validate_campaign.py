@@ -1471,7 +1471,12 @@ def verify_campaign(
                     raise CampaignValidationError(
                         f"index mixes multiple {field} values"
                     )
-            if field in {"serving_fingerprint", "deployment_fingerprint"}:
+            # deployment_fingerprint is checked for shape only. It hashes the
+            # KV capacity vLLM lands on after memory profiling, which differs
+            # by a few thousand blocks on every launch, so repeats of one arm
+            # collected across launches legitimately carry different values.
+            # The launch policy behind them is pinned by serving_fingerprint.
+            if field == "serving_fingerprint":
                 key = (point.model_label, point.config_label, field)
                 previous = consistent_pair.setdefault(key, value)
                 if previous != value:

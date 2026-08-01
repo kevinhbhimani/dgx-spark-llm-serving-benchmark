@@ -18,7 +18,6 @@ from bench.run_benchmark import (
     _append_index,
     config_file_fingerprint,
     deployment_fingerprint,
-    deployment_state,
 )
 from scripts import check_environment
 from scripts import validate_campaign as validator
@@ -241,7 +240,8 @@ class CampaignFixture:
             "power_scope": "gpu_devices",
         }
 
-    def add_point(self, *, failed=0, run_tag="model-a-run"):
+    def add_point(self, *, failed=0, run_tag="model-a-run", repeat_id=1,
+                  repeat_count=1, gpu_blocks=10):
         cfg = ExperimentConfig.from_yaml(str(self.experiment))
         cfg.model = "org/model"
         cfg.model_label = "model-a"
@@ -251,8 +251,8 @@ class CampaignFixture:
         cfg.tokenizer_revision = REVISION
         cfg.concurrency = 1
         cfg.expected_concurrencies = "1"
-        cfg.repeat_id = 1
-        cfg.repeat_count = 1
+        cfg.repeat_id = repeat_id
+        cfg.repeat_count = repeat_count
         log_name = f"server_model-a_{self.config}_fixture.log"
         cfg.server_log = str(self.results / log_name)
 
@@ -261,8 +261,8 @@ class CampaignFixture:
             "vllm_version": "1.0",
             "max_model_len": 64,
             "block_size": 16,
-            "gpu_blocks": 10,
-            "total_kv_tokens": 160,
+            "gpu_blocks": gpu_blocks,
+            "total_kv_tokens": gpu_blocks * 16,
             "total_kv_tokens_source": "server-log",
             "kv_cache_dtype": "auto",
             "gpu_memory_utilization": 0.8,
@@ -295,8 +295,8 @@ class CampaignFixture:
             "serving_fingerprint": cfg.serving_fingerprint,
             "serving_policy": serving_policy,
             "deployment_fingerprint": cfg.deployment_fingerprint,
-            "repeat_id": 1,
-            "repeat_count": 1,
+            "repeat_id": repeat_id,
+            "repeat_count": repeat_count,
             "expected_concurrencies": "1",
             "config_label": self.config,
             "model_label": "model-a",
@@ -336,12 +336,12 @@ class CampaignFixture:
         fingerprint_config = dict(summary["config"])
         fingerprint_config.pop("repeat_id", None)
         fingerprint_config.pop("repeat_count", None)
+        fingerprint_config.pop("deployment_fingerprint", None)
         summary["experiment_fingerprint"] = _sha256_json(
             {
                 "methodology_version": METHODOLOGY_VERSION,
                 "harness_source_sha256": harness_source_sha256,
                 "resolved_config": fingerprint_config,
-                "deployment_state": deployment_state(server_info),
             }
         )
         def write_artifact(name, data):
@@ -564,6 +564,43 @@ class VerifyTests(unittest.TestCase):
                 },
             )
             self.assertEqual(list(fixture.results.glob(".*.tmp")), [])
+
+    def test_repeats_may_come_from_different_server_launches(self):
+        """Run-to-run variance requires one server launch per repeat.
+
+        vLLM profiles memory on every boot and settles on a different KV block
+        count, so the two repeats below carry different deployment
+        fingerprints. That is live state, not a change of experiment: the
+        campaign still verifies, and both rows still describe one experiment.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point(run_tag="model-a-r1", repeat_id=1,
+                              repeat_count=2, gpu_blocks=10)
+            fixture.add_point(run_tag="model-a-r2", repeat_id=2,
+                              repeat_count=2, gpu_blocks=11)
+            manifest = fixture.results / "campaign-manifest.json"
+
+            report = validator.verify_campaign(
+                fixture.models,
+                fixture.experiment,
+                fixture.results,
+                [1],
+                2,
+                manifest,
+            )
+
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(report["verified_count"], 2)
+            with (fixture.results / "index.csv").open(newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(
+                len({row["deployment_fingerprint"] for row in rows}), 2
+            )
+            self.assertEqual(
+                len({row["experiment_fingerprint"] for row in rows}), 1
+            )
 
     def test_completed_only_verifies_present_combos_and_skips_absent(self):
         with tempfile.TemporaryDirectory() as tmp:

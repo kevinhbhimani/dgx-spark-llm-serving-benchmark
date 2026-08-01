@@ -9,8 +9,10 @@ A row only counts as done when:
   - model_label and config_label match,
   - mode is "closed" (sweeps are always closed; open-mode rows never count),
   - request counts are finite, nonnegative, and internally consistent,
-  - methodology, canonical config, current source tree, client runtime, serving
-    policy, and live deployment fingerprint exactly match, and
+  - methodology, canonical config, current source tree, client runtime, and
+    serving policy exactly match,
+  - it carries a live deployment fingerprint (which need not match the active
+    one: see completed_repeats), and
   - its one-based repeat_id is within the requested repeat count.
 
 Usage: python scripts/swept_concurrencies.py INDEX_CSV LABEL CONFIG CONFIG_YAML \
@@ -126,10 +128,19 @@ def swept(index_csv: str, label: str, config: str, config_yaml: str) -> list[int
 def completed_repeats(index_csv: str, label: str, config: str,
                       config_yaml: str, serving_fingerprint: str,
                       repeats: int,
-                      deployment_fingerprint: str = "",
                       config_overrides: dict | None = None,
                       expected_concurrencies=None) -> dict[int, set[int]]:
-    """Return valid completed repeat ids keyed by concurrency."""
+    """Return valid completed repeat ids keyed by concurrency.
+
+    Rows must carry a live deployment fingerprint, but it is not required to
+    equal any other row's or the active server's. Launch policy is pinned by
+    serving_fingerprint; the deployment fingerprint additionally hashes the KV
+    capacity vLLM settles on after memory profiling, and that lands a few
+    thousand blocks apart on every launch. Requiring equality here made a
+    repeat that runs on its own server launch permanently unschedulable, which
+    is precisely how run-to-run variance has to be collected. The value stays
+    recorded per row so a reader can still see which launch produced a point.
+    """
     repeats = _positive_integral(repeats, "repeats")
     if not os.path.exists(index_csv):
         return {}
@@ -144,7 +155,6 @@ def completed_repeats(index_csv: str, label: str, config: str,
     want_source = _source_fingerprint()
     want_client = client_environment_fingerprint()
     candidates: list[tuple[int, int]] = []
-    deployments: set[str] = set()
     identities: set[tuple[int, int]] = set()
     with open(index_csv, newline="") as f:
         for row in csv.DictReader(f):
@@ -175,16 +185,9 @@ def completed_repeats(index_csv: str, label: str, config: str,
                         "otherwise-current row declares expected concurrencies "
                         f"{declared}, but this campaign requires {want_expected}"
                     )
-            deployment = row.get("deployment_fingerprint") or ""
-            if not deployment:
+            if not (row.get("deployment_fingerprint") or ""):
                 raise ValueError(
                     "otherwise-current row has no live deployment fingerprint"
-                )
-            if (deployment_fingerprint
-                    and deployment != deployment_fingerprint):
-                raise ValueError(
-                    "otherwise-current row's live deployment fingerprint "
-                    "differs from the active deployment"
                 )
 
             repeat_id = _positive_integral(row.get("repeat_id"), "repeat_id")
@@ -265,15 +268,9 @@ def completed_repeats(index_csv: str, label: str, config: str,
                     f"concurrency={concurrency}, repeat_id={repeat_id}"
                 )
             identities.add(identity)
-            deployments.add(deployment)
             if repeat_id <= repeats:
                 candidates.append(identity)
 
-    if not deployment_fingerprint and len(deployments) > 1:
-        raise ValueError(
-            "existing rows contain multiple live deployment fingerprints; "
-            "refusing to assemble a resume schedule before launch"
-        )
     done: dict[int, set[int]] = {}
     for concurrency, repeat_id in candidates:
         done.setdefault(concurrency, set()).add(repeat_id)
@@ -283,7 +280,6 @@ def completed_repeats(index_csv: str, label: str, config: str,
 def missing_schedule(index_csv: str, label: str, config: str,
                      config_yaml: str, serving_fingerprint: str,
                      repeats: int, concurrencies: list[int],
-                     deployment_fingerprint: str = "",
                      config_overrides: dict | None = None,
                      expected_concurrencies=None) -> list[tuple[int, int]]:
     repeats = _positive_integral(repeats, "repeats")
@@ -294,7 +290,6 @@ def missing_schedule(index_csv: str, label: str, config: str,
         expected_concurrencies = _positive_integral_list(expected_concurrencies, "expected concurrency")
     completed = completed_repeats(index_csv, label, config, config_yaml,
                                   serving_fingerprint, repeats,
-                                  deployment_fingerprint,
                                   config_overrides=config_overrides,
                                   expected_concurrencies=expected_concurrencies)
     return [(rep, concurrency)
@@ -320,7 +315,6 @@ def main() -> int:
         expected_concurrencies = expected_raw.split() if expected_raw else concurrencies
         schedule = missing_schedule(
             index, label, config, config_yaml, fingerprint, repeats, concurrencies,
-            os.environ.get("DEPLOYMENT_FINGERPRINT", ""),
             config_overrides=config_overrides,
             expected_concurrencies=expected_concurrencies,
         )

@@ -222,6 +222,11 @@ __marimo__/
 results-*/server_*.log
 results-preflight
 
+# Superseded campaigns, kept for reference only. Deliberately outside the
+# results-* namespace so no analysis default or glob can reach them; each
+# carries a DO-NOT-MERGE.md explaining why its rows cannot be resumed.
+/archive/
+
 # Scratch figures from manual plot_results.py/plot_trends.py runs (default --out).
 # Campaign figures live under a results dir (e.g. results/figs) and are not ignored.
 /figs/
