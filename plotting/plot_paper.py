@@ -61,7 +61,8 @@ from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from plot_results import (
     COL_W, CONFIG_ORDER, CONFIG_STYLE, DUAL_NODE_CONFIGS, TEXT_W,
-    _fmt, _model_values, _throughput_col, collapse_repeats, configs_present,
+    _fmt, _model_values, _peak_row, _series_rows, _throughput_col,
+    collapse_repeats, configs_present,
     group, has, head_only_power, load_index, models_present, report_quality,
     save, set_rc, style_for, warn_low_n, write_capacity_table,
     write_summary_table, fig_model_comparison, MIN_SAMPLES,
@@ -69,7 +70,7 @@ from plot_results import (
 from plot_trends import (
     clean_log_ticks, meta_for, models_by_size, fig_parallelism_scaling,
     fig_dense_vs_moe, fig_precision_ladder, fig_efficiency_frontier,
-    fig_scale_trend, fig_prefill_scaling,
+    fig_scale_trend, fig_prefill_scaling, bucket_medians, _prefill_fit,
 )
 
 # SLO bounds drawn as reference lines. Values mirror configs/experiment.yaml
@@ -1074,6 +1075,375 @@ def write_headline_table(df, out) -> None:
         print(f"  wrote {path}")
 
 
+# ---- numbers.tex -------------------------------------------------------------
+# Retention rule mirrored from configs/experiment.yaml so the derived
+# single-stream ITL equivalent cannot drift from the rule the harness applied.
+RETAIN_MIN_COMPLETIONS = 20
+MEASURE_WINDOW_S = 1500.0
+MEAN_OUTPUT_TOKENS = 256.0
+# Advertised LPDDR5x bandwidth used for the dense weight-streaming bound.
+SPEC_BW_GBPS = 273.0
+GIB_PER_GB = 1.073741824
+# Model configurations that were launched but produced no retained series;
+# configs/models.yaml lists eleven entries and 32 (model, deployment) pairs.
+LAUNCHED_MODEL_CONFIGS = 11
+LAUNCHED_CURVES = 32
+DENSE_MODELS = ("llama3.1-8b", "llama3.1-8b-fp8", "llama3.1-8b-nvfp4",
+                "qwen3-8b", "qwen3-32b", "llama3.3-70b-nvfp4")
+
+
+def _macro(name: str, value) -> str:
+    return "\\newcommand{\\%s}{%s}" % (name, value)
+
+
+def _thin(value: str) -> str:
+    """LaTeX thin space between a number and its unit."""
+    return value.replace(" ", "\\,")
+
+
+def write_numbers(df, out, results_dir=".", manifest_path=None) -> None:
+    """Emit figs/numbers.tex: one LaTeX macro per quantity the prose cites.
+
+    The paper quotes two different inter-token-latency statistics and they do
+    not agree: ``mean_itl_p50`` is the median over requests of each request's
+    mean ITL -- the request-level quantity the goodput SLO thresholds and the
+    ITL figures plot -- while ``itl_p50`` is the pooled median over every
+    inter-token gap in every request. The pooled statistic is the one the
+    weight-streaming bound in Section V-A compares against; every other ITL
+    number in the prose is the request-mean statistic. Both are emitted here
+    under names that say which is which, so a reader of the .tex can never
+    silently swap them.
+    """
+    tcol = _throughput_col(df)
+    models = models_by_size(df)
+    m = {}          # macro name -> formatted value
+    def put(name, value, fmt=None):
+        m[name] = value if fmt is None else format(value, fmt)
+
+    # LaTeX control words are letters only, so a load has to be spelled out:
+    # \newcommand{\dgxFooITL128} would define \dgxFooITL and leave a stray
+    # "128" in the document.
+    LOAD_WORD = {1: "One", 2: "Two", 4: "Four", 8: "Eight", 16: "Sixteen",
+                 32: "ThirtyTwo", 64: "SixtyFour", 128: "OneTwentyEight"}
+
+    def series(model, cfg):
+        return _series_rows(df, model, cfg)
+
+    def peak(model, cfg):
+        return _peak_row(series(model, cfg), tcol)
+
+    def at(model, cfg, c, col):
+        g = series(model, cfg)
+        if not len(g):
+            return float("nan")
+        sel = g[pd.to_numeric(g["concurrency"], errors="coerce") == c]
+        return float(sel.iloc[0][col]) if len(sel) else float("nan")
+
+    # ---- ledger ------------------------------------------------------------
+    curves = [(mo, c) for mo in models for c in CONFIG_ORDER
+              if len(series(mo, c))]
+    complete = [mo for mo in models
+                if all(len(series(mo, c)) for c in CONFIG_ORDER)]
+    put("dgxNumRuns", f"{len(df):,}".replace(",", "{,}"))
+    put("dgxMeasureHours", int(round(df["measure_s"].sum() / 3600.0)))
+    put("dgxNumModelConfigs", len(models))
+    put("dgxNumCurves", len(curves))
+    put("dgxNumCompleteConfigs", len(complete))
+    put("dgxNumCompleteCurves", len(complete) * len(CONFIG_ORDER))
+    put("dgxNumLaunchedConfigs", LAUNCHED_MODEL_CONFIGS)
+    put("dgxNumLaunchedCurves", LAUNCHED_CURVES)
+    put("dgxNumLoads", int(df["concurrency"].nunique()))
+    put("dgxNumLaunchedRuns", LAUNCHED_CURVES * int(df["concurrency"].nunique()))
+    put("dgxNumRemovedCurves", LAUNCHED_CURVES - len(curves))
+    put("dgxRequestsCompleted",
+        f"{int(df['requests_completed'].sum()):,}".replace(",", "{,}"))
+    put("dgxRequestsFailed", int(df["requests_failed"].sum()))
+    put("dgxMaxModelLen",
+        f"{int(df['max_model_len'].max()):,}".replace(",", "{,}"))
+    n128 = sum(1 for mo in complete for c in CONFIG_ORDER
+               if int(peak(mo, c)["concurrency"]) == 128)
+    put("dgxNumPeakAtMaxLoad", n128)
+
+    # retention rule -> single-stream mean-ITL equivalent
+    itl_equiv = MEASURE_WINDOW_S / (RETAIN_MIN_COMPLETIONS * MEAN_OUTPUT_TOKENS)
+    put("dgxRetainMinCompletions", RETAIN_MIN_COMPLETIONS)
+    put("dgxRetainITLms", itl_equiv * 1e3, ".0f")
+
+    # ---- maximum measured throughput and its ratios ------------------------
+    tp, pp, pt = [], [], []
+    for mo in complete:
+        s, t, p = (float(peak(mo, c)[tcol]) for c in CONFIG_ORDER)
+        tp.append(t / s); pp.append(p / s); pt.append(p / t)
+    for tag, vals in (("TP", tp), ("PP", pp), ("PPTP", pt)):
+        put(f"dgx{tag}RatioMin", min(vals), ".2f")
+        put(f"dgx{tag}RatioMax", max(vals), ".2f")
+        put(f"dgx{tag}RatioMed", float(np.median(vals)), ".2f")
+    put("dgxTPRatioMinRaw", min(tp), ".3f")
+
+    # named per-model peaks and ratios the prose walks through
+    NAMED = {
+        "LlamaBF": "llama3.1-8b", "LlamaFP": "llama3.1-8b-fp8",
+        "LlamaNV": "llama3.1-8b-nvfp4", "QwenEight": "qwen3-8b",
+        "QwenThirtyTwo": "qwen3-32b", "QwenThirtyMoE": "qwen3-30b-a3b",
+        "Nano": "nemotron3-nano-30b-a3b-nvfp4",
+        "Super": "nemotron3-super-120b-a12b-nvfp4",
+        "SeventyNV": "llama3.3-70b-nvfp4", "SeventyFP": "llama3.3-70b-fp8",
+    }
+    for tag, mo in NAMED.items():
+        for cfg, ctag in zip(CONFIG_ORDER, ("Single", "TP", "PP")):
+            r = peak(mo, cfg)
+            if r is None:
+                continue
+            put(f"dgx{tag}{ctag}Peak", float(r[tcol]), ".0f")
+        s = peak(mo, "single")
+        if s is None:
+            continue
+        for cfg, ctag in (("tp2", "TP"), ("pp2", "PP")):
+            r = peak(mo, cfg)
+            if r is not None:
+                put(f"dgx{tag}{ctag}Ratio", float(r[tcol]) / float(s[tcol]), ".2f")
+
+    # capacity-vs-peak illustration at c=32 and c=128
+    for tag, mo in (("QwenEight", "qwen3-8b"), ("LlamaBF", "llama3.1-8b")):
+        for cfg, ctag in (("single", "Single"), ("tp2", "TP")):
+            for c in (32, 128):
+                put(f"dgx{tag}{ctag}Thr{LOAD_WORD[c]}", at(mo, cfg, c, tcol), ".0f")
+
+    # largest TP ratio among the quantized model configurations
+    quant = [mo for mo in complete if meta_for(mo)["quant"].lower() != "bf16"]
+    bf16 = [mo for mo in complete if meta_for(mo)["quant"].lower() == "bf16"]
+    put("dgxNumQuantConfigs", len(quant))
+    put("dgxNumBFConfigs", len(bf16))
+    put("dgxTPRatioQuantMax",
+        max(float(peak(mo, "tp2")[tcol]) / float(peak(mo, "single")[tcol])
+            for mo in quant), ".2f")
+    bf_tp_min = min(float(peak(mo, "tp2")[tcol]) / float(peak(mo, "single")[tcol])
+                    for mo in bf16)
+    put("dgxTPRatioBFMin", bf_tp_min, ".2f")
+    put("dgxTPRatioBFMinRaw", bf_tp_min, ".3f")
+
+    # MoE vs dense at matched Qwen3 scale
+    moe = [float(peak("qwen3-30b-a3b", c)[tcol]) / float(peak("qwen3-32b", c)[tcol])
+           for c in CONFIG_ORDER]
+    put("dgxQwenMoERatioMin", min(moe), ".1f")
+    put("dgxQwenMoERatioMax", max(moe), ".1f")
+
+    # ---- latency -----------------------------------------------------------
+    one = df[(df["config_label"] == "single")
+             & (pd.to_numeric(df["concurrency"], errors="coerce") == 1)]
+    put("dgxTTFTOneMin", float(one["ttft_p50"].min()) * 1e3, ".0f")
+    put("dgxTTFTOneMax", float(one["ttft_p50"].max()) * 1e3, ".0f")
+    put("dgxITLOneMin", float(one["mean_itl_p50"].min()) * 1e3, ".0f")
+    put("dgxITLOneMax", float(one["mean_itl_p50"].max()) * 1e3, ".0f")
+
+    ratios = []
+    for mo in complete:
+        s = at(mo, "single", 1, "mean_itl_p50")
+        t = at(mo, "tp2", 1, "mean_itl_p50")
+        ratios.append(t / s)
+    put("dgxTPLowerITLCount", sum(1 for r in ratios if r < 1.0))
+    put("dgxTPITLRatioMed", float(np.median(ratios)), ".2f")
+
+    # request-mean ITL (the goodput statistic) at the concurrencies cited
+    for tag, mo in NAMED.items():
+        for cfg, ctag in zip(CONFIG_ORDER, ("Single", "TP", "PP")):
+            for c in (1, 32, 64, 128):
+                v = at(mo, cfg, c, "mean_itl_p50")
+                if np.isfinite(v):
+                    put(f"dgx{tag}{ctag}MeanITL{LOAD_WORD[c]}", v * 1e3, ".0f")
+                v = at(mo, cfg, c, "itl_p50")
+                if np.isfinite(v):
+                    put(f"dgx{tag}{ctag}PoolITL{LOAD_WORD[c]}", v * 1e3, ".0f")
+        for c in (64, 128):
+            v = at(mo, "pp2", c, tcol)
+            if np.isfinite(v):
+                put(f"dgx{tag}PPThr{LOAD_WORD[c]}", v, ".0f")
+
+    # ---- dense weight-streaming bound (pooled token-gap median) ------------
+    bratio = {}
+    for mo in DENSE_MODELS:
+        g = series(mo, "single")
+        if not len(g):
+            continue
+        r = g[pd.to_numeric(g["concurrency"], errors="coerce") == 1].iloc[0]
+        gib = float(r["worker_weight_gb"])
+        gb = gib * GIB_PER_GB
+        bound_ms = gb / SPEC_BW_GBPS * 1e3
+        bratio[mo] = float(r["itl_p50"]) * 1e3 / bound_ms
+        if mo == "llama3.3-70b-nvfp4":
+            put("dgxSeventyNVWeightGB", gb, ".1f")
+            put("dgxSeventyNVWeightGiB", gib, ".1f")
+            put("dgxSeventyNVBoundMs", bound_ms, ".0f")
+            put("dgxSeventyNVPoolITLOne", float(r["itl_p50"]) * 1e3, ".0f")
+            put("dgxSeventyNVBoundPct",
+                (bratio[mo] - 1.0) * 100.0, ".0f")
+    put("dgxNumDenseSingle", len(bratio))
+    put("dgxBoundRatioMin", min(bratio.values()), ".2f")
+    put("dgxBoundRatioMax", max(bratio.values()), ".2f")
+    put("dgxSpecBW", SPEC_BW_GBPS, ".0f")
+    for tag, mo in (("LlamaBF", "llama3.1-8b"), ("LlamaFP", "llama3.1-8b-fp8"),
+                    ("LlamaNV", "llama3.1-8b-nvfp4")):
+        put(f"dgx{tag}BoundRatio", bratio[mo], ".2f")
+
+    # ---- prefill -----------------------------------------------------------
+    buckets = bucket_medians(df, results_dir)
+    if not buckets.empty:
+        fits = {}
+        for (mo, cfg), g in buckets.groupby(["model_label", "config_label"]):
+            f = _prefill_fit(g)
+            if f is not None:
+                fits[(mo, cfg)] = f
+        r2 = [f[2] for f in fits.values() if np.isfinite(f[2])]
+        put("dgxPrefillRsqMin", float(np.floor(min(r2) * 1000) / 1000), ".3f")
+        put("dgxPrefillNumCurves", len(fits))
+        for cfg, tag in (("tp2", "TP"), ("pp2", "PP")):
+            vals = [fits[(mo, cfg)][0] / fits[(mo, "single")][0]
+                    for mo in complete
+                    if (mo, cfg) in fits and (mo, "single") in fits]
+            put(f"dgxPrefill{tag}Min", min(vals), ".2f")
+            put(f"dgxPrefill{tag}Max", max(vals), ".2f")
+
+    # ---- goodput -----------------------------------------------------------
+    strict_nonzero, narrow = [], []
+    for mo in models:
+        s = series(mo, "single")
+        if not len(s) or not float(s["goodput_rps"].max()) > 0:
+            continue
+        strict_nonzero.append(mo)
+        best = {c: float(series(mo, c)["goodput_rps"].max())
+                for c in CONFIG_ORDER if len(series(mo, c))}
+        runner = max(v for k, v in best.items() if k != "pp2")
+        margin = best["pp2"] - runner
+        if round(margin, 2) <= 0.01:
+            narrow.append((mo, margin))
+    put("dgxStrictNonzeroCount", len(strict_nonzero))
+    put("dgxStrictNarrowCount", len(narrow))
+    put("dgxStrictNarrowMargin", max(x[1] for x in narrow), ".2f")
+    put("dgxStrictNarrowNames", " and ".join(
+        meta_for(mo)["pretty"].replace("Nemotron3-", "Nemotron-3-")
+        for mo, _ in narrow))
+    for tag, mo in (("LlamaNV", "llama3.1-8b-nvfp4"),
+                    ("Nano", "nemotron3-nano-30b-a3b-nvfp4")):
+        put(f"dgx{tag}PPLooseGoodput",
+            float(series(mo, "pp2")["goodput_itl2_rps"].max()), ".2f")
+    put("dgxStrictSLOms", int(ITL_SLO_MS))
+    put("dgxLooseSLOms", int(ITL_SLO2_MS))
+    put("dgxTTFTSLOs", int(TTFT_SLO_S))
+
+    # ---- energy ------------------------------------------------------------
+    etp, epp, ecs = [], [], []
+    for mo in models:
+        s = series(mo, "single")
+        if not len(s) or not s["goodput_rps"].notna().any():
+            continue
+        best = s.loc[s["goodput_rps"].idxmax()]
+        if not float(best["goodput_rps"]) > 0:
+            continue
+        c = float(best["concurrency"]); j1 = float(best["energy_per_token_j"])
+        vals = {}
+        for cfg in ("tp2", "pp2"):
+            g = series(mo, cfg)
+            sel = g[np.isclose(pd.to_numeric(g["concurrency"],
+                                             errors="coerce"), c)]
+            vals[cfg] = (float(sel.iloc[0]["energy_per_token_j"])
+                         if len(sel) else np.nan)
+        etp.append(vals["tp2"] / j1); epp.append(vals["pp2"] / j1); ecs.append(mo)
+    put("dgxEnergyMatchedN", len(ecs))
+    put("dgxEnergyMatchedTP", float(np.median(etp)), ".2f")
+    put("dgxEnergyMatchedPP", float(np.median(epp)), ".2f")
+
+    ptp, ppp = [], []
+    for mo in complete:
+        j1 = float(peak(mo, "single")["energy_per_token_j"])
+        ptp.append(float(peak(mo, "tp2")["energy_per_token_j"]) / j1)
+        ppp.append(float(peak(mo, "pp2")["energy_per_token_j"]) / j1)
+    for tag, vals in (("TP", ptp), ("PP", ppp)):
+        put(f"dgxEnergyPeak{tag}Min", min(vals), ".2f")
+        put(f"dgxEnergyPeak{tag}Max", max(vals), ".2f")
+        put(f"dgxEnergyPeak{tag}Med", float(np.median(vals)), ".2f")
+
+    lows = []
+    for mo in models:
+        for cfg in CONFIG_ORDER:
+            g = series(mo, cfg)
+            if len(g) and g["energy_per_token_j"].notna().any():
+                r = g.loc[g["energy_per_token_j"].idxmin()]
+                lows.append((float(r["energy_per_token_j"]), mo, cfg,
+                             int(r["concurrency"])))
+    lows.sort()
+    put("dgxEnergyFloorMin", lows[0][0], ".2f")
+    put("dgxEnergyFloorMax", lows[-1][0], ".1f")
+    put("dgxEnergyFloorSpread", lows[-1][0] / lows[0][0], ".1f")
+    put("dgxEnergyFloorMinLoad", lows[0][3])
+    put("dgxEnergyFloorMaxLoad", lows[-1][3])
+
+    # ---- KV capacity -------------------------------------------------------
+    kv = []
+    for mo in models:
+        s = series(mo, "single")
+        if not len(s):
+            continue
+        base = float(s.iloc[0]["max_concurrency"])
+        for cfg in ("tp2", "pp2"):
+            g = series(mo, cfg)
+            if len(g):
+                kv.append(float(g.iloc[0]["max_concurrency"]) / base)
+    put("dgxKVRatioMin", min(kv), ".2f")
+    put("dgxKVRatioMax", max(kv), ".2f")
+
+    # ---- all-reduce --------------------------------------------------------
+    paths = _resolve_allreduce_paths(results_dir, manifest_path)
+    if paths:
+        sweeps = [pd.read_csv(p) for p in paths]
+        agg = (pd.concat(sweeps).groupby("bytes")
+               .agg(avg_s=("avg_s", "mean"), bus=("busbw_GBps", "mean")))
+        small = agg[agg.index <= 1024]
+        put("dgxARRuns", len(sweeps))
+        put("dgxARLatMin", float(small["avg_s"].min()) * 1e3, ".2f")
+        put("dgxARLatMax", float(small["avg_s"].max()) * 1e3, ".2f")
+        put("dgxARBusPlateau", float(agg["bus"].max()), ".1f")
+
+    # ---- longest observed request ------------------------------------------
+    # Quoted in the protocol section to justify the drain rule; it lives in the
+    # per-request logs rather than the index, so scan them once.
+    longest = 0.0
+    for path in glob.glob(os.path.join(results_dir, "*.raw.jsonl")):
+        with open(path) as handle:
+            for line in handle:
+                try:
+                    v = json.loads(line).get("e2e")
+                except Exception:
+                    continue
+                if v is not None and v > longest:
+                    longest = float(v)
+    if longest:
+        put("dgxMaxRequestS", f"{round(longest):,}".replace(",", "{,}"))
+
+    # ---- runtime provenance ------------------------------------------------
+    dual = df[df["config_label"].isin(DUAL_NODE_CONFIGS)]
+    put("dgxDualFingerprints", int(dual["runtime_fingerprint"].nunique()))
+    put("dgxVLLMVersion", str(df["vllm_version"].iloc[0]).split("+")[0])
+
+    header = [
+        r"% figs/numbers.tex -- generated by plotting/plot_paper.py.",
+        r"% Every numeric quantity paper.tex cites, as a LaTeX macro, so prose",
+        r"% and dataset cannot drift apart. DO NOT EDIT BY HAND: regenerate with",
+        r"%   python plotting/plot_paper.py && make figs",
+        r"%",
+        r"% ITL naming: ...MeanITL<c> is the median over requests of each",
+        r"% request's mean ITL (the statistic the goodput SLO thresholds and the",
+        r"% ITL figures plot). ...PoolITL<c> is the pooled median over every",
+        r"% inter-token gap in every request (the statistic the Section V-A",
+        r"% weight-streaming bound compares against). They are different",
+        r"% numbers; use the one whose name matches the sentence.",
+    ]
+    body = [_macro(k, v) for k, v in sorted(m.items())]
+    path = os.path.join(out, "numbers.tex")
+    with open(path, "w") as f:
+        f.write("\n".join(header + body) + "\n")
+    print(f"  wrote {path} ({len(body)} macros)")
+
+
 # ---- main --------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -1164,6 +1534,8 @@ def main() -> None:
     write_headline_table(df, args.out)
     write_summary_table(df, args.out)
     write_capacity_table(df, args.out)
+    write_numbers(df, args.out, os.path.dirname(args.index) or ".",
+                  args.allreduce_manifest)
     print("done")
 
 
