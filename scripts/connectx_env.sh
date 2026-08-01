@@ -77,7 +77,31 @@ acquire_campaign_lock() {
   if [[ "${CAMPAIGN_LOCK_HELD:-0}" == "1" ]]; then
     return 0
   fi
-  exec {CAMPAIGN_LOCK_FD}>"$CAMPAIGN_LOCK_FILE"
+  # flock(2) locks an inode through any descriptor and never needs write
+  # permission, so open an EXISTING lock file read-only. That matters on a
+  # shared head node: /tmp is sticky and world-writable, and under
+  # fs.protected_regular=2 the kernel refuses the O_CREAT open that `>` always
+  # performs whenever the file belongs to another user -- whatever its mode is,
+  # so chmod cannot fix it. Only creating the file for the first time needs
+  # write access, and that is a plain create in a directory we can write.
+  # The open is also checked rather than redirected: `exec` without a command
+  # applies its redirections to the shell permanently, so a `2>/dev/null` here
+  # would survive the success path and silently discard every later error.
+  if [[ -e "$CAMPAIGN_LOCK_FILE" ]]; then
+    if ! exec {CAMPAIGN_LOCK_FD}<"$CAMPAIGN_LOCK_FILE"; then
+      echo "[cluster] campaign lock exists but is not readable:" >&2
+      ls -l "$CAMPAIGN_LOCK_FILE" >&2 2>/dev/null || true
+      echo "[cluster] make it readable (chmod a+r) so every user on this head" \
+           "node can take the same lock." >&2
+      return 1
+    fi
+  elif ! exec {CAMPAIGN_LOCK_FD}>"$CAMPAIGN_LOCK_FILE"; then
+    echo "[cluster] cannot create the campaign lock $CAMPAIGN_LOCK_FILE" >&2
+    echo "[cluster] its directory must be writable, or point" \
+         "CAMPAIGN_LOCK_FILE at a path shared by everyone who runs campaigns" \
+         "on this head node." >&2
+    return 1
+  fi
   if ! flock -n "$CAMPAIGN_LOCK_FD"; then
     echo "[cluster] another benchmark campaign holds $CAMPAIGN_LOCK_FILE" >&2
     return 1

@@ -18,6 +18,7 @@ from bench.run_benchmark import (
     _validate_result_quality,
     client_environment_fingerprint,
     config_file_fingerprint,
+    deployment_fingerprint,
 )
 
 
@@ -77,7 +78,7 @@ class ConfigurationReadinessTests(unittest.TestCase):
     def test_derived_model_slug_is_safe_for_artifact_names(self):
         self.assertEqual(_model_slug("org/.Model Name/模型 8B"), "8b")
 
-    def test_experiment_fingerprint_ignores_launch_log_and_repeat_fields(self):
+    def test_experiment_fingerprint_ignores_per_launch_bookkeeping(self):
         info = {
             "vllm_version": "1.0",
             "max_model_len": 8704,
@@ -90,22 +91,34 @@ class ConfigurationReadinessTests(unittest.TestCase):
             server_log="results/server_first.log",
             repeat_id=1,
             repeat_count=1,
+            deployment_fingerprint="1" * 64,
         ).to_dict()
         resumed = dict(first)
         resumed.update({
             "server_log": "results/server_after_restart.log",
             "repeat_id": 3,
             "repeat_count": 3,
+            "deployment_fingerprint": "2" * 64,
         })
 
-        first_hash = _experiment_fingerprint(first, "a" * 64, info)
-        resumed_hash = _experiment_fingerprint(resumed, "a" * 64, info)
+        first_hash = _experiment_fingerprint(first, "a" * 64)
+        resumed_hash = _experiment_fingerprint(resumed, "a" * 64)
         self.assertEqual(first_hash, resumed_hash)
+
+        # A restart re-profiles memory and lands on a different KV capacity.
+        # That is live state, not measurement identity: deployment_fingerprint
+        # records it, and a repeat collected on the new launch stays the same
+        # experiment.
+        relaunched = dict(info, gpu_blocks=101, total_kv_tokens=1616)
+        self.assertNotEqual(
+            deployment_fingerprint("serving", info),
+            deployment_fingerprint("serving", relaunched),
+        )
 
         resumed["measure_s"] = first["measure_s"] + 1
         self.assertNotEqual(
             first_hash,
-            _experiment_fingerprint(resumed, "a" * 64, info),
+            _experiment_fingerprint(resumed, "a" * 64),
         )
 
 

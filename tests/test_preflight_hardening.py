@@ -463,10 +463,16 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "fresh OUT_DIR"):
                     helper.missing_schedule(
                         str(index), "m", "single", str(config), "serving", 2,
-                        [1, 2], "deployment",
+                        [1, 2],
                     )
 
-    def test_resume_rejects_a_different_live_deployment(self):
+    def test_resume_accepts_repeats_from_different_live_deployments(self):
+        """Repeats span server launches; KV capacity never repeats exactly.
+
+        A row must still declare which deployment produced it, but a differing
+        value cannot make the point unschedulable -- that would forbid ever
+        collecting a second sample of the same arm on a fresh launch.
+        """
         path = (Path(__file__).resolve().parents[1]
                 / "scripts" / "swept_concurrencies.py")
         spec = importlib.util.spec_from_file_location("resume_helper_deploy", path)
@@ -479,7 +485,8 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
             fields = [
                 "model_label", "config_label", "mode", "concurrency",
                 "expected_concurrencies",
-                "requests_completed", "methodology_version",
+                "requests_started", "requests_completed", "requests_failed",
+                "methodology_version",
                 "config_file_sha256", "harness_source_sha256",
                 "client_environment_sha256", "serving_fingerprint",
                 "deployment_fingerprint", "experiment_fingerprint", "repeat_id",
@@ -487,28 +494,44 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
             row = {
                 "model_label": "m", "config_label": "single", "mode": "closed",
                 "expected_concurrencies": "1",
-                "concurrency": 1, "requests_completed": 10, "repeat_id": 1,
+                "concurrency": 1, "repeat_id": 1,
+                "requests_started": 10, "requests_completed": 10,
+                "requests_failed": 0,
                 "methodology_version": METHODOLOGY_VERSION,
                 "config_file_sha256": config_file_fingerprint(str(config)),
                 "harness_source_sha256": "source",
                 "client_environment_sha256": "client",
                 "serving_fingerprint": "serving",
-                "deployment_fingerprint": "old-deployment",
+                "deployment_fingerprint": "one-launch",
                 "experiment_fingerprint": "experiment",
             }
-            with index.open("w", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=fields)
-                writer.writeheader()
-                writer.writerow(row)
-            with self.assertRaisesRegex(ValueError, "deployment"):
-                with mock.patch.object(helper, "_source_fingerprint",
-                                       return_value="source"), \
-                        mock.patch.object(helper, "client_environment_fingerprint",
-                                          return_value="client"):
-                    helper.missing_schedule(
-                        str(index), "m", "single", str(config), "serving", 1,
-                        [1], "new-deployment",
-                    )
+
+            def write(**overrides):
+                with index.open("w", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=fields)
+                    writer.writeheader()
+                    writer.writerow(dict(row, **overrides))
+
+            def schedule():
+                return helper.missing_schedule(
+                    str(index), "m", "single", str(config), "serving", 2, [1],
+                )
+
+            with mock.patch.object(helper, "_source_fingerprint",
+                                   return_value="source"), \
+                    mock.patch.object(helper, "client_environment_fingerprint",
+                                      return_value="client"):
+                # Repeat 1 counts as done whichever launch produced it, so only
+                # the second repeat is still owed.
+                write()
+                self.assertEqual(schedule(), [(2, 1)])
+                write(deployment_fingerprint="another-launch")
+                self.assertEqual(schedule(), [(2, 1)])
+
+                # A row that never recorded its deployment is still rejected.
+                write(deployment_fingerprint="")
+                with self.assertRaisesRegex(ValueError, "deployment"):
+                    schedule()
 
     def test_resume_rejects_malformed_and_duplicate_current_rows(self):
         path = (Path(__file__).resolve().parents[1]
@@ -557,8 +580,7 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
 
             def schedule():
                 return helper.missing_schedule(
-                    str(index), "m", "single", str(config), "serving", 2,
-                    [1], "deployment",
+                    str(index), "m", "single", str(config), "serving", 2, [1],
                 )
 
             invalid = [
@@ -588,12 +610,12 @@ class ProvenanceAndSchemaTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "repeats"):
                     helper.missing_schedule(
                         str(index), "m", "single", str(config), "serving",
-                        1.5, [1], "deployment",
+                        1.5, [1],
                     )
                 with self.assertRaisesRegex(ValueError, "concurrency"):
                     helper.missing_schedule(
                         str(index), "m", "single", str(config), "serving",
-                        1, [2.9], "deployment",
+                        1, [2.9],
                     )
 
 

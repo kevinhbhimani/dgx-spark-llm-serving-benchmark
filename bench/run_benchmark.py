@@ -246,13 +246,21 @@ _EXPERIMENT_FINGERPRINT_TRANSIENT_FIELDS = frozenset((
     "repeat_id",
     "repeat_count",
     "server_log",
+    "deployment_fingerprint",
 ))
 
 
 def _experiment_fingerprint(resolved_config: dict,
-                            harness_source_sha256: str,
-                            info: dict) -> str:
-    """Hash measurement identity without per-launch bookkeeping paths."""
+                            harness_source_sha256: str) -> str:
+    """Hash measurement identity: what was requested, not what booted.
+
+    Live capacity is deliberately excluded. vLLM's memory profiling settles on
+    a slightly different KV block count on every launch, so folding it in here
+    would give repeats of one arm different experiment identities whenever they
+    span a server restart -- which every repeat does when repeats are collected
+    across launches on purpose. deployment_fingerprint() records that live
+    state separately, per row.
+    """
     stable_config = {
         key: value for key, value in resolved_config.items()
         if key not in _EXPERIMENT_FINGERPRINT_TRANSIENT_FIELDS
@@ -261,7 +269,6 @@ def _experiment_fingerprint(resolved_config: dict,
         "methodology_version": METHODOLOGY_VERSION,
         "harness_source_sha256": harness_source_sha256,
         "resolved_config": stable_config,
-        "deployment_state": deployment_state(info),
     })
 
 
@@ -1529,7 +1536,7 @@ def main():
     summary["config"] = cfg.to_dict()
     summary["drain_s"] = drain_s
     summary["experiment_fingerprint"] = _experiment_fingerprint(
-        summary["config"], harness_source_sha256, info
+        summary["config"], harness_source_sha256
     )
     # Build every artifact in memory, then fsync+rename it before the index row
     # can make the point resumable.
