@@ -85,6 +85,9 @@ PANEL_TITLE_FS = 7.5
 PANEL_TICK_FS = 7.0
 PANEL_LABEL_FS = 8.0
 SLO_COLOR = "0.35"
+# 200 GbE aggregate, bits to bytes; drawn as a reference on the interconnect
+# bandwidth panel.
+LINE_RATE_GBPS = 25.0
 
 
 def _publication_rc() -> None:
@@ -773,9 +776,13 @@ def fig_interconnect(out, fmts, results_dir):
                                       "avg_s"}.issubset(df.columns):
         print("  interconnect: CSVs present but columns unexpected, skipping")
         return
+    # Exact bandwidth from unrounded latency, as in fig_allreduce: the CSV's
+    # 3-decimal busbw column collapses every small message to zero.
+    df["bw_exact"] = df["bytes"] / df["avg_s"] / 1e9
     agg = (df.groupby(["collective", "transport", "bytes"], as_index=False)
-             .agg(avg_s=("avg_s", "mean"),
-                  bw=("busbw_GBps", "mean")))
+             .agg(avg_s=("avg_s", "mean"), avg_lo=("avg_s", "min"),
+                  avg_hi=("avg_s", "max"), bw=("bw_exact", "mean"),
+                  bw_lo=("bw_exact", "min"), bw_hi=("bw_exact", "max")))
 
     fig, (axt, axb) = plt.subplots(2, 1, figsize=(COL_W, 3.4), sharex=True)
     transports = [t for t in ["tcp"] + sorted(
@@ -793,13 +800,21 @@ def fig_interconnect(out, fmts, results_dir):
             axt.plot(sub["bytes"], sub["avg_s"] * 1e6, color=ts["color"],
                      linestyle=cs["linestyle"], marker=cs["marker"],
                      markersize=2.6, linewidth=1.1)
-            bw = sub[sub["bw"] > 0]
-            axb.plot(bw["bytes"], bw["bw"], color=ts["color"],
+            axt.fill_between(sub["bytes"], sub["avg_lo"] * 1e6,
+                             sub["avg_hi"] * 1e6, color=ts["color"],
+                             alpha=0.15, linewidth=0)
+            axb.plot(sub["bytes"], sub["bw"], color=ts["color"],
                      linestyle=cs["linestyle"], marker=cs["marker"],
                      markersize=2.6, linewidth=1.1)
+            axb.fill_between(sub["bytes"], sub["bw_lo"], sub["bw_hi"],
+                             color=ts["color"], alpha=0.15, linewidth=0)
     axt.set_yscale("log")
     axt.set_ylabel("One-hop latency (µs)", fontsize=8)
     axb.set_yscale("log")
+    # The latency panel already carries the small-message story; clipping the
+    # bandwidth panel keeps sub-KiB exact bandwidths (~1e-5 GB/s) from
+    # stretching the log axis into unreadability.
+    axb.set_ylim(bottom=1e-3)
     axb.set_ylabel("Bus bandwidth (GB/s)", fontsize=8)
     axb.set_xlabel("Message size", fontsize=8)
     axb.axhline(LINE_RATE_GBPS, color=SLO_COLOR, linestyle=":", linewidth=0.9)
@@ -828,6 +843,123 @@ def fig_interconnect(out, fmts, results_dir):
     axt.legend(handles=proxies, fontsize=5.8, ncol=2, frameon=False,
                loc="upper left")
     save(fig, "interconnect", out, fmts)
+
+
+# ---- run-to-run variance -----------------------------------------------------
+# Compact arm labels for the variance strip plot; the full names live in the
+# arms table.
+_VAR_SHORT = {
+    "llama3.1-8b": "Llama-8B",
+    "qwen3-8b": "Qwen3-8B",
+    "qwen3-30b-a3b": "Qwen3-30B-A3B",
+    "nemotron3-nano-30b-a3b-nvfp4": "Nano-30B",
+    "nemotron3-super-120b-a12b-nvfp4": "Super-120B",
+}
+_VAR_CFG = {"single": "single", "tp2": "TP2", "pp2": "PP2"}
+
+
+def fig_variance(var_df, base_df, out, fmts):
+    """Run-to-run variance at the repeated contested points.
+
+    (a) throughput of each of the three repeats per arm, as percent deviation
+    from the arm's repeat mean, with the sealed-campaign single run marked; the
+    two campaign points that fall far outside their repeat spread are visible
+    directly rather than summarized. (b) strict-tier goodput at the contested
+    ranking points, absolute, one panel per (model, concurrency), showing which
+    configuration orderings the three repeats do and do not separate.
+    """
+    keys = ["model_label", "config_label", "concurrency"]
+    order = [m for m in models_by_size(var_df)]
+    arms = sorted(
+        {tuple(k) for k, _ in var_df.groupby(keys)},
+        key=lambda a: (order.index(a[0]), CONFIG_ORDER.index(a[1]), a[2]))
+
+    fig = plt.figure(figsize=(TEXT_W, 2.7))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.25, 1.0], wspace=0.34)
+    axa = fig.add_subplot(gs[0, 0])
+    contested = []
+    for (model, conc), g in var_df.groupby(["model_label", "concurrency"]):
+        nz = [cfg for cfg, gc in g.groupby("config_label")
+              if float(gc["goodput_rps"].max()) > 0]
+        if len(nz) >= 2:
+            contested.append((model, int(conc)))
+    contested.sort(key=lambda a: (order.index(a[0]), a[1]))
+    gsr = gs[0, 1].subgridspec(len(contested), 1, hspace=0.9)
+    axbs = [fig.add_subplot(gsr[i, 0]) for i in range(len(contested))]
+
+    # Identical repeat values (the Super PP=2 goodput repeats coincide
+    # exactly) would stack invisibly; a small fixed y offset keeps every
+    # repeat marker countable.
+    JIT = (-0.16, 0.0, 0.16)
+
+    # (a) throughput deviation strip
+    labels = []
+    for i, (model, cfg, conc) in enumerate(arms):
+        g = var_df[(var_df["model_label"] == model)
+                   & (var_df["config_label"] == cfg)
+                   & (var_df["concurrency"] == conc)]
+        vals = g["tok_thru_tps"].astype(float)
+        mean = vals.mean()
+        dev = (vals - mean) / mean * 100.0
+        s = CONFIG_STYLE[cfg]
+        axa.axhline(i, color="0.92", linewidth=0.6, zorder=0)
+        axa.scatter(dev, [i + JIT[j % 3] for j in range(len(dev))], s=14,
+                    color=s["color"], marker=s["marker"], linewidths=0,
+                    alpha=0.9, zorder=3)
+        b = base_df[(base_df["model_label"] == model)
+                    & (base_df["config_label"] == cfg)
+                    & (base_df["concurrency"] == conc)]
+        if len(b):
+            bdev = (float(b["tok_thru_tps"].iloc[0]) - mean) / mean * 100.0
+            axa.scatter([bdev], [i], s=22, color="0.15", marker="x",
+                        linewidths=1.1, zorder=4)
+        labels.append(f"{_VAR_SHORT[model]} {_VAR_CFG[cfg]} c={int(conc)}")
+    axa.axvline(0, color="0.6", linewidth=0.7, zorder=1)
+    axa.set_yticks(range(len(arms)))
+    axa.set_yticklabels(labels, fontsize=6.2)
+    axa.set_ylim(len(arms) - 0.5, -0.5)
+    axa.set_xlabel("Throughput deviation from repeat mean (%)", fontsize=7.5)
+    axa.tick_params(labelsize=6.5)
+    handles = [Line2D([], [], linestyle="", marker=CONFIG_STYLE[c]["marker"],
+                      color=CONFIG_STYLE[c]["color"], markersize=4,
+                      label=CONFIG_STYLE[c]["label"]) for c in CONFIG_ORDER]
+    handles.append(Line2D([], [], linestyle="", marker="x", color="0.15",
+                          markersize=5, label="main study run"))
+    axa.legend(handles=handles, fontsize=5.8, frameon=False, loc="lower left",
+               handletextpad=0.2, borderaxespad=0.2)
+
+    # (b) strict goodput at the contested ranking points
+    for ax, (model, conc) in zip(axbs, contested):
+        g = var_df[(var_df["model_label"] == model)
+                   & (var_df["concurrency"] == conc)]
+        cfgs = [c for c in CONFIG_ORDER
+                if float(g[g["config_label"] == c]["goodput_rps"].max()) > 0]
+        for j, cfg in enumerate(cfgs):
+            vals = g[g["config_label"] == cfg]["goodput_rps"].astype(float)
+            s = CONFIG_STYLE[cfg]
+            ax.axhline(j, color="0.92", linewidth=0.6, zorder=0)
+            ax.scatter(vals, [j + JIT[k % 3] for k in range(len(vals))],
+                       s=14, color=s["color"], marker=s["marker"],
+                       linewidths=0, alpha=0.9, zorder=3)
+            b = base_df[(base_df["model_label"] == model)
+                        & (base_df["config_label"] == cfg)
+                        & (base_df["concurrency"] == conc)]
+            if len(b):
+                ax.scatter([float(b["goodput_rps"].iloc[0])], [j], s=22,
+                           color="0.15", marker="x", linewidths=1.1, zorder=4)
+        ax.set_yticks(range(len(cfgs)))
+        ax.set_yticklabels([_VAR_CFG[c] for c in cfgs], fontsize=6.2)
+        ax.set_ylim(len(cfgs) - 0.5, -0.5)
+        ax.set_title(f"{_VAR_SHORT[model]}, c={conc}", fontsize=6.8, pad=2)
+        ax.tick_params(labelsize=6.0)
+        ax.margins(x=0.12)
+    axbs[-1].set_xlabel("Strict-tier goodput (req/s)", fontsize=7.5)
+
+    axa.set_title("(a) throughput, all repeated arms", fontsize=7.5)
+    axbs[0].annotate("(b) strict goodput, contested points",
+                     xy=(0.5, 1.55), xycoords="axes fraction", ha="center",
+                     fontsize=7.5)
+    save(fig, "variance", out, fmts, tight=True)
 
 
 # ---- peak table --------------------------------------------------------------
@@ -1101,7 +1233,8 @@ def _thin(value: str) -> str:
     return value.replace(" ", "\\,")
 
 
-def write_numbers(df, out, results_dir=".", manifest_path=None) -> None:
+def write_numbers(df, out, results_dir=".", manifest_path=None,
+                  interconnect_dir=None) -> None:
     """Emit figs/numbers.tex: one LaTeX macro per quantity the prose cites.
 
     The paper quotes two different inter-token-latency statistics and they do
@@ -1403,6 +1536,35 @@ def write_numbers(df, out, results_dir=".", manifest_path=None) -> None:
         put("dgxARLatMax", float(small["avg_s"].max()) * 1e3, ".2f")
         put("dgxARBusPlateau", float(agg["bus"].max()), ".1f")
 
+    # ---- point-to-point send/recv vs all-reduce (interconnect extra bench) --
+    # Two sweeps recorded with the variance study measure the PP primitive on
+    # the same TCP path; bandwidth is recomputed from unrounded latency, as in
+    # fig_allreduce, because the CSV's 3-decimal busbw column rounds every
+    # sub-64KiB point to zero.
+    ic_paths = sorted(glob.glob(os.path.join(
+        interconnect_dir or results_dir, "interconnect_extra_*.csv")))
+    if ic_paths:
+        ic = pd.concat([pd.read_csv(p) for p in ic_paths], ignore_index=True)
+        ic = ic[ic["transport"] == "tcp"]
+        ic["bw_exact"] = ic["bytes"] / ic["avg_s"] / 1e9
+        icagg = (ic.groupby(["collective", "bytes"])
+                   .agg(avg_s=("avg_s", "mean"), bw=("bw_exact", "mean")))
+        sr = icagg.loc["sendrecv"]
+        ar = icagg.loc["allreduce"]
+        put("dgxSendRecvRuns", len(ic_paths))
+        srs = sr[sr.index <= 1024]
+        put("dgxSendRecvLatMin", float(srs["avg_s"].min()) * 1e3, ".2f")
+        put("dgxSendRecvLatMax", float(srs["avg_s"].max()) * 1e3, ".2f")
+        put("dgxSendRecvBusPlateau", float(sr["bw"].max()), ".1f")
+        put("dgxICARBusPlateau", float(ar["bw"].max()), ".1f")
+        # The estimated activation-payload band from the transport figure.
+        band = [b for b in sr.index if 16 * 1024 <= b <= 2 * 1024 * 1024]
+        ratios = [float(sr.loc[b, "bw"]) / float(ar.loc[b, "bw"])
+                  for b in band if b in ar.index]
+        if ratios:
+            put("dgxICBandRatioMin", min(ratios), ".1f")
+            put("dgxICBandRatioMax", max(ratios), ".1f")
+
     # ---- longest observed request ------------------------------------------
     # Quoted in the protocol section to justify the drain rule; it lives in the
     # per-request logs rather than the index, so scan them once.
@@ -1457,6 +1619,15 @@ def main() -> None:
         help="campaign manifest whose artifacts.allreduce entries select and "
              "verify the sweeps (default: campaign_manifest.json beside "
              "--index when present)")
+    ap.add_argument(
+        "--variance-index", default="results-variance/index.csv",
+        help="repeat-subset index for the variance figure; skipped when the "
+             "file does not exist")
+    ap.add_argument(
+        "--interconnect-dir", default=None,
+        help="directory holding interconnect_extra_*.csv (default: the "
+             "variance index directory when present, else the main index "
+             "directory)")
     ap.add_argument("--sans", action="store_true",
                     help="keep the sans-serif font (default is the IEEE "
                          "Times-like serif)")
@@ -1511,7 +1682,16 @@ def main() -> None:
     fig_kv_capacity(df, args.out, fmts)
     fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".",
                   args.allreduce_manifest)
-    fig_interconnect(args.out, fmts, os.path.dirname(args.index) or ".")
+    var_dir = os.path.dirname(args.variance_index) or "."
+    ic_dir = args.interconnect_dir or (
+        var_dir if glob.glob(os.path.join(var_dir, "interconnect_extra_*.csv"))
+        else os.path.dirname(args.index) or ".")
+    fig_interconnect(args.out, fmts, ic_dir)
+    if os.path.exists(args.variance_index):
+        var_df = pd.read_csv(args.variance_index)
+        fig_variance(var_df, df, args.out, fmts)
+    else:
+        print(f"  variance: no index at {args.variance_index}, skipping")
     fig_prefill_scaling(df, args.out, fmts,
                         os.path.dirname(args.index) or ".")
     print("cross-model trends")
@@ -1535,7 +1715,7 @@ def main() -> None:
     write_summary_table(df, args.out)
     write_capacity_table(df, args.out)
     write_numbers(df, args.out, os.path.dirname(args.index) or ".",
-                  args.allreduce_manifest)
+                  args.allreduce_manifest, interconnect_dir=ic_dir)
     print("done")
 
 
