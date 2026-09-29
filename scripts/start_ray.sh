@@ -33,7 +33,7 @@ maybe_drop_caches() {
 # in connectx_env.sh.
 RAY_SETUP="pip install -q 'ray[default]==$RAY_VERSION'"
 
-docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host
+docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --device=/dev/infiniband --cap-add=IPC_LOCK --ulimit memlock=-1:-1
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
   -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE"
