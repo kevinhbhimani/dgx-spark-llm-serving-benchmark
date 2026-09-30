@@ -12,8 +12,9 @@
 - Add user to sudo group
 
 ### Clone Nvidia's guide:
-- git clone git@github.com:NVIDIA/dgx-spark-playbooks
-
+```bash
+git clone git@github.com:NVIDIA/dgx-spark-playbooks
+```
 
 ### Following [NVIDIA Connect Two Sparks](https://github.com/NVIDIA/dgx-spark-playbooks/tree/main/nvidia/connect-two-sparks)
 
