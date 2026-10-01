@@ -1,0 +1,4 @@
+NOTE FOR TESTS RAN ON OCT 1
+
+
+I used the short black mellanox cable (the one I have been using the entire time) for the ...0f0 devices. I am using a long mellanox cable with a blue pull tab that I found in the production room. In preliminary tests (though this was before tuning the mtu, though it also seemed to not matter in the first place), the ib_write_bw tests produced much slower (about 1/3) speeds across the blue mellanox cable on the 1f1 devices.
