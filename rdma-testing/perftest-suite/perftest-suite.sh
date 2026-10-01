@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+
+# NOTE!! This script will currently only work on cisc-diya and cisc-hoedus, with their current
+# network configuration (cisc-diya 10.10.10.1 & 10.10.11.1) (cisc-hoedus 10.10.10.2 & 10.10.11.2)
+# It also assumes the rocep1s0f0 and roceP2p1s0f0 devices are being used. These map to the 
+# LEFT ConnectX-7 port, when looking at the back IO panel on the spark
+#
+#
+# USB-C USB-C USB-C USB-C HDMI ETHERNET CONNECTX-7 CONNECTX-7 
+#                                       ^^^^
+#                                       THIS PORT!
+#
+#
+#
+
 # ---------------------------------------------------------------------------
 # perftest-suite.sh - RDMA perftest matrix for two DGX Sparks joined by one
 # QSFP cable (two RDMA devices).
@@ -18,9 +32,39 @@ case "$role" in
   *) echo "usage: $0 {host|client}" >&2; exit 2 ;;
 esac
 
-# --- configuration (identical on both nodes) -------------------------------
+# --- configuration (SEE ABOVE NOTE!!) -------------------------------
 devs=(rocep1s0f0 roceP2p1s0f0)     # one RDMA device per QSFP port
-host_ips=(10.10.10.1 10.10.11.1)   # client target IP for the matching device
+
+diya_dev0_ips=(10.10.10.1 10.10.11.1)
+hoedus_dev0_ips=(10.10.10.2 10.10.11.2)
+
+
+if [[ $role == "client" ]]; then
+  case $(hostname) in
+    "cisc-diya")
+        host_ips=("${hoedus_dev0_ips[@]}") ;;
+    "cisc-hoedus")
+        host_ips=("${diya_dev0_ips[@]}") ;;
+  esac
+fi
+
+if [[ $role == "host" ]]; then
+  case $(hostname) in
+    "cisc-diya")
+        host_ips=("${diya_dev0_ips[@]}") ;;
+    "cisc-hoedus")
+        host_ips=("${hoedus_dev0_ips[@]}") ;;
+  esac
+fi
+
+#THIS ASSUMES ONLY 2 DEVICES, THIS WILL BREAK WHEN MOVING TO MORE DEVICES AT THE SAME TIME!
+if [[ ${#host_ips[@]} -eq 0 || ${#host_ips[@]} -ne 2 ]]; then 
+  echo "[ERROR] Role is $role, but host_ips are broken: host_ips:[${host_ips[@]}]"
+  exit 3
+fi
+
+
+
 
 base_port=${BASE_PORT:-18515}
 conn=${CONN:-RC}
