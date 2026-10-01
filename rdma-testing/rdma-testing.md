@@ -31,10 +31,22 @@ network:
       addresses:
         - 10.10.10.1/24
       dhcp4: no
+      mtu: 4096
     enP2p1s0f0np0:
       addresses:
         - 10.10.11.1/24
       dhcp4: no
+      mtu: 4096
+    enp1s0f1np1:
+      addresses:
+        - 10.10.12.1/24
+      dhcp4: no
+      mtu: 4096
+    enP2p1s0f1np1:
+      addresses:
+        - 10.10.13.1/24
+      dhcp4: no
+      mtu: 4096
 EOF
 
 sudo chmod 600 /etc/netplan/40-cx7.yaml
@@ -46,15 +58,26 @@ ON HOEDUS
 sudo tee /etc/netplan/40-cx7.yaml > /dev/null <<EOF
 network:
   version: 2
-  ethernets:
     enp1s0f0np0:
       addresses:
         - 10.10.10.2/24
       dhcp4: no
+      mtu: 4096
     enP2p1s0f0np0:
       addresses:
         - 10.10.11.2/24
       dhcp4: no
+      mtu: 4096
+    enp1s0f1np1:
+      addresses:
+        - 10.10.12.2/24
+      dhcp4: no
+      mtu: 4096
+    enP2p1s0f1np1:
+      addresses:
+        - 10.10.13.2/24
+      dhcp4: no
+      mtu: 4096
 EOF
 
 ## Set appropriate permissions

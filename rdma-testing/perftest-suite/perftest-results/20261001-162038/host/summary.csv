@@ -1,0 +1,6 @@
+test,device,role,rc,bw_peak_MBps,bw_avg_MBps,lat_typical_usec,size_bytes
+ib_send_lat_rocep1s0f0,rocep1s0f0,host,0,,,1.380,2
+ib_write_lat_rocep1s0f0,rocep1s0f0,host,0,,,1.440,2
+ib_read_lat_rocep1s0f0,rocep1s0f0,host,0,,,0.000,0
+ib_atomic_lat_rocep1s0f0,rocep1s0f0,host,0,,,0.000,0
+ib_send_bw_rocep1s0f0,rocep1s0f0,host,0,0.00,109.03,,65536
