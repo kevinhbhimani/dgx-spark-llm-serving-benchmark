@@ -24,15 +24,39 @@ set -uo pipefail
 #   ./perftest-suite.sh host      # perftest server (binds)
 #   ./perftest-suite.sh client    # perftest client (connects to the peer IPs)
 #
+#   --notes <file>   copy a free-form notes sheet into the run's output dir
+#
 # Run both roles concurrently, one on each node. Both walk the same
 # test/port order; ports are allocated identically on both sides.
 # ---------------------------------------------------------------------------
 
-role="${1:-}"
-case "$role" in
-  host|client) ;;
-  *) echo "usage: $0 {host|client}" >&2; exit 2 ;;
-esac
+role=""
+notes_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    host|client)
+      role="$1"
+      ;;
+    --notes)
+      shift
+      notes_file="${1:-}"
+      if [ -z "$notes_file" ]; then
+        echo "--notes requires a file argument" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      echo "usage: $0 {host|client} [--notes <file>]" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [ -z "$role" ]; then
+  echo "usage: $0 {host|client} [--notes <file>]" >&2
+  exit 2
+fi
 
 # --- configuration (SEE ABOVE NOTE!!) -------------------------------
 # Devices and their IPs are discovered at runtime: every RDMA device that is
@@ -160,6 +184,16 @@ commands_file="$outdir/commands.txt"
 summary="$outdir/summary.csv"
 : > "$commands_file"
 echo "test,device,role,rc,bw_peak_MBps,bw_avg_MBps,lat_typical_usec,size_bytes" > "$summary"
+
+# Attach the researcher's notes sheet to this run, if one was given.
+if [ -n "$notes_file" ]; then
+  if [ ! -f "$notes_file" ]; then
+    echo "notes file not found: $notes_file" >&2
+    exit 1
+  fi
+  cp "$notes_file" "$outdir/notes.$(basename "$notes_file")" || exit 1
+  echo "notes: $notes_file -> $outdir/notes.$(basename "$notes_file")"
+fi
 
 # --- perftest table parsing -------------------------------------------------
 # Data rows look like: " 65536     5000     12680.83     12636.10     0.202"
