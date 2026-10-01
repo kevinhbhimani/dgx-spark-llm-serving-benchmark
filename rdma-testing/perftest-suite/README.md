@@ -1,22 +1,36 @@
 # perftest-suite
 
-RDMA perftest matrix for two DGX Sparks joined by one QSFP cable.
+RDMA perftest matrix for two DGX Sparks joined by one or more QSFP cables.
 `host` = perftest server (binds). `client` = perftest client. Run both concurrently.
 
 ## Topology
 
-| dev            | subnet         | client target IP |
-|----------------|----------------|------------------|
-| rocep1s0f0     | 10.10.10.0/24  | 10.10.10.1       |
-| roceP2p1s0f0   | 10.10.11.0/24  | 10.10.11.1       |
+Each physical QSFP port carries 2 logical RDMA devices. Devices are discovered at
+runtime: every RDMA device that is UP and has an IPv4 address is tested, so adding
+a cable automatically adds its devices to the run.
+
+The peer's IP is derived from the local IP by flipping the last octet between the
+odd/even pair (`1<->2`, `3<->4`, ...), keeping the third octet. This matches the
+current netplan scheme (diya = odd, hoedus = even, same /24):
+
+| subnet         | cisc-diya | cisc-hoedus |
+|----------------|-----------|-------------|
+| 10.10.10.0/24  | .1        | .2          |
+| 10.10.11.0/24  | .1        | .2          |
+| 10.10.12.0/24  | .1        | .2          |
+| 10.10.13.0/24  | .1        | .2          |
+
+This is a convention, not an invariant: if the addressing scheme changes, the
+`derive_peer_ip` rule in the script needs updating.
 
 ## Prereqs
 
 ```
-apt install perftest
-ibdev2netdev            # devices present and UP
+apt install perftest iproute2 jq
 ```
-Identical perftest version on both nodes.
+
+Identical perftest version on both nodes. The script uses `ip -j` and `jq` to
+discover devices and their addresses, and `ss` for the port preflight.
 
 ## Run
 
@@ -28,12 +42,15 @@ client:
 ```
 ./perftest-suite.sh client
 ```
+
 Client sleeps `INITIAL_DELAY`, then walks the same test/port order as host.
-Each run gets its own port (`BASE_PORT + n`), identical on both sides.
+Each run gets its own port (`BASE_PORT + n`), identical on both sides. Both nodes
+log their discovered `device | local_ip | peer_ip` table at startup — check these
+match before trusting a run.
 
 ## Tests
 
-Per device (2 devices = 22 runs).
+Per device (11 tests). Total runs = devices x 11.
 
 ```
 ib_send_lat   ib_write_lat   ib_read_lat   ib_atomic_lat
@@ -45,21 +62,21 @@ ib_send_bw -b ib_write_bw -b ib_read_bw -b     (-b = bidirectional)
 
 | var             | default                   | meaning                            |
 |-----------------|---------------------------|------------------------------------|
-| `DEVS`          | `rocep1s0f0 roceP2p1s0f0` | local RDMA devices                 |
-| `SERVER_IPS`    | `10.10.10.1 10.10.11.1`   | client targets, paired to `DEVS`   |
 | `BASE_PORT`     | `18515`                   | first TCP port; +1 per run         |
 | `CONN`          | `RC`                      | `-c` connection type               |
-| `LAT_ITERS`     | `1000`                    | `-n` iterations for `*_lat`        |
-| `BW_ITERS`      | `5000`                    | `-n` iterations for `*_bw` (≤20000)|
-| `RETRIES`       | `3`                       | client connect retries             |
+| `LAT_ITERS`     | `15000`                   | `-n` iterations for `*_lat`        |
+| `BW_ITERS`      | `15000`                   | `-n` iterations for `*_bw` (≤20000)|
+| `RETRIES`       | `3`                       | connect/bind retries (both roles)  |
 | `INITIAL_DELAY` | `3`                       | client startup delay (s)           |
-| `OUTDIR`        | `./perftest-results/<ts>` | output dir                         |
+| `OUTDIR`        | `./perftest-results/<ts>` | output dir (role subdir appended)  |
 
 ## Output
 
-- `$OUTDIR/<tag>.log` — header with both roles' exact command, then raw perftest output.
-- `$OUTDIR/commands.txt` — every test's host and client command.
-- `$OUTDIR/summary.<role>.csv` — columns below.
+Each role writes to its own subdir, `$OUTDIR/<role>/`:
+
+- `$OUTDIR/<role>/<tag>.log` — header with both roles' exact command, then raw perftest output.
+- `$OUTDIR/<role>/commands.txt` — every test's host and client command.
+- `$OUTDIR/<role>/summary.csv` — columns below.
 
 ```
 test,device,role,rc,bw_peak_MBps,bw_avg_MBps,lat_typical_usec,size_bytes
@@ -67,6 +84,10 @@ test,device,role,rc,bw_peak_MBps,bw_avg_MBps,lat_typical_usec,size_bytes
 
 `bw_peak_MBps`/`bw_avg_MBps` = max across message sizes; `lat_typical_usec` = min
 t_typical across sizes. `size_bytes` is where that value occurred.
+
+Note: perftest prints the results table on the **client**; the host's summary
+metrics are typically zero. Read BW/latency from the client summary; the host's
+`rc` column tells you whether the server bound and ran.
 
 ## BW peak = 0.00
 
@@ -81,5 +102,8 @@ reports `BW peak 0.00` by design — read the peak from the client summary.
 ## Notes
 
 - `-c UD` has no read verbs; `ib_read_*` skipped when `CONN` is not `RC`/`UC`.
-- Both roles must use identical `DEVS`/`CONN`/ordering; the script enforces order.
+- Both roles must use identical `CONN` and discover the same devices in the same
+  order; ports are allocated by position, so any divergence misaligns them.
+- Ports are checked free before the run; stale `ib_*` servers are killed between
+  tests.
 - `-F` suppresses the perftest cpufreq warning.
