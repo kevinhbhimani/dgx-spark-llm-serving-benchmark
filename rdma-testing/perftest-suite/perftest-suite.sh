@@ -24,7 +24,7 @@ host_ips=(10.10.10.1 10.10.11.1)   # client target IP for the matching device
 
 base_port=${BASE_PORT:-18515}
 conn=${CONN:-RC}
-lat_iters=${LAT_ITERS:-1000}
+lat_iters=${LAT_ITERS:-15000}
 bw_iters=${BW_ITERS:-15000}         # keep <=20000, else perftest disables BW peak
 initial_delay=${INITIAL_DELAY:-3}
 retries=${RETRIES:-3}
@@ -94,7 +94,7 @@ run_test() {
     *)     kind=bw;  iters="$bw_iters"  ;;
   esac
 
-  local flags="-d $dev -i 1 -F -p $port -c $conn -n $iters"
+  local flags="-d $dev -i 1 -F -p $port -c $conn -n $iters --report_gbits"
   [ -n "$extra" ] && flags="$flags $extra"
 
   local host_cmd="$name $flags"
