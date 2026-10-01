@@ -9,4 +9,5 @@ fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-NCCL_IB_DISABLE=0 NCCL_DEBUG=INFO bash $SCRIPT_DIR/../scripts/start_ray.sh $1
+#This is jank, should change it
+NCCL_IB_DISABLE=0 NCCL_DEBUG=INFO bash $SCRIPT_DIR/../../scripts/start_ray.sh $1
