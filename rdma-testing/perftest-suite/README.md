@@ -43,6 +43,14 @@ client:
 ./perftest-suite.sh client
 ```
 
+Both accept `--notes <file>` in any position, which copies a free-form notes
+sheet into the run's output dir (see Output). Use it to record anything the
+script can't capture — cable used, orientation, physical setup, etc.:
+
+```
+./perftest-suite.sh client --notes cable-notes.txt
+```
+
 Client sleeps `INITIAL_DELAY`, then walks the same test/port order as host.
 Each run gets its own port (`BASE_PORT + n`), identical on both sides. Both nodes
 log their discovered `device | local_ip | peer_ip` table at startup — check these
@@ -77,6 +85,7 @@ Each role writes to its own subdir, `$OUTDIR/<role>/`:
 - `$OUTDIR/<role>/<tag>.log` — header with both roles' exact command, then raw perftest output.
 - `$OUTDIR/<role>/commands.txt` — every test's host and client command.
 - `$OUTDIR/<role>/summary.csv` — columns below.
+- `$OUTDIR/<role>/notes.<name>` — the `--notes` file, if one was given.
 
 ```
 test,device,role,rc,bw_peak_MBps,bw_avg_MBps,lat_typical_usec,size_bytes
