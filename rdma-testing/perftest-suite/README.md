@@ -29,32 +29,56 @@ This is a convention, not an invariant: if the addressing scheme changes, the
 apt install perftest iproute2 jq
 ```
 
+`ethtool` and `pciutils` (provides `lspci`) are optional but strongly
+recommended: the suite captures link speed, PCIe width/speed, and
+driver/firmware versions into every run. Without them the environment capture
+is incomplete.
+
 Identical perftest version on both nodes. The script uses `ip -j` and `jq` to
 discover devices and their addresses, and `ss` for the port preflight.
 
 ## Run
 
+### Single paired run
+
+Pass the same `--run-name` on both machines so the two sides land in matching
+directories (host/ vs client/):
+
 host:
 ```
-./perftest-suite.sh host
+./perftest-suite.sh host --run-name 2026-10-06-cable-a/run-001
 ```
 client:
 ```
-./perftest-suite.sh client
+./perftest-suite.sh client --run-name 2026-10-06-cable-a/run-001
 ```
 
-Both accept `--notes <file>` in any position, which copies a free-form notes
-sheet into the run's output dir (see Output). Use it to record anything the
-script can't capture — cable used, orientation, physical setup, etc.:
+Without `--run-name` the output lands in a timestamped directory; that is for
+ad-hoc runs only, since a host and its client started this way do not share a
+directory name.
+
+### Campaign (N repeated runs)
+
+Use `runner.sh`. Start the host side first, then the client side, with the
+same `--campaign` on both machines:
 
 ```
-./perftest-suite.sh client --notes cable-notes.txt
+./runner.sh 5 host --campaign cables-oct06     # cisc-diya
+./runner.sh 5 client --campaign cables-oct06   # cisc-hoedus
 ```
 
-Client sleeps `INITIAL_DELAY`, then walks the same test/port order as host.
-Each run gets its own port (`BASE_PORT + n`), identical on both sides. Both nodes
-log their discovered `device | local_ip | peer_ip` table at startup — check these
-match before trusting a run.
+All runs are filed under one campaign directory, and run numbers are
+deterministic, so both machines' directories match exactly:
+
+```
+perftest-results/cables-oct06/run-001/{host,client}
+perftest-results/cables-oct06/run-002/{host,client}
+...
+```
+
+`runner.sh` stops the whole campaign if any run fails. Reusing a campaign name
+re-creates the same `run-00N` names, so pick a new campaign name (or delete
+the old one) rather than appending to an existing campaign.
 
 ## Tests
 
@@ -70,49 +94,84 @@ ib_send_bw -b ib_write_bw -b ib_read_bw -b     (-b = bidirectional)
 
 | var             | default                   | meaning                            |
 |-----------------|---------------------------|------------------------------------|
+| `OUTDIR`        | `./perftest-results`      | results root; runs live under it   |
 | `BASE_PORT`     | `18515`                   | first TCP port; +1 per run         |
 | `CONN`          | `RC`                      | `-c` connection type               |
 | `LAT_ITERS`     | `15000`                   | `-n` iterations for `*_lat`        |
 | `BW_ITERS`      | `15000`                   | `-n` iterations for `*_bw` (≤20000)|
 | `RETRIES`       | `3`                       | connect/bind retries (both roles)  |
 | `INITIAL_DELAY` | `3`                       | client startup delay (s)           |
-| `OUTDIR`        | `./perftest-results/<ts>` | output dir (role subdir appended)  |
+
+`BW_ITERS` is validated to be ≤ 20000: perftest disables BW peak computation
+above that.
 
 ## Output
 
-Each role writes to its own subdir, `$OUTDIR/<role>/`:
-
-- `$OUTDIR/<role>/<tag>.log` — header with both roles' exact command, then raw perftest output.
-- `$OUTDIR/<role>/commands.txt` — every test's host and client command.
-- `$OUTDIR/<role>/summary.csv` — columns below.
-- `$OUTDIR/<role>/notes.<name>` — the `--notes` file, if one was given.
+Each run writes to `<OUTDIR>/<run-name>/<role>/`:
 
 ```
-test,device,role,rc,bw_peak_MBps,bw_avg_MBps,lat_typical_usec,size_bytes
+cables-oct06/run-001/
+  host/
+    environment/                    hardware + link-state capture
+      system.json                   kernel, distro, perftest/rdma-core versions
+      <device>/
+        link.json                   parsed link speed, PCIe, MTU, driver
+        ethtool.txt                 raw `ethtool <netdev>`
+        ethtool-i.txt               raw `ethtool -i <netdev>` (driver/firmware)
+        ibv_devinfo.txt             raw `ibv_devinfo -v <device>`
+        lspci.txt                   raw `lspci -vv -s <addr>` (PCIe link)
+    results.csv                     parsed perftest tables, all message sizes
+    commands.txt                    every test's host and client command
+    <test>[_bidi]_<device>.log      raw perftest output, never discarded
+    notes.<name>                    the --notes file, if one was given
+  client/
+    ... same layout ...
 ```
 
-`bw_peak_MBps`/`bw_avg_MBps` = max across message sizes; `lat_typical_usec` = min
-t_typical across sizes. `size_bytes` is where that value occurred.
+`link.json` fields: `device`, `netdev`, `local_ip`, `peer_ip`, `mtu`,
+`link_speed_mbps`, `autoneg`, `link_detected`, `pcie_speed`, `pcie_width`,
+`driver`, `driver_version`, `firmware_version`. Empty string means the tool or
+field was unavailable on that machine.
 
-Note: perftest prints the results table on the **client**; the host's summary
-metrics are typically zero. Read BW/latency from the client summary; the host's
-`rc` column tells you whether the server bound and ran.
+The suite also prints a one-line link-state table per device at startup:
 
-## BW peak = 0.00
+```
+link state (device | local -> peer | link speed | pcie | mtu):
+  rocep1s0f0     | 10.10.10.2 -> 10.10.10.1 | 200000Mb/s | 16GT/s x8 | mtu 4096
+```
 
-Perftest computes BW peak only in iteration mode with `iters <= 20000`
-(`perftest_parameters.c` forces `noPeak` otherwise). In `-D` duration mode peak
-is always disabled, so the column prints `0.00`. This suite therefore uses
-`-n` (`BW_ITERS`) for bandwidth, not `-D`.
+## results.csv
 
-Read/atomic BW measure receive completions on the server; the server-side run
-reports `BW peak 0.00` by design — read the peak from the client summary.
+Tidy long format: one row per (test, message size). Units: bandwidth in
+**GB/s** (decimal gigabytes per second), latency in microseconds.
+
+```
+test,device,role,bidi,size_bytes,bw_peak_GBps,bw_avg_GBps,msg_rate_Mpps,lat_min_usec,lat_max_usec,lat_typical_usec,lat_avg_usec,lat_stdev_usec,lat_p99_usec,lat_p999_usec,error
+```
+
+- Bandwidth rows (`ib_*_bw`) fill the `bw_*` and `msg_rate_*` columns; latency
+  rows fill the `lat_*` columns. The other columns are empty.
+- `bidi=true` rows are the `-b` tests; perftest reports the aggregate of both
+  directions in those rows.
+- Values are converted from perftest's `--report_gbits` output:
+  `GB/s = Gbit/s / 8`.
+- The `error` column is empty on success. On failure it records what happened
+  (`perftest rc=N`, `no parseable rows in perftest output`), so a failed test
+  is never silently dropped.
+- perftest prints its results table on the **client**. Some host-side cells
+  are zero by perftest design (host `ib_send_bw` peak, host `ib_read_lat` /
+  `ib_atomic_lat`). Read BW/latency from the client's `results.csv`; the
+  host's file confirms the server bound and ran.
 
 ## Notes
 
 - `-c UD` has no read verbs; `ib_read_*` skipped when `CONN` is not `RC`/`UC`.
-- Both roles must use identical `CONN` and discover the same devices in the same
-  order; ports are allocated by position, so any divergence misaligns them.
-- Ports are checked free before the run; stale `ib_*` servers are killed between
-  tests.
+- Both roles must use identical `CONN` and discover the same devices in the
+  same order; ports are allocated by position, so any divergence misaligns
+  them. Check the "discovered devices" tables on both sides match before
+  trusting a run.
+- Ports are checked free before the run; stale `ib_*` servers are killed
+  between tests.
 - `-F` suppresses the perftest cpufreq warning.
+- `--notes` is still free-form prose; replacing it with structured, validated
+  metadata (operator, cable part numbers, purpose, ...) is planned.
