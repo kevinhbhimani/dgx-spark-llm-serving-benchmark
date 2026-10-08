@@ -175,3 +175,23 @@ test,device,role,bidi,size_bytes,bw_peak_GBps,bw_avg_GBps,msg_rate_Mpps,lat_min_
 - `-F` suppresses the perftest cpufreq warning.
 - `--notes` is still free-form prose; replacing it with structured, validated
   metadata (operator, cable part numbers, purpose, ...) is planned.
+
+## Figures
+
+`plot_perftest.py` in this directory reads every `results.csv` under a
+campaign tree and writes the paper figures to `figs/`:
+
+```
+python rdma-testing/perftest-suite/plot_perftest.py      # from the repo root
+python plot_perftest.py                                 # from this directory
+```
+
+`--results` and `--out` default to `perftest-results/` and `figs/` next to the
+script. The script imports numpy, pandas, and matplotlib only, so it and a
+campaign tree can be copied elsewhere and plotted from any working directory.
+It reads the host side only, plots the bandwidth verbs at the tested message
+size, the send/write latency percentile tiers, and per-run deviation from each
+repeat group's mean. `ib_read_lat` and `ib_atomic_lat` have no host-side
+measurements (perftest prints those tables client-side), and `ib_atomic_bw`
+runs at the default 8 B; the script prints those facts with row counts before
+drawing.
