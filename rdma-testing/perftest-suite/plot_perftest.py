@@ -5,23 +5,36 @@ Reads every host-side results.csv under the perftest campaign tree
 (perftest-results/<campaign>/run-*/host/ next to this script) and writes three
 figures for the paper:
 
-  perftest_bandwidth   send, write, and read bandwidth per device at the
-                       suite's fixed message size, unidirectional and
-                       bidirectional, against the captured link rate.
-  perftest_latency     send and write latency per perftest percentile tier
-                       (min, typical, mean, p99, p99.9) at the suite's 2 B
-                       latency messages, plus each repeat's t_max as a strip.
+  perftest_bandwidth   send, write, and read bandwidth at the suite's fixed
+                       message size, one-way and bidirectional, in
+                       per-direction units, against the interface and cable
+                       rates of the captured QSFP link.
+  perftest_latency     send, write, read, and atomic latency per perftest
+                       percentile tier (min, typical, mean, p99, p99.9) at the
+                       suite's 2 B latency messages (8 B for the atomic op),
+                       pooled across campaigns; the worst single sample per
+                       verb is reported in the footnote.
   perftest_stability   each repeat's deviation from its (campaign, device,
                        test, bidi) run mean, which is the repeatability
                        evidence behind the min-max whiskers.
 
-Two coverage facts the figures depend on. Perftest prints the read and atomic
-latency tables on the client side, so those two tests carry error rows in the
-host-side CSVs and appear in no figure. ib_atomic_bw runs at the perftest
-default 8 B, which is not comparable with the suite's 64 KiB bandwidth tests;
-report_coverage() prints its measured message rate instead of drawing it. The
-loader refuses a campaign that sweeps message sizes under one test, because
-the per-device figures assume one comparable size per test.
+The loader reads both roles and prefers client rows: perftest prints the
+measurement tables on the client, and the host side leaves the read and atomic
+latency tables and the send_bw peak empty by design. A host row is used only
+for a key with no client row, so a host-only tree still plots.
+report_coverage() prints the role counts and the client/host agreement before
+the figures are drawn. ib_atomic_bw runs at the perftest default 8 B, which is
+not comparable with the suite's 64 KiB bandwidth tests; its measured message
+rate is printed instead of drawn. The loader refuses a campaign that sweeps
+message sizes under one test, because the per-device figures assume one
+comparable size per test.
+
+The bandwidth figure's reference rules come from the captured per-port link
+speed (environment/<device>/link.json) and the suite's documented fabric
+topology: one physical QSFP port carries INTERFACES_PER_PORT logical RDMA
+interfaces, and one Spark has NIC_PORTS of those ports. At the captured
+200 Gb/s port rate the rules are 100 Gb/s per interface, 200 Gb/s per cable,
+and 400 Gb/s per NIC.
 
 Usage:
     python rdma-testing/perftest-suite/plot_perftest.py
@@ -30,9 +43,9 @@ Usage:
     python rdma-testing/perftest-suite/plot_perftest.py --sans
 
 The script imports only numpy, pandas, and matplotlib, so it runs from any
-location. The style block below mirrors plotting/plot_results.py,
-plot_paper.py, and plot_trends.py in this repository; keep the copies in step
-when the paper style changes.
+location. The style block below mirrors plotting/plot_results.py and
+plot_paper.py in this repository; keep the copies in step when the paper style
+changes.
 
 The defaults read and write next to this script (perftest-results/ and figs/),
 so the runner's default output tree plots with no arguments from any working
@@ -44,7 +57,6 @@ from __future__ import annotations
 import argparse
 import glob
 import json
-import math
 import os
 from pathlib import Path
 
@@ -57,14 +69,14 @@ from matplotlib import font_manager
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, NullFormatter
 
 
 # ---- paper figure style ------------------------------------------------------
 # Inlined from the repository's plotting scripts so the suite is standalone:
-# rcParams from plot_results.py:set_rc(), the Type 42 font hardening from
-# plot_paper.py:_publication_rc(), and the log-tick cleaner from
-# plot_trends.py:clean_log_ticks().
+# rcParams from plot_results.py:set_rc() and the Type 42 font hardening from
+# plot_paper.py:_publication_rc().
 COL_W = 3.5      # one IEEE column, inches
 TEXT_W = 7.0     # full text width, inches
 SERIF_FAMILIES = ["Times New Roman", "Liberation Serif", "DejaVu Serif"]
@@ -116,35 +128,6 @@ def apply_paper_style(dpi: int, serif: bool) -> None:
         })
 
 
-def clean_log_ticks(ax: Axes, axis: str = "y", max_ticks: int = 6) -> None:
-    """Round-number major ticks for a log axis, replacing scientific notation.
-
-    Mantissa sets are tried densest first (1-2-5, then 1-3, then decades) and
-    the first that fits max_ticks wins, so a two-decade axis carries plain
-    numbers instead of matplotlib's 2x10^2-style minor labels.
-    """
-    lo, hi = ax.get_ylim() if axis == "y" else ax.get_xlim()
-    if not (lo > 0 and hi > lo):
-        return
-    ticks: list[float] = []
-    for mants in ((1, 2, 5), (1, 3), (1,)):
-        ticks = [m * 10.0 ** exponent
-                 for exponent in range(math.floor(math.log10(lo)),
-                                       math.ceil(math.log10(hi)) + 1)
-                 for m in mants]
-        ticks = [t for t in ticks if lo <= t <= hi]
-        if len(ticks) <= max_ticks:
-            break
-    if len(ticks) < 2:
-        return
-    which = ax.yaxis if axis == "y" else ax.xaxis
-    which.set_ticks(ticks)
-    which.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
-    which.set_minor_formatter(NullFormatter())
-    # Fixed major ticks can widen the view limits; restore the caller's.
-    (ax.set_ylim if axis == "y" else ax.set_xlim)(lo, hi)
-
-
 def save_figure(fig: Figure, name: str, out: str, formats: list[str],
                 *, tight: bool = False) -> None:
     """Write one file per format under out/ and close the figure.
@@ -167,7 +150,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Bandwidth verbs plotted from the suite's fixed 64 KiB tests. atomic_bw is
 # measured at 8 B and is reported as message rate by report_coverage().
 VERBS = ("send", "write", "read")
-LATENCY_VERBS = ("send", "write")
+LATENCY_VERBS = ("send", "write", "read", "atomic")
+ROLES = ("client", "host")
 MEASUREMENT_COLUMNS = (
     "size_bytes", "bw_peak_GBps", "bw_avg_GBps", "msg_rate_Mpps",
     "lat_min_usec", "lat_max_usec", "lat_typical_usec", "lat_avg_usec",
@@ -176,17 +160,21 @@ MEASUREMENT_COLUMNS = (
 REQUIRED_COLUMNS = frozenset(
     {"test", "device", "role", "bidi", "error"} | set(MEASUREMENT_COLUMNS))
 
-# Bar hues per verb, from the Okabe-Ito set shared by the other paper figures.
+# Hues per verb, from the Okabe-Ito set shared by the other paper figures.
+# atomic is drawn only in the latency figure; its bandwidth test runs at 8 B
+# and is not comparable with the 64 KiB verbs.
 VERB_STYLE = {
     "send": "#0072B2",
     "write": "#D55E00",
     "read": "#009E73",
+    "atomic": "#CC79A7",
 }
-# Verb is encoded by marker and linestyle in the latency figure, where hue
-# carries the campaign instead.
+# Verb is encoded by marker and linestyle in the latency figure.
 VERB_LINE = {
     "send": dict(marker="o", linestyle="-"),
     "write": dict(marker="s", linestyle="--"),
+    "read": dict(marker="^", linestyle="-"),
+    "atomic": dict(marker="D", linestyle="--"),
 }
 
 # Campaign directories as written by runner.sh --campaign. short feeds the
@@ -206,6 +194,14 @@ _FALLBACK_CAMPAIGN_STYLE = (
     dict(color="#56B4E9", marker="P"),
 )
 
+# Fabric rates for the bandwidth figure's reference rules. One physical QSFP
+# port carries INTERFACES_PER_PORT logical RDMA interfaces (perftest-suite
+# README, Topology), and ethtool reports the port at 200000 Mb/s with
+# "Lanes: 2" in every captured run, so one interface carries half the port
+# rate. A Spark has NIC_PORTS QSFP ports.
+INTERFACES_PER_PORT = 2
+NIC_PORTS = 2
+
 # perftest's latency summary columns in increasing magnitude order.
 LATENCY_TIERS = (
     ("min", "lat_min_usec"),
@@ -223,53 +219,68 @@ MIN_REPEAT_RUNS = 2
 # Deterministic horizontal offsets for strip points, patterned on the
 # variance figure's cycling JIT so repeated renders are identical.
 _STRIP_JITTER = np.linspace(-0.28, 0.28, 7)
+# Plain-number tick ladder for the latency figure's log axis, in microseconds.
+_LATENCY_TICKS = (1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 10, 15, 20, 30, 50, 80,
+                  100, 150, 200, 300, 500, 800, 1000)
 
 
-def _campaign_run(results_root: str, path: str) -> tuple[str, int]:
+def _campaign_run_role(results_root: str, path: str) -> tuple[str, int, str]:
     relative = os.path.relpath(path, results_root).split(os.sep)
-    return relative[0], int(relative[1].split("-")[1])
+    return relative[0], int(relative[1].split("-")[1]), relative[2]
 
 
-def load_perftest_results(results_root: str) -> pd.DataFrame:
-    """Load every host-side results.csv under <results_root>/<campaign>/run-*/.
+def load_perftest_results(
+        results_root: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load every results.csv under <results_root>/<campaign>/run-*/<role>/.
 
-    The glob fixes the role to host, so no role filtering is needed after the
-    read. Numeric cells are coerced; the error column is kept verbatim so the
-    coverage report can list failed tests. A CSV missing a required column
-    raises with the file named.
+    Returns (preferred, all_rows). preferred holds one row per (campaign, run,
+    device, test, bidi): a measured client row wins, then a measured host row,
+    then an error row, in that order. Perftest prints the measurement tables
+    on the client, and the host side leaves the read and atomic latency tables
+    and the send_bw peak empty by design, so the client row is the measurement
+    of record. Host rows are kept only for keys with no client row, which
+    keeps a host-only tree plottable. all_rows is every row read, which
+    report_coverage() uses to compare the two roles. Numeric cells are
+    coerced; the error column is kept verbatim. A CSV missing a required
+    column raises with the file named.
     """
     paths = sorted(glob.glob(os.path.join(
-        results_root, "*", "run-*", "host", "results.csv")))
+        results_root, "*", "run-*", "*", "results.csv")))
     if not paths:
         raise SystemExit(f"no perftest results.csv under {results_root}")
     frames = []
     for path in paths:
-        campaign, run = _campaign_run(results_root, path)
+        campaign, run, role = _campaign_run_role(results_root, path)
+        if role not in ROLES:
+            raise ValueError(f"{path}: unrecognized role {role!r}")
         frame = pd.read_csv(path)
         missing = REQUIRED_COLUMNS.difference(frame.columns)
         if missing:
             raise ValueError(f"{path}: missing column(s) {sorted(missing)}")
+        if not (frame["role"].astype(str) == role).all():
+            raise ValueError(
+                f"{path}: role column does not match directory {role!r}")
         frame["campaign"] = campaign
         frame["run"] = run
         frames.append(frame)
-    df = pd.concat(frames, ignore_index=True)
+    all_rows = pd.concat(frames, ignore_index=True)
     for column in MEASUREMENT_COLUMNS:
-        df[column] = pd.to_numeric(df[column], errors="coerce")
-    df["error"] = df["error"].fillna("").astype(str).str.strip()
-    bidi_text = df["bidi"].fillna("").astype(str).str.strip().str.lower()
-    df["bidi"] = bidi_text.map({"true": True, "false": False})
-    if df["bidi"].isna().any():
-        bad = sorted(bidi_text[df["bidi"].isna()].unique())
+        all_rows[column] = pd.to_numeric(all_rows[column], errors="coerce")
+    all_rows["error"] = all_rows["error"].fillna("").astype(str).str.strip()
+    bidi_text = all_rows["bidi"].fillna("").astype(str).str.strip().str.lower()
+    all_rows["bidi"] = bidi_text.map({"true": True, "false": False})
+    if all_rows["bidi"].isna().any():
+        bad = sorted(bidi_text[all_rows["bidi"].isna()].unique())
         raise ValueError(f"unrecognized bidi value(s): {bad}")
-    parsed = df["test"].astype(str).str.extract(
+    parsed = all_rows["test"].astype(str).str.extract(
         r"^ib_(?P<verb>[a-z]+)_(?P<kind>lat|bw)$")
     if parsed["kind"].isna().any():
-        bad = sorted(df["test"][parsed["kind"].isna()].unique())
+        bad = sorted(all_rows["test"][parsed["kind"].isna()].unique())
         raise ValueError(f"unrecognized test name(s): {bad}")
-    df["verb"] = parsed["verb"]
-    df["kind"] = parsed["kind"]
+    all_rows["verb"] = parsed["verb"]
+    all_rows["kind"] = parsed["kind"]
 
-    measured = df[df["error"] == ""]
+    measured = all_rows[all_rows["error"] == ""]
     sizes = measured.groupby(["test", "bidi"])["size_bytes"].nunique(dropna=True)
     swept = sizes[sizes > 1]
     if len(swept):
@@ -277,16 +288,26 @@ def load_perftest_results(results_root: str) -> pd.DataFrame:
         raise ValueError(
             "message-size sweeps are not supported by these per-device "
             f"figures: {detail}")
-    return df
+
+    keys = ["campaign", "run", "device", "test", "bidi"]
+    # Measured client (0), measured host (1), error client (2), error host (3).
+    rank = ((all_rows["error"] != "").astype(int) * 2
+            + (all_rows["role"] != "client").astype(int))
+    preferred = (all_rows.assign(_rank=rank)
+                 .sort_values(keys + ["_rank"], kind="stable")
+                 .drop_duplicates(keys, keep="first")
+                 .drop(columns="_rank")
+                 .reset_index(drop=True))
+    return preferred, all_rows
 
 
 def load_link_speeds(results_root: str) -> pd.DataFrame:
     """Per-run link rate from each run's captured environment/link.json."""
     rows = []
     for path in sorted(glob.glob(os.path.join(
-            results_root, "*", "run-*", "host", "environment", "*",
+            results_root, "*", "run-*", "*", "environment", "*",
             "link.json"))):
-        campaign, run = _campaign_run(results_root, path)
+        campaign, run, _ = _campaign_run_role(results_root, path)
         with open(path) as handle:
             link = json.load(handle)
         rows.append({
@@ -305,21 +326,21 @@ def load_link_speeds(results_root: str) -> pd.DataFrame:
     return df
 
 
-def reference_line_rate_gbps(link_speeds: pd.DataFrame) -> float | None:
-    """The single captured link rate in GB/s, None when it is not unique.
+def captured_port_rate_gbps(link_speeds: pd.DataFrame) -> float | None:
+    """The single captured QSFP port rate in Gb/s, None when it is not unique.
 
     One rule cannot label mixed rates correctly, so a capture with more than
-    one value omits the rule and prints the values instead.
+    one value omits the rules and prints the values instead.
     """
     unique = sorted({float(v) for v in link_speeds["link_speed_mbps"].dropna()})
     if not unique:
-        print("  reference: no link_speed_mbps captured, line-rate rule omitted")
+        print("  reference: no link_speed_mbps captured, rate rules omitted")
         return None
     if len(unique) != 1:
         print(f"  reference: captured link rates {unique} Mb/s, "
-              "line-rate rule omitted")
+              "rate rules omitted")
         return None
-    return unique[0] / 8000.0          # Mb/s to decimal GB/s
+    return unique[0] / 1000.0          # Mb/s to Gb/s
 
 
 def campaigns_in_order(df: pd.DataFrame) -> list[str]:
@@ -345,16 +366,6 @@ def _size_label(size_bytes: float) -> str:
     if size_bytes >= 1024:
         return f"{size_bytes / 1024:g} KiB"
     return f"{size_bytes:g} B"
-
-
-def _device_short(device: str) -> str:
-    """Device name without its constant roce prefix, for tick labels.
-
-    RoCE device names are 'roce' plus the netdev name (rocep1s0f0). Dropping
-    the prefix keeps every device distinguishable at a grouped-bar tick width;
-    the coverage report prints the full names.
-    """
-    return device.removeprefix("roce")
 
 
 def repeat_deviations(
@@ -384,8 +395,26 @@ def _results_summary(df: pd.DataFrame) -> str:
             f"{devices} campaign-device pair(s)")
 
 
-def report_coverage(df: pd.DataFrame, link_speeds: pd.DataFrame,
-                    results_root: str) -> None:
+def _role_agreement(all_rows: pd.DataFrame) -> str:
+    """Max client/host relative difference per metric over shared keys."""
+    keys = ["campaign", "run", "device", "test", "bidi"]
+    merged = all_rows[all_rows["role"] == "client"].merge(
+        all_rows[all_rows["role"] == "host"], on=keys, suffixes=("_c", "_h"))
+    parts = []
+    for column, label in (("bw_avg_GBps", "bandwidth"),
+                          ("lat_typical_usec", "latency typical")):
+        pairs = merged[merged[f"{column}_c"].notna()
+                       & merged[f"{column}_h"].notna()]
+        if len(pairs):
+            relative = ((pairs[f"{column}_c"] - pairs[f"{column}_h"]).abs()
+                        / pairs[f"{column}_h"] * 100.0)
+            parts.append(f"{label} max |diff| {relative.max():.3f}% "
+                         f"({len(pairs)} pairs)")
+    return "; ".join(parts) if parts else "no shared client/host rows"
+
+
+def report_coverage(df: pd.DataFrame, all_rows: pd.DataFrame,
+                    link_speeds: pd.DataFrame) -> None:
     """Print runs, devices, measured-row counts, and captured link rates.
 
     Failed tests stay in results.csv as error rows. Listing every test whose
@@ -394,14 +423,13 @@ def report_coverage(df: pd.DataFrame, link_speeds: pd.DataFrame,
     """
     print("coverage")
     print(f"  source: {len(df)} row(s) from {_results_summary(df)}")
-    client_files = glob.glob(os.path.join(
-        results_root, "*", "run-*", "client", "results.csv"))
-    if client_files:
-        print(f"  note: {len(client_files)} client-side results.csv present; "
-              "this figure set reads host-side files only")
-    else:
-        print("  note: host-side results.csv only; the tree holds no "
-              "client/results.csv")
+    role_counts = all_rows.groupby("role").size()
+    roles_text = ", ".join(f"{role} {count}"
+                           for role, count in role_counts.items())
+    host_used = int(((df["role"] == "host") & (df["error"] == "")).sum())
+    print(f"  roles: {roles_text} row(s); client rows preferred, host rows "
+          f"used for {host_used} key(s)")
+    print(f"  client/host agreement: {_role_agreement(all_rows)}")
     for campaign in sorted(df["campaign"].unique()):
         csub = df[df["campaign"] == campaign]
         runs = sorted(int(r) for r in csub["run"].unique())
@@ -437,14 +465,33 @@ def report_coverage(df: pd.DataFrame, link_speeds: pd.DataFrame,
               "tests")
 
 
+def _bandwidth_rules(port_gbps: float | None) -> list[tuple[float, str, str]]:
+    """Per-direction reference rules as (GB/s, label, linestyle).
+
+    The interface rule divides the captured port rate across
+    INTERFACES_PER_PORT logical interfaces; the cable rule is the full port
+    rate. Both are per-direction rates, matching the figure's bars.
+    """
+    if port_gbps is None:
+        return []
+    interface = port_gbps / INTERFACES_PER_PORT
+    return [
+        (interface / 8.0, f"{interface:.0f} Gb/s per interface", ":"),
+        (port_gbps / 8.0, f"{port_gbps:.0f} Gb/s per cable", "--"),
+    ]
+
+
 def fig_bandwidth(df: pd.DataFrame, out: str, fmts: list[str],
-                  line_rate_gbps: float | None) -> None:
+                  port_gbps: float | None) -> None:
     """Per-device bandwidth at the suite's tested message size.
 
-    Bars are means over each campaign's repeats with min-max whiskers.
-    perftest -b reports the sum of both directions, so the bidirectional
-    panel's reference rule is twice the line rate. The host-side ib_send_bw
-    peak cell is zero by perftest design, so only the average column is read.
+    One panel in per-direction units. perftest -b reports the sum of both
+    directions, so the bidirectional bars are halved: every bar is one
+    direction's rate and the reference rules apply unchanged. Bars are means
+    over every device instance and repeat in the tree, with min-max whiskers.
+    One device is one logical interface of a QSFP port, so the interface rule
+    divides the captured port rate across INTERFACES_PER_PORT interfaces.
+    Only the average column is read; peak is the single best sample of a run.
     """
     measured = df[df["error"] == ""]
     bw = measured[(measured["kind"] == "bw") & measured["verb"].isin(VERBS)
@@ -453,87 +500,82 @@ def fig_bandwidth(df: pd.DataFrame, out: str, fmts: list[str],
         print("  perftest_bandwidth: no measured bandwidth rows, skipping")
         return
     campaigns = campaigns_in_order(bw)
-    devices = devices_in_order(bw)
-    groups = [(campaign, device) for campaign in campaigns for device in devices
-              if ((bw["campaign"] == campaign)
-                  & (bw["device"] == device)).any()]
+    instances = int(bw.groupby(["campaign", "device"]).ngroups)
     counts = bw.groupby(["campaign", "device", "test", "bidi"])["run"].count()
     runs_text = (f"{int(counts.min())} repeats per device"
                  if counts.min() == counts.max()
                  else f"{int(counts.min())}-{int(counts.max())} repeats per device")
     sizes = ", ".join(_size_label(s) for s in sorted(bw["size_bytes"].unique()))
+    roles_text = "+".join(sorted(bw["role"].unique()))
+    bidi_mean = float(bw[bw["bidi"]]["bw_avg_GBps"].mean())
 
-    fig, axes = plt.subplots(1, 2, figsize=(TEXT_W, 2.8))
-    x = np.arange(len(groups))
-    width = 0.8 / len(VERBS)
-    for ax, bidi_flag, title, reference in (
-            (axes[0], False, "(a) unidirectional", line_rate_gbps),
-            (axes[1], True, "(b) bidirectional (both directions summed)",
-             2 * line_rate_gbps if line_rate_gbps else None)):
-        highs_all: list[float] = []
-        for column, verb in enumerate(VERBS):
-            means, lows, highs = [], [], []
-            for campaign, device in groups:
-                values = bw[(bw["campaign"] == campaign)
-                            & (bw["device"] == device)
-                            & (bw["verb"] == verb)
-                            & (bw["bidi"] == bidi_flag)]["bw_avg_GBps"]
-                means.append(float(values.mean()) if len(values) else np.nan)
-                lows.append(float(values.min()) if len(values) else np.nan)
-                highs.append(float(values.max()) if len(values) else np.nan)
-            offset = (column - (len(VERBS) - 1) / 2) * width
-            ax.bar(x + offset, means, width * 0.9, color=VERB_STYLE[verb],
-                   label=verb, linewidth=0)
-            mean_v, low_v, high_v = map(np.asarray, (means, lows, highs))
-            has_bar = np.isfinite(mean_v)
-            if has_bar.any():
-                ax.errorbar(
-                    x[has_bar] + offset, mean_v[has_bar],
-                    yerr=np.vstack([mean_v[has_bar] - low_v[has_bar],
-                                    high_v[has_bar] - mean_v[has_bar]]),
-                    fmt="none", ecolor="0.15", elinewidth=0.7,
-                    capsize=1.5, capthick=0.7)
-            highs_all.extend(float(v) for v in high_v if np.isfinite(v))
-        top = max(highs_all, default=0.0)
-        if reference is not None:
-            ax.axhline(reference, color=REFERENCE_COLOR, linestyle=":",
-                       linewidth=0.9)
-            gbps = reference * 8
-            if bidi_flag:
-                text = (f"full duplex {gbps:.0f} Gb/s "
-                        f"({reference:.0f} GB/s aggregate)")
-            else:
-                text = f"line rate {gbps:.0f} Gb/s ({reference:.0f} GB/s)"
-            ax.annotate(text, xy=(len(groups) - 0.4, reference),
-                        xytext=(0, -2), textcoords="offset points",
-                        ha="right", va="top", fontsize=6.0,
-                        color=FOOTNOTE_COLOR)
-            top = max(top, reference)
-        ax.set_ylim(0, top * 1.15)
-        ax.set_xticks(x)
-        ax.set_xticklabels(
-            [f"{campaign_style(campaign, campaigns)['short']}\n"
-             f"{_device_short(device)}" for campaign, device in groups],
-            fontsize=6.2)
-        ax.set_title(title, fontsize=8)
-        ax.grid(axis="x", visible=False)
-        ax.legend(fontsize=6.5, ncol=len(VERBS), loc="upper left",
-                  handlelength=1.1, columnspacing=1.0, handletextpad=0.4)
-    axes[0].set_ylabel("Bandwidth (GB/s)", fontsize=8)
-    fig.text(0.5, -0.01,
-             f"host-side perftest tables; {sizes} messages; {runs_text}; "
-             "whiskers = min-max over repeats",
-             ha="center", fontsize=FOOTNOTE_FS, color=FOOTNOTE_COLOR)
+    fig, ax = plt.subplots(figsize=(TEXT_W, 2.8))
+    width = 0.32
+    highs: list[float] = []
+    for column, verb in enumerate(VERBS):
+        for direction, (bidi_flag, scale, hatch) in enumerate(
+                ((False, 1.0, None), (True, 0.5, "///"))):
+            values = (bw[(bw["verb"] == verb)
+                         & (bw["bidi"] == bidi_flag)]["bw_avg_GBps"] * scale)
+            if values.empty:
+                continue
+            center = column + (direction - 0.5) * width
+            mean = float(values.mean())
+            ax.bar(center, mean, width * 0.92, color=VERB_STYLE[verb],
+                   hatch=hatch, edgecolor="white", linewidth=0, zorder=3)
+            ax.errorbar(center, mean,
+                        yerr=[[mean - float(values.min())],
+                              [float(values.max()) - mean]],
+                        fmt="none", ecolor="0.15", elinewidth=0.7,
+                        capsize=1.5, capthick=0.7, zorder=4)
+            highs.append(float(values.max()))
+    rules = _bandwidth_rules(port_gbps)
+    for value, label, linestyle in rules:
+        ax.axhline(value, color=REFERENCE_COLOR, linestyle=linestyle,
+                   linewidth=0.9, zorder=1)
+        # The rules are labeled in a right margin reserved by set_xlim, so the
+        # text cannot land on the bars.
+        ax.annotate(label, xy=(len(VERBS) - 0.5 + 0.06, value),
+                    xytext=(0, 1), textcoords="offset points", ha="left",
+                    va="bottom", fontsize=6.0, color=FOOTNOTE_COLOR)
+        highs.append(value)
+    ax.set_xlim(-0.5, len(VERBS) - 0.5 + 1.15)
+    ax.set_ylim(0, max(highs, default=1.0) * 1.12)
+    ax.set_xticks(range(len(VERBS)))
+    ax.set_xticklabels(list(VERBS), fontsize=7)
+    ax.grid(axis="x", visible=False)
+    ax.set_ylabel("Bandwidth per direction (GB/s)", fontsize=8)
+    handles = [Patch(facecolor=VERB_STYLE[verb], label=verb) for verb in VERBS]
+    handles += [Patch(facecolor="0.75", label="one-way"),
+                Patch(facecolor="0.75", hatch="///", edgecolor="white",
+                      label="bidirectional")]
+    # Anchored below the cable rule so the legend text does not sit on it.
+    ax.legend(handles=handles, fontsize=6.5, ncol=2, loc="upper left",
+              bbox_to_anchor=(0.0, 0.86), handlelength=1.4,
+              columnspacing=1.0, handletextpad=0.4)
+    port_text = f"{port_gbps:.0f} Gb/s " if port_gbps is not None else ""
+    fig.text(0.5, -0.02,
+             f"{roles_text}-side perftest tables; {sizes} messages; "
+             f"{runs_text}, one interface tested at a time\n"
+             f"bars pool {instances} device instances over {len(campaigns)} "
+             f"campaigns; whiskers = min-max; {INTERFACES_PER_PORT} logical "
+             f"interfaces per {port_text}QSFP port, {NIC_PORTS} ports per NIC\n"
+             f"bidirectional bars halve the -b aggregate "
+             f"(mean {bidi_mean:.1f} GB/s) to one direction",
+             ha="center", va="top", fontsize=FOOTNOTE_FS,
+             color=FOOTNOTE_COLOR, linespacing=1.4)
     save_figure(fig, "perftest_bandwidth", out, fmts, tight=True)
 
 
 def fig_latency(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
-    """Send and write latency by perftest percentile tier.
+    """Send, write, read, and atomic latency by perftest percentile tier.
 
-    One line per campaign and verb with the repeat-and-device min-max band
-    behind it. t_max is the single worst sample of a run rather than a
-    percentile, so each run's t_max is drawn as one strip point at the right
-    edge instead of a summary line.
+    One line per verb with the repeat-and-device min-max band behind it,
+    pooled across campaigns because the two cabling configurations agree.
+    Each run's t_max is the single worst sample of that run rather than a
+    percentile, so the worst sample per verb is reported in the footnote: the
+    read outlier at 421 us would compress the tier axis by an order of
+    magnitude.
     """
     measured = df[df["error"] == ""]
     lat = measured[(measured["kind"] == "lat")
@@ -542,56 +584,55 @@ def fig_latency(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
     if lat.empty:
         print("  perftest_latency: no measured latency rows, skipping")
         return
-    campaigns = campaigns_in_order(lat)
-    sizes = ", ".join(_size_label(s) for s in sorted(lat["size_bytes"].unique()))
+    roles_text = "+".join(sorted(lat["role"].unique()))
+    size_groups = lat.groupby("size_bytes")["verb"].agg(
+        lambda verbs: "/".join(sorted(set(verbs))))
+    sizes = ", ".join(f"{_size_label(size)} {verbs}"
+                      for size, verbs in size_groups.items())
 
     fig, ax = plt.subplots(figsize=(COL_W, 2.8))
     xs = np.arange(len(LATENCY_TIERS))
-    x_strip = float(len(LATENCY_TIERS))
-    maxes_all: list[float] = []
-    for campaign in campaigns:
-        style = campaign_style(campaign, campaigns)
-        for verb in LATENCY_VERBS:
-            sub = lat[(lat["campaign"] == campaign) & (lat["verb"] == verb)]
-            if sub.empty:
-                continue
-            means, lows, highs = [], [], []
-            for _, column in LATENCY_TIERS:
-                values = sub[column].dropna()
-                means.append(float(values.mean()) if len(values) else np.nan)
-                lows.append(float(values.min()) if len(values) else np.nan)
-                highs.append(float(values.max()) if len(values) else np.nan)
-            line = VERB_LINE[verb]
-            ax.plot(xs, means, color=style["color"], markersize=3.0,
-                    linewidth=1.1, zorder=3, **line)
-            ax.fill_between(xs, lows, highs, color=style["color"],
-                            alpha=0.12, linewidth=0, zorder=2)
-            maxes = sub["lat_max_usec"].dropna().to_numpy()
-            if len(maxes):
-                offsets = np.array([_STRIP_JITTER[k % len(_STRIP_JITTER)]
-                                    for k in range(len(maxes))])
-                ax.scatter(x_strip + offsets, maxes, s=6, facecolors="none",
-                           edgecolors=style["color"], linewidths=0.5,
-                           alpha=0.6, zorder=3)
-                maxes_all.extend(float(v) for v in maxes)
-    ax.set_xticks(list(xs) + [x_strip])
-    ax.set_xticklabels([tier for tier, _ in LATENCY_TIERS] + ["max\n(per run)"],
-                       fontsize=6.5)
+    for verb in LATENCY_VERBS:
+        sub = lat[lat["verb"] == verb]
+        if sub.empty:
+            continue
+        means, lows, highs = [], [], []
+        for _, column in LATENCY_TIERS:
+            values = sub[column].dropna()
+            means.append(float(values.mean()) if len(values) else np.nan)
+            lows.append(float(values.min()) if len(values) else np.nan)
+            highs.append(float(values.max()) if len(values) else np.nan)
+        ax.plot(xs, means, color=VERB_STYLE[verb], markersize=3.0,
+                linewidth=1.1, zorder=3, **VERB_LINE[verb])
+        ax.fill_between(xs, lows, highs, color=VERB_STYLE[verb],
+                        alpha=0.12, linewidth=0, zorder=2)
+    ax.set_xticks(xs)
+    ax.set_xticklabels([tier for tier, _ in LATENCY_TIERS], fontsize=6.5)
     ax.set_yscale("log")
-    ax.set_ylim(1.2, max(3.0, max(maxes_all, default=0.0) * 1.3))
-    clean_log_ticks(ax)
+    p999 = lat["lat_p999_usec"].dropna()
+    top = max(3.0, float(p999.max()) * 1.15) if len(p999) else 3.0
+    ax.set_ylim(1.2, top)
+    # Plain-number ticks: a sub-decade log axis otherwise labels its minor
+    # ticks with mathtext, which resolves the custom mathtext fontset and
+    # warns about its cursive fallback for labels that should be plain.
+    ax.set_yticks([t for t in _LATENCY_TICKS if 1.2 <= t <= top])
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
+    ax.yaxis.set_minor_formatter(NullFormatter())
     ax.set_ylabel("One-way latency (µs)", fontsize=8)
-    handles = [Line2D([], [], color=campaign_style(c, campaigns)["color"],
-                      label=campaign_style(c, campaigns)["label"])
-               for c in campaigns]
-    handles += [Line2D([], [], color="0.35", markersize=3, label=verb,
-                       **VERB_LINE[verb]) for verb in LATENCY_VERBS]
+    handles = [Line2D([], [], color=VERB_STYLE[verb], markersize=3,
+                      label=verb, **VERB_LINE[verb])
+               for verb in LATENCY_VERBS if (lat["verb"] == verb).any()]
     ax.legend(handles=handles, fontsize=6.2, ncol=2, loc="upper left",
               handlelength=1.4, columnspacing=1.0, handletextpad=0.4)
+    worst = lat.groupby("verb")["lat_max_usec"].max()
+    worst_text = ", ".join(f"{verb} {worst[verb]:.0f}"
+                           for verb in LATENCY_VERBS if verb in worst.index)
     fig.text(0.5, -0.02,
-             f"host-side perftest tables; {sizes} messages; "
-             "band = min-max across each campaign's repeats and devices",
-             ha="center", fontsize=FOOTNOTE_FS, color=FOOTNOTE_COLOR)
+             f"{roles_text}-side perftest tables; {sizes} messages; band = "
+             "min-max across both campaigns' repeats and devices\n"
+             f"worst single sample (t_max): {worst_text} µs",
+             ha="center", va="top", fontsize=FOOTNOTE_FS,
+             color=FOOTNOTE_COLOR, linespacing=1.4)
     save_figure(fig, "perftest_latency", out, fmts, tight=True)
 
 
@@ -599,8 +640,10 @@ def fig_stability(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
     """Repeat-to-repeat scatter around each repeat group's mean.
 
     Normalizing per (campaign, device, test, bidi) removes device and campaign
-    level offsets, so the strips show run-to-run noise. Each panel reports its
-    own standard deviation and worst absolute deviation.
+    level offsets, so the strips show run-to-run noise. Panel (a) covers the
+    bandwidth verbs, panel (b) the typical and p99 tiers of every latency
+    verb. Each panel reports its own standard deviation and worst absolute
+    deviation.
     """
     measured = df[df["error"] == ""]
     bw = measured[(measured["kind"] == "bw") & measured["verb"].isin(VERBS)
@@ -611,17 +654,14 @@ def fig_stability(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
         print("  perftest_stability: no measured rows, skipping")
         return
     campaigns = campaigns_in_order(measured)
-    fig, (ax_bw, ax_lat) = plt.subplots(
-        1, 2, figsize=(TEXT_W, 2.5),
-        gridspec_kw=dict(width_ratios=(2.3, 1.0)))
+    fig, (ax_bw, ax_lat) = plt.subplots(1, 2, figsize=(TEXT_W, 2.5))
 
     bw_specs = [(f"{verb}\n{'bidi' if bidi else 'uni'}", "bw_avg_GBps",
                  (bw["verb"] == verb) & (bw["bidi"] == bidi))
                 for bidi in (False, True) for verb in VERBS]
-    lat_specs = [(f"{verb}\n{name}", column, lat["verb"] == verb)
-                 for verb in LATENCY_VERBS
-                 for name, column in (("typical", "lat_typical_usec"),
-                                      ("p99", "lat_p99_usec"))]
+    lat_specs = [(verb, column, lat["verb"] == verb)
+                 for column in ("lat_typical_usec", "lat_p99_usec")
+                 for verb in LATENCY_VERBS]
     for ax, frame, specs, title in (
             (ax_bw, bw, bw_specs, "(a) bandwidth"),
             (ax_lat, lat, lat_specs, "(b) latency")):
@@ -639,15 +679,19 @@ def fig_stability(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
                 f"max |dev| = {np.abs(deviations).max():.2f}%",
                 xy=(0.99, 0.03), xycoords="axes fraction", ha="right",
                 fontsize=6.0, color=FOOTNOTE_COLOR)
-    ax_bw.axvline(len(VERBS) - 0.5, color="0.85", linewidth=0.7, zorder=0)
-    ax_bw.annotate("unidirectional", xy=(1.0, 1.0), xycoords=("data", "axes fraction"),
-                   xytext=(0, 2), textcoords="offset points", ha="center",
-                   fontsize=6.5, color=FOOTNOTE_COLOR)
-    ax_bw.annotate("bidirectional", xy=(1.0 + len(VERBS), 1.0),
-                   xycoords=("data", "axes fraction"), xytext=(0, 2),
-                   textcoords="offset points", ha="center", fontsize=6.5,
-                   color=FOOTNOTE_COLOR)
+    _annotate_halves(ax_bw, len(VERBS), "unidirectional", "bidirectional")
+    _annotate_halves(ax_lat, len(LATENCY_VERBS), "typical", "p99")
     save_figure(fig, "perftest_stability", out, fmts)
+
+
+def _annotate_halves(ax: Axes, half: int, left: str, right: str) -> None:
+    """Divider and half labels for a two-group strip panel."""
+    ax.axvline(half - 0.5, color="0.85", linewidth=0.7, zorder=0)
+    for center, label in ((half / 2 - 0.5, left), (half * 1.5 - 0.5, right)):
+        ax.annotate(label, xy=(center, 1.0),
+                    xycoords=("data", "axes fraction"), xytext=(0, 2),
+                    textcoords="offset points", ha="center", fontsize=6.5,
+                    color=FOOTNOTE_COLOR)
 
 
 def _draw_repeat_strip(ax: Axes, frame: pd.DataFrame,
@@ -695,12 +739,12 @@ def main() -> None:
 
     formats = ["pdf", "png"] if args.format == "both" else [args.format]
     apply_paper_style(args.dpi, serif=not args.sans)
-    df = load_perftest_results(args.results)
+    df, all_rows = load_perftest_results(args.results)
     link_speeds = load_link_speeds(args.results)
-    report_coverage(df, link_speeds, args.results)
-    line_rate = reference_line_rate_gbps(link_speeds)
+    report_coverage(df, all_rows, link_speeds)
+    port_gbps = captured_port_rate_gbps(link_speeds)
     print("perftest figures")
-    fig_bandwidth(df, args.out, formats, line_rate)
+    fig_bandwidth(df, args.out, formats, port_gbps)
     fig_latency(df, args.out, formats)
     fig_stability(df, args.out, formats)
     print("done")

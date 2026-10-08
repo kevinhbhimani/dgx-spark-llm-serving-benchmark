@@ -189,9 +189,15 @@ python plot_perftest.py                                 # from this directory
 `--results` and `--out` default to `perftest-results/` and `figs/` next to the
 script. The script imports numpy, pandas, and matplotlib only, so it and a
 campaign tree can be copied elsewhere and plotted from any working directory.
-It reads the host side only, plots the bandwidth verbs at the tested message
-size, the send/write latency percentile tiers, and per-run deviation from each
-repeat group's mean. `ib_read_lat` and `ib_atomic_lat` have no host-side
-measurements (perftest prints those tables client-side), and `ib_atomic_bw`
-runs at the default 8 B; the script prints those facts with row counts before
-drawing.
+It reads both roles and prefers client rows, because perftest prints the
+measurement tables on the client and leaves the read and atomic latency tables
+and the send_bw peak empty on the host side; a host row is used only for a key
+with no client row. The figures cover the bandwidth verbs at the tested
+message size, the send/write/read/atomic latency percentile tiers, and per-run
+deviation from each repeat group's mean. The bandwidth figure draws two rate
+rules from the captured port speed: 100 Gb/s per logical interface and
+200 Gb/s per cable (two interfaces per QSFP port, two ports per NIC). Its
+bars are per-direction rates: the bidirectional bars are the perftest -b
+aggregate halved, so no bar compares a two-direction sum against a
+one-direction rate. `ib_atomic_bw` runs at the default 8 B; the script prints
+its message rate with the role counts before drawing.
