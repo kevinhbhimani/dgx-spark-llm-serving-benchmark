@@ -140,7 +140,9 @@ try:
         data = json.loads(resp.read().decode())
     total = data.get("safetensors", {}).get("total")
     if not isinstance(total, (int, float)) or total <= 0:
-        raise ValueError(f"safetensors.total missing or invalid: {total!r}")
+        total = data.get("usedStorage")
+    if not isinstance(total, (int, float)) or total <= 0:
+        raise ValueError(f"no size metadata (safetensors.total={data.get('safetensors',{}).get('total')!r}, usedStorage={data.get('usedStorage')!r})")
     print(int(total))
 except Exception as exc:
     print(f"ERROR: {exc}", file=sys.stderr)
