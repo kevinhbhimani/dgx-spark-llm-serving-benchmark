@@ -728,13 +728,14 @@ all-reduce job is already active. Keep the committed source and YAML unchanged
 until the campaign is complete.
 
 `scripts/predownload.sh` uses the same pinned image, cache mount, model ids, and
-revisions as serving. `CHECK_ONLY=1` uses Hugging Face local-only resolution and
-fails on a missing or partial snapshot; it never substitutes a newer cached
-revision. Because each
-dual node has its own cache, mirror the checked head cache before the dual
-canary. `CANARY_ONLY=1` performs the full launch and strict SSE contract probe
-for every selected model, including the on-the-fly FP8 and distributed paths,
-but writes no benchmark points.
+revisions as serving. It queries every unique repo's size from the HF API in a
+prefetch phase before downloading, and exits on an API failure before the first
+download. `CHECK_ONLY=1` uses Hugging Face local-only resolution and fails on a
+missing or partial snapshot; it never substitutes a newer cached revision.
+Because each dual node has its own cache, mirror the checked head cache before
+the dual canary. `CANARY_ONLY=1` performs the full launch and strict SSE
+contract probe for every selected model, including the on-the-fly FP8 and
+distributed paths, but writes no benchmark points.
 
 All runs append to one `OUT_DIR/index.csv` tagged by `model_label`, so a single
 plotting invocation compares across models (see Outputs). The benchmark also

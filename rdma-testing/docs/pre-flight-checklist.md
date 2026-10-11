@@ -162,8 +162,9 @@ scripts/predownload.sh all
 scripts/mirror_worker_cache.sh all
 ```
 
-`predownload.sh` queries the HF API for each repo's size and checks available
-disk space plus OS buffer before downloading.
+`predownload.sh` queries the HF API for every unique repo's size in a prefetch
+phase before any download starts. An API failure in that phase exits before the
+first download. The script then checks available disk space plus OS buffer.
 
 ## 13. Canary (quick pre-flight test)
 

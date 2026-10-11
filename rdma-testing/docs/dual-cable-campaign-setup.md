@@ -263,12 +263,14 @@ Add `HF_CACHE` to `.env` so all scripts use it:
 HF_CACHE=/mnt/model-cache
 ```
 
-`predownload.sh` queries `https://huggingface.co/api/models/{repo}` for each
-repo's `safetensors.total` size before downloading. It refuses to download if
-available disk space is less than the total download size plus an OS safety
-buffer (20 GiB or 5% of total disk, whichever is larger). Override the buffer
-with `PREDOWNLOAD_MIN_FREE_GB`. Requires network access. Skipped in
-`CHECK_ONLY` mode.
+`predownload.sh` queries `https://huggingface.co/api/models/{repo}` for every
+unique repo's `safetensors.total` size in a prefetch phase that runs before any
+download starts. An API failure in the prefetch phase exits the script before
+the first container runs. The script refuses to download if available disk
+space is less than the total download size plus an OS safety buffer (20 GiB or
+5% of total disk, whichever is larger). Override the buffer with
+`PREDOWNLOAD_MIN_FREE_GB`. Requires network access. Skipped in `CHECK_ONLY`
+mode.
 
 ## Model pre-download
 
