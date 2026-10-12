@@ -115,11 +115,6 @@ fi
 
 mkdir -p "$HF_CACHE"
 
-# Pre-fetch all HF model sizes before any downloading.
-if [[ "$CHECK_ONLY" != "1" ]]; then
-  prefetch_hf_sizes || exit 1
-fi
-
 # Pre-fetch all HF model repo sizes before any downloading.
 # On success, exports HF_PREFETCHED_TOTAL_BYTES (total bytes across all unique repos).
 # Exits 1 if any repo's HF API query fails.
@@ -158,6 +153,11 @@ except Exception as exc:
   done
   export HF_PREFETCHED_TOTAL_BYTES=$prefix_total
 }
+
+# Pre-fetch all HF model sizes before any downloading.
+if [[ "$CHECK_ONLY" != "1" ]]; then
+  prefetch_hf_sizes || exit 1
+fi
 
 # Query huggingface.co/api/models for each unique repo's safetensors.total
 # size, sum them, and refuse to download if available disk space is less than

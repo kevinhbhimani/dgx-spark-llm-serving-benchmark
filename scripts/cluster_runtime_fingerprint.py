@@ -65,7 +65,8 @@ def facts():
     )
     runtime_env_names = (
         "NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "NCCL_IB_DISABLE",
-        "NCCL_DEBUG", "TORCHINDUCTOR_AUTOGRAD_CACHE", "HF_HUB_OFFLINE",
+        "NCCL_DEBUG", "NCCL_IB_HCA", "NCCL_NET_PLUGIN", "NCCL_IB_GID_INDEX",
+        "TORCHINDUCTOR_AUTOGRAD_CACHE", "HF_HUB_OFFLINE",
         "TRANSFORMERS_OFFLINE",
     )
     return {

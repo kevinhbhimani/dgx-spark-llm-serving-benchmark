@@ -33,11 +33,20 @@ export NCCL_SOCKET_IFNAME="$CX_IFACE"
 export GLOO_SOCKET_IFNAME="$CX_IFACE"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-$HEAD_IP}"
 
-# ConnectX is an Ethernet NIC. Keep NCCL on sockets unless you have verified
-# RoCE is configured, in which case set NCCL_IB_DISABLE=0 and test it as a
-# separate data point for the paper.
-export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
+# NCCL data plane uses RDMA over ConnectX by default. Set NCCL_IB_DISABLE=1
+# to fall back to TCP sockets, for example to diagnose a RoCE fault.
+# GLOO and the Ray rendezvous use TCP sockets in both modes.
+export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+# NCCL RDMA device allowlist. Empty discovers every device. Set for the
+# dual-cable layout when NCCL selects fewer than all four devices:
+# NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
+export NCCL_IB_HCA="${NCCL_IB_HCA:-}"
+# Empty loads the library NCCL discovers. Set to "none" to use the built-in
+# IB transport instead of the HPC-X RDMA plugin bundled in the vLLM image.
+export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-}"
+# RoCEv2 GID index used by the built-in IB transport. Empty defers to NCCL.
+export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 
 # Container settings. The digest is the validated 26.04-py3 image; a mutable
 # monthly tag alone is not sufficient provenance for a paper rerun.

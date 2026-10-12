@@ -180,6 +180,9 @@ Server-side requirements for the included scripts:
 - For dual-node runs: working name resolution or IP configuration for both
   nodes, a ConnectX interface, and matching access to the vLLM image on both
   nodes.
+- For RDMA (the default transport): RoCEv2 enabled on the ConnectX ports of
+  both nodes. `ibdev2netdev` lists one RDMA device per port. Set
+  `NCCL_IB_DISABLE=1` for the TCP-socket fallback.
 - For `scripts/interconnect_microbench.sh`: `git`, `make`, MPI tooling
   providing `mpirun`, and NCCL build dependencies.
 
@@ -341,6 +344,11 @@ export HF_CACHE=$HOME/.cache/huggingface
 # export CONTAINER_DNS=8.8.8.8
 # Optional download-only override; defaults to CONTAINER_DNS.
 # export DOWNLOAD_DNS=8.8.8.8
+# RDMA is the default NCCL transport. CX_IFACE defaults to the single cable;
+# list all four interfaces for the dual-cable layout.
+# export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
+# export NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
+# export NCCL_IB_DISABLE=1   # TCP-socket fallback
 # Offline serving is the default; predownload exact revisions before launching.
 export HF_HUB_OFFLINE=1
 export BASE_URL=http://127.0.0.1:8000
@@ -385,6 +393,14 @@ export HOEDUS_IP=10.10.10.2
 export HEAD_IP=$DIYA_IP
 export RAY_PORT=6379
 ```
+
+`CX_IFACE` takes one interface for a single-cable setup or a comma-separated
+list for the dual-cable setup. NCCL RDMA device selection uses `NCCL_IB_HCA`
+and auto-discovery when that variable is empty. `CX_IFACE` also feeds the NCCL
+and Gloo socket interface lists and the serving fingerprint. The RDMA
+verification sequence lives in
+`rdma-testing/docs/dual-cable-campaign-setup.md`. The per-device RDMA perftest
+matrix runs from `rdma-testing/perftest-suite/`.
 
 ## Running Single-Node Benchmarks
 
@@ -582,15 +598,15 @@ results and is keyed to the exact cluster runtime and benchmark source:
 scripts/ray_allreduce_bench.sh
 ```
 
-The default acceptance floor is 1.8 GB/s at 1 GiB and the default 8-byte
-collective-latency ceiling is 5 ms. The floor is calibrated to this cluster's
-measured NCCL socket-transport plateau of ~2.08 GB/s (`NCCL_IB_DISABLE=1`,
-MTU 1500, 200 GbE ConnectX, 2026-07-16), set ~13% below it so a healthy link
-passes while a degraded or misrouted one fails. The command fails without
-publishing an artifact if either threshold is missed. Override
-`ALLREDUCE_MIN_1G_BUSBW_GBPS` or `ALLREDUCE_MAX_8B_LATENCY_S` only when the
-paper explicitly defines and records a different acceptance policy; those
-values are included in the artifact fingerprint.
+The default acceptance floor is 16 GB/s at 1 GiB and the default 8-byte
+collective-latency ceiling is 100 µs. The floor is calibrated to the measured
+NCCL RDMA plateau of 19.4-23.6 GB/s at 1 GiB on this two-node cluster
+(dual-cable ConnectX, 2026-10-12), set ~13% below the lowest healthy run so a
+healthy RDMA link passes while the TCP-socket fallback (2.09 GB/s) and a
+misrouted path fail. The command fails without publishing an artifact if
+either threshold is missed. A campaign run over the TCP fallback must set
+`ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8` and `ALLREDUCE_MAX_8B_LATENCY_S=0.005`
+explicitly. Both values are included in the artifact fingerprint.
 
 `scripts/interconnect_microbench.sh` is an optional MPI/nccl-tests alternative
 only for clusters where head-to-worker SSH is configured. It is not the default
@@ -1233,6 +1249,17 @@ non-paper diagnostic run.
   worker node's HF cache (each node has its own; `predownload.sh` only warms
   the node it runs on). Run `scripts/mirror_worker_cache.sh tp2|pp2|all` from
   the head and relaunch.
+- `tp2`/`pp2` launch passes the cache preflight but hangs during model load
+  with no engine output: NCCL cannot finish the RDMA handshake. Run
+  `ibdev2netdev` on both nodes and confirm one UP device per port. Run
+  `scripts/verify_connectx.sh` and confirm per-subnet latency under 2 ms.
+  Restart Ray with `NCCL_DEBUG=INFO` and read the `NET/IB : Using ...` line
+  in the launcher output to see which devices NCCL selected. Set
+  `NCCL_IB_HCA` to the full device list when some are missing.
+- A campaign run over the TCP fallback (`NCCL_IB_DISABLE=1`) fails the
+  allreduce gate: the default floor of 16 GB/s at 1 GiB is calibrated for
+  RDMA. Set `ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8` and
+  `ALLREDUCE_MAX_8B_LATENCY_S=0.005` for the fallback campaign.
 - `PREFLIGHT FAILED` for local memory, or `low free memory` before a tp2/pp2
   launch: both preflights already drop clean file pages from the Hugging Face
   cache without applying anonymous-memory pressure. A remaining
