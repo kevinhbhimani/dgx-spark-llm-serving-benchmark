@@ -53,7 +53,7 @@ def _worker(rank, world, head_ip, iface, port, sizes, iters, warmup):
     os.environ["NCCL_SOCKET_IFNAME"] = iface
     os.environ["GLOO_SOCKET_IFNAME"] = iface
     os.environ.setdefault(
-        "NCCL_IB_DISABLE", os.environ.get("NCCL_IB_DISABLE", "1")
+        "NCCL_IB_DISABLE", os.environ.get("NCCL_IB_DISABLE", "0")
     )
     import torch
     import torch.distributed as dist

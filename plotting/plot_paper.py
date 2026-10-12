@@ -627,10 +627,10 @@ def fig_allreduce(df, out, fmts, results_dir, manifest_path=None):
     """Dual-node all-reduce microbenchmark: latency and bus bandwidth vs size.
 
     A transport diagnostic to compare with the TP=2 serving results. The
-    campaign used NCCL over TCP sockets, and the shaded band marks plausible
-    activation-sized payloads for the 8K-hidden Llama-70B sweep (c=1..128 at
-    bf16). This supports a correlation, not a causal decomposition: there is no
-    matched point-to-point pipeline-stage microbenchmark in the campaign.
+    campaign uses NCCL over RDMA by default, and the shaded band marks plausible
+    activation-sized payloads for the 8K-hidden sweep (c=1..128 at bf16). This
+    supports a correlation, not a causal decomposition: there is no matched
+    point-to-point pipeline-stage microbenchmark in the campaign.
     """
     paths = _resolve_allreduce_paths(results_dir, manifest_path)
     if not paths:
@@ -751,13 +751,14 @@ def fig_interconnect(out, fmts, results_dir):
     """Transport x collective interconnect comparison from the extra microbench.
 
     Reads scripts/interconnect_extra_bench.sh output (interconnect_extra_*.csv:
-    collective, transport, bytes, avg_s, ...). Overlays each transport (TCP vs
-    RoCE vs tuned sockets, by hue) and each collective (all-reduce = the TP=2
-    primitive, send/recv = the PP=2 primitive, by linestyle) on shared latency
-    and bandwidth panels, so the paper can show directly (a) whether RoCE moves
-    the plateau/floor the TP conclusion rests on, and (b) that PP's one p2p
-    hand-off is far cheaper than TP's per-layer all-reduce. Draws nothing when
-    no such CSV exists yet, so it is safe to call before the run.
+    collective, transport, bytes, avg_s, ...). Overlays each transport (RoCE by
+    default, TCP and tuned sockets as the fallback, by hue) and each collective
+    (all-reduce = the TP=2 primitive, send/recv = the PP=2 primitive, by
+    linestyle) on shared latency and bandwidth panels, so the paper can show
+    directly (a) whether RoCE moves the plateau/floor the TP conclusion rests
+    on, and (b) that PP's one p2p hand-off is far cheaper than TP's per-layer
+    all-reduce. Draws nothing when no such CSV exists yet, so it is safe to
+    call before the run.
     """
     paths = sorted(glob.glob(os.path.join(results_dir,
                                           "interconnect_extra_*.csv")))

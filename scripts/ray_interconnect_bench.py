@@ -80,7 +80,7 @@ def _transport_label() -> str:
     """
     import os
 
-    if os.environ.get("NCCL_IB_DISABLE", "1") == "0":
+    if os.environ.get("NCCL_IB_DISABLE", "0") == "0":
         return "roce"
     nsocks = int(os.environ.get("NCCL_NSOCKS_PERTHREAD", "1") or "1")
     nthreads = int(os.environ.get("NCCL_SOCKET_NTHREADS", "1") or "1")

@@ -6,15 +6,16 @@
 # PP's activation hand-off on the same link, and compare TCP sockets vs RoCE.
 #
 # Run on the head node with Ray up on BOTH nodes and NO model being served.
-# The transport is whatever Ray was started with; to compare, restart Ray on
-# both nodes under each setting and rerun (each CSV carries its own transport
-# column, so runs never overwrite each other):
+# The transport is whatever Ray was started with. RDMA is the default
+# (NCCL_IB_DISABLE=0 in connectx_env.sh). To measure the TCP-socket fallback,
+# restart Ray on both nodes with NCCL_IB_DISABLE=1 and rerun; each CSV
+# carries its own transport column, so runs never overwrite each other:
 #
 #   scripts/start_ray.sh head            # Hoedus: scripts/start_ray.sh worker
-#   scripts/interconnect_extra_bench.sh                      # -> transport=tcp
-#   # then, RoCE:
-#   NCCL_IB_DISABLE=0 scripts/start_ray.sh head   # and on Hoedus
 #   scripts/interconnect_extra_bench.sh                      # -> transport=roce
+#   # then, the TCP fallback:
+#   NCCL_IB_DISABLE=1 scripts/start_ray.sh head   # and on Hoedus
+#   scripts/interconnect_extra_bench.sh                      # -> transport=tcp
 #
 # Writes $OUT_DIR/interconnect_extra_<timestamp>.csv beside the serving results.
 set -euo pipefail
