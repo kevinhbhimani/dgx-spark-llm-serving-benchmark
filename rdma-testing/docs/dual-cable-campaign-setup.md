@@ -175,14 +175,14 @@ On Diya:
 ```bash
 export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
 export NCCL_IB_DISABLE=0
-bash rdma-testing/scripts/rdma-start-ray.sh head
+scripts/start_ray.sh head
 ```
 
 On Hoedus:
 ```bash
 export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
 export NCCL_IB_DISABLE=0
-bash rdma-testing/scripts/rdma-start-ray.sh worker
+scripts/start_ray.sh worker
 ```
 
 On Diya, verify:

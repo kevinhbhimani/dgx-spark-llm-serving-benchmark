@@ -1,0 +1,7 @@
+| Model | Config | HF weight (GiB) | HF KV (GiB) | Worker weight (GiB) | Worker KV (GiB) | KV tokens | GPU blocks | Block | KV dtype | GPU mem util | max_model_len | max conc. | Hybrid cache | KV token source | vLLM |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| nemotron-puzzle-75b-nvfp4 | Dual Spark, TP=2 | -- | -- | 23.0 | 71.5 | 6,240,640 | 5,971 | 6272 | fp8_e4m3 | 0.80 | 8,704 | 853.0 | yes | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| nemotron-super-49b-bf16 | Dual Spark, TP=2 | -- | -- | 46.5 | 47.6 | 508,624 | 31,789 | 16 | auto | 0.80 | 8,704 | 58.4 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+| nemotron-super-49b-nvfp4 | Dual Spark, TP=2 | -- | -- | 14.5 | 79.5 | 1,701,200 | 106,325 | 16 | fp8_e4m3 | 0.80 | 8,704 | 195.4 | no | vllm_startup_log | 0.19.0+6bc3197f.nv26.04.48680843 |
+
+HF weight/KV cache columns are optional full-model estimates. Worker weight/KV columns come from the vLLM startup log and describe the actual per-worker serving process when a server log was captured.

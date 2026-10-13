@@ -74,7 +74,7 @@ Verify the `kv_cache_quant_algo` field in each NVFP4 checkpoint's `hf_quant_conf
 
 ## RDMA
 
-Set `NCCL_IB_DISABLE=0` in the environment before starting Ray. `scripts/launch_server.sh` reads this variable. The `rdma-testing/scripts/rdma-start-ray.sh` wrapper sets it.
+Set `NCCL_IB_DISABLE=0` in the environment before starting Ray. `scripts/launch_server.sh` reads this variable.
 
 ## Revision pinning
 
