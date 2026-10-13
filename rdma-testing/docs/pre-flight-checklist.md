@@ -100,18 +100,20 @@ Four devices.
 
 Hoedus:
 ```bash
-cd rdma-testing/perftest-suite
-./perftest-suite.sh host --run-name dual-200Gb-Oct-8/run-001
+cd ~/fsaii/perftest-suite-dgx-spark-cluster
+./perftest-suite.sh host --run-name dual-200Gb-Oct-8/run-001 --modes isolation,concurrent
 ```
 
 Diya:
 ```bash
-cd rdma-testing/perftest-suite
-./perftest-suite.sh client --run-name dual-200Gb-Oct-8/run-001
+cd ~/fsaii/perftest-suite-dgx-spark-cluster
+./perftest-suite.sh client --run-name dual-200Gb-Oct-8/run-001 --modes isolation,concurrent
 ```
 
-Check `perftest-results/dual-200Gb-Oct-8/run-001/host/results.csv`. Every device
-near 200 Gbit/s (25 GB/s). `ib_write_lat` under 2 us.
+Check `perftest-results/dual-200Gb-Oct-8/run-001/host/results.csv`. Each device's
+isolation bandwidth should be a stable fraction of its `ibv_devinfo` link rate,
+and the concurrent aggregate should approach the sum of the isolation rates.
+`ib_write_lat` under 2 us.
 
 ## 9. NCCL all-reduce
 

@@ -400,7 +400,7 @@ and auto-discovery when that variable is empty. `CX_IFACE` also feeds the NCCL
 and Gloo socket interface lists and the serving fingerprint. The RDMA
 verification sequence lives in
 `rdma-testing/docs/dual-cable-campaign-setup.md`. The per-device RDMA perftest
-matrix runs from `rdma-testing/perftest-suite/`.
+matrix runs from the standalone `perftest-suite-dgx-spark-cluster` repository.
 
 ## Running Single-Node Benchmarks
 
