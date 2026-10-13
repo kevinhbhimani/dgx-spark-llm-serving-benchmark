@@ -9,8 +9,13 @@ This is the supplement to scripts/ray_allreduce_bench.py that the PMBS paper's
     boundary) -- so the paper can *measure* the PP interconnect cost instead of
     asserting it, and contrast it with the TP all-reduce cost on the same link.
 
-It also records the transport NCCL actually used, taken from the Ray workers'
-environment (NCCL_IB_DISABLE plus the socket-thread knobs). Transport is fixed
+It also records the transport NCCL actually used. The launch environment
+(NCCL_IB_DISABLE plus the socket-thread knobs) only says which transport was
+*requested*: NCCL_IB_DISABLE=0 permits RDMA but NCCL still falls back to
+sockets when the RoCE handshake fails, so a run can post TCP numbers under a
+"roce" label. To label rows by what actually carried the data, each worker
+enables NCCL_DEBUG=INFO for its own process and reads the per-channel
+"via NET/IB" / "via NET/Socket" lines from NCCL_DEBUG_FILE. Transport is fixed
 when the Ray workers are launched (scripts/start_ray.sh reads NCCL_IB_DISABLE),
 so this script does NOT override it -- it measures whatever the running cluster
 uses and labels the rows accordingly. To compare transports, restart Ray on
@@ -51,6 +56,14 @@ from ray.exceptions import GetTimeoutError
 SIZES = [1 << exponent for exponent in range(3, 31)]  # 8 B .. 1 GiB
 ITERS, WARMUP = 20, 5
 
+# NCCL INFO log markers naming the transport each channel used. The
+# per-channel lines are authoritative; the plugin-selection lines appear even
+# when the data path falls back to sockets, so they are only a fallback.
+_NCCL_IB_CHANNEL_MARKER = "via NET/IB"
+_NCCL_SOCKET_CHANNEL_MARKER = "via NET/Socket"
+_NCCL_IB_PLUGIN_MARKER = "NET/IB : Using"
+_NCCL_SOCKET_PLUGIN_MARKER = "NET/Socket : Using"
+
 
 def _gpu_processes() -> list[str]:
     """Return local compute processes without creating a CUDA context."""
@@ -70,23 +83,59 @@ def _gpu_processes() -> list[str]:
     return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
 
-def _transport_label() -> str:
-    """Name the transport from the worker's NCCL environment.
+def _socket_tuning_suffix() -> str:
+    """Return "-tuned-xN" when socket threading is raised above the default."""
+    import os
 
-    NCCL selects its network at communicator init from these variables, which
-    scripts/start_ray.sh bakes into the worker container, so reading them here
-    reports the transport this measurement actually ran on. Not a substitute
-    for an NCCL_DEBUG=INFO audit, but deterministic and enough to label rows.
+    nsocks = int(os.environ.get("NCCL_NSOCKS_PERTHREAD", "1") or "1")
+    nthreads = int(os.environ.get("NCCL_SOCKET_NTHREADS", "1") or "1")
+    return f"-tuned-x{nsocks * nthreads}" if nsocks * nthreads > 1 else ""
+
+
+def _env_transport_label() -> str:
+    """Name the transport the launch environment *requested* (fallback only).
+
+    scripts/start_ray.sh bakes NCCL_IB_DISABLE and the socket-thread knobs into
+    the worker container. These say which transport was asked for, not which
+    one NCCL settled on, so this is used only when the NCCL log is unavailable.
     """
     import os
 
     if os.environ.get("NCCL_IB_DISABLE", "0") == "0":
         return "roce"
-    nsocks = int(os.environ.get("NCCL_NSOCKS_PERTHREAD", "1") or "1")
-    nthreads = int(os.environ.get("NCCL_SOCKET_NTHREADS", "1") or "1")
-    if nsocks * nthreads > 1:
-        return f"tcp-tuned-x{nsocks * nthreads}"
-    return "tcp"
+    return f"tcp{_socket_tuning_suffix()}"
+
+
+def _transport_label(debug_path: str) -> str:
+    """Name the transport NCCL actually selected, from its INFO log.
+
+    NCCL_IB_DISABLE=0 only permits RDMA; NCCL still falls back to sockets when
+    the RoCE handshake fails, so a run can post TCP numbers while the launch
+    environment says RoCE. The per-channel lines record the transport each
+    channel really used, so they are the authority; the plugin-selection lines
+    are only a fallback because they appear even when the data path later falls
+    back to sockets. When the log is missing or inconclusive, fall back to the
+    launch environment and flag the label with a trailing "?" so the row is not
+    read as a verified transport.
+    """
+    try:
+        with open(debug_path, encoding="utf-8", errors="replace") as handle:
+            nccl_log = handle.read()
+    except OSError:
+        nccl_log = ""
+    if _NCCL_IB_CHANNEL_MARKER in nccl_log:
+        transport = "roce"
+    elif _NCCL_SOCKET_CHANNEL_MARKER in nccl_log:
+        transport = "tcp"
+    elif _NCCL_IB_PLUGIN_MARKER in nccl_log:
+        transport = "roce"
+    elif _NCCL_SOCKET_PLUGIN_MARKER in nccl_log:
+        transport = "tcp"
+    else:
+        return f"{_env_transport_label()}?"
+    if transport == "tcp":
+        return f"tcp{_socket_tuning_suffix()}"
+    return transport
 
 
 def _worker(rank, world, head_ip, iface, port, collective):
@@ -97,11 +146,20 @@ def _worker(rank, world, head_ip, iface, port, collective):
     os.environ["GLOO_SOCKET_IFNAME"] = iface
     # Do NOT force NCCL_IB_DISABLE here: the transport is whatever the Ray
     # worker was launched with, and overriding it per-process would mislabel
-    # the measurement. We only read it (via _transport_label) for the CSV.
+    # the measurement. Instead, log NCCL's own selection so the CSV reports the
+    # transport it actually used rather than the one the launch environment
+    # requested. NCCL_DEBUG only affects diagnostics, never transport selection,
+    # and is set on this process alone so serving containers keep the default.
+    debug_path = f"/tmp/nccl_transport_rank{rank}_{os.getpid()}.log"
+    os.environ["NCCL_DEBUG"] = "INFO"
+    os.environ["NCCL_DEBUG_FILE"] = debug_path
+    try:
+        os.remove(debug_path)
+    except OSError:
+        pass
     import torch
     import torch.distributed as dist
 
-    transport = _transport_label()
     initialized = False
     try:
         dist.init_process_group(
@@ -160,13 +218,15 @@ def _worker(rank, world, head_ip, iface, port, collective):
             else:
                 raise ValueError(f"unknown collective {collective!r}")
             results.append((size, avg, mn))
-        return transport, results
+        # NCCL selects its transport lazily, on the first collective, so read
+        # the log only after the sweep has actually moved data.
+        return _transport_label(debug_path), results
     finally:
         if initialized:
             dist.destroy_process_group()
 
 
-def _run(collective, head_ip, worker_ip, iface, port) -> list[tuple]:
+def _run(collective, head_ip, worker_ip, iface, port) -> tuple[str, list[tuple]]:
     remotes = []
     for rank, ip in enumerate([head_ip, worker_ip]):
         fn = ray.remote(
@@ -179,11 +239,17 @@ def _run(collective, head_ip, worker_ip, iface, port) -> list[tuple]:
         for ref in remotes:
             ray.cancel(ref, force=True)
         raise SystemExit(f"[microbench] {collective} tasks timed out after 1800s")
-    transport = all_results[0][0]
     for _, rank_results in all_results:
         if [row[0] for row in rank_results] != SIZES:
             raise SystemExit(
                 f"[microbench] a rank returned an incomplete {collective} sweep")
+    labels = [result[0] for result in all_results]
+    verified = sorted({label for label in labels if not label.endswith("?")})
+    if len(verified) > 1:
+        sys.stderr.write(
+            f"[microbench] ranks disagree on transport: {verified}\n")
+    # Prefer a log-verified label over an environment-only fallback.
+    transport = verified[0] if verified else min(labels)
     return transport, all_results[0][1]
 
 

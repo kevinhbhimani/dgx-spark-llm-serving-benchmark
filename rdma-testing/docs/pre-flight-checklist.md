@@ -131,12 +131,12 @@ Rerun step 9 after exporting.
 
 Diya:
 ```bash
-bash rdma-testing/scripts/rdma-start-ray.sh head
+scripts/start_ray.sh head
 ```
 
 Hoedus:
 ```bash
-bash rdma-testing/scripts/rdma-start-ray.sh worker
+scripts/start_ray.sh worker
 ```
 
 Diya, verify:
