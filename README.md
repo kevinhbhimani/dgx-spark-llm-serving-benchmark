@@ -50,9 +50,10 @@ OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
 
 Plan mode performs no hardware operations. It checks the isolated environment,
 campaign options, model/config matrix, revisions, workload bounds, and expected
-result rectangle. The shipped matrix is 23 model/config combinations times 8
-concurrencies times `FULL_REPEATS` (default 1), or exactly 184 measurement rows
-per complete pass; `FULL_REPEATS=3` yields the full 552-row spread matrix.
+result rectangle. The shipped matrix is 23 checkpoints in 63 model/config
+curves times 8 concurrencies times `REPEATS=3` independent replicates: 189
+server launches and 1512 measurement windows (see
+[Replicates and statistics](#replicates-and-statistics)).
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
    Spark node, run this in one terminal:
@@ -92,14 +93,18 @@ python -m bench.run_benchmark \
 `configs/smoke.yaml` is intentionally small and tokenizer-free. It is for
 checking connectivity and output files, not for paper-quality measurements.
 
-5. Run a real single-node sweep:
+5. Run a real single-node sweep for one model (the full campaign does this
+   per model automatically and deletes the weights afterwards; see
+   [Final unattended campaign](#final-unattended-campaign)):
 
 ```bash
+export MODEL_LABELS=llama3.1-8b
 scripts/predownload.sh single
 CHECK_ONLY=1 scripts/predownload.sh single
 CANARY_ONLY=1 scripts/run_models.sh single
-CONCURRENCIES="1 2 4 8 16 32 64 128" \
+CONCURRENCIES="1 2 4 8 16 32 64 128" REPEATS=1 \
 scripts/run_models.sh single
+MODEL_LABELS=llama3.1-8b scripts/purge_model_cache.sh
 ```
 
 The full config requires cryptographic launch provenance. Use
@@ -131,6 +136,7 @@ configs/
   smoke.yaml       short connectivity test
   experiment.yaml  default full benchmark settings
   models.yaml      model matrix for the multi-model sweep
+baselines/         earlier campaigns kept for comparison (see baselines/README.md)
 scripts/
   check_environment.py         validate the isolated, fully locked client
   validate_campaign.py         plan/verify the exact publication result grid
@@ -142,13 +148,24 @@ scripts/
   launch_server.sh            start vLLM in single, tp2, or pp2 mode
   interconnect_microbench.sh  nccl-tests all-reduce check
   ray_allreduce_bench.sh      no-SSH Ray/NCCL all-reduce check
+  interconnect_extra_bench.sh no-SSH all-reduce + send/recv microbench
   run_all.sh                  sweep a concurrency list for one config
   run_models.sh               pinned multi-model launch/canary/sweep wrapper
-  run_job.sh                  resumable unattended full campaign
+  run_job.sh                  resumable unattended campaign, one model at a time
+  campaign_schedule.py        per-model replicate schedule for run_job.sh
   models_for_config.py        select models.yaml entries for a serving config
+  predownload.sh              fetch pinned snapshots into the head cache
+  hf_snapshot_size.py         exact bytes a pinned snapshot still needs
+  mirror_worker_cache.sh      copy pinned snapshots to the worker over Ray
+  purge_model_cache.sh        delete finished models from both caches
+  variance_report.py          replicate statistics and pairwise Welch intervals
+  audit_nccl_transport.py     which NCCL transport each dual launch used
+  compare_campaigns.py        compare a campaign with a baseline index
+  pack_raw.sh                 archive raw telemetry for storage outside git
 plotting/
   plot_results.py             generate PDF/PNG figures from results/index.csv
   plot_trends.py              cross-model trend figures from a multi-model index
+  plot_paper.py               PMBS26 paper figure set
 tests/                        standard-library regression tests for release paths
 requirements.txt              Python client and plotting dependencies
 requirements.lock             exact direct and transitive release environment
@@ -173,9 +190,11 @@ Server-side requirements for the included scripts:
 
 - Docker with NVIDIA GPU runtime support.
 - Permission to run `docker` as the current user.
-- The validated vLLM container image. The launcher defaults to the immutable
-  `26.04-py3` digest recorded in `scripts/connectx_env.sh`; do not replace it
-  with a mutable monthly tag during a comparable sweep.
+- The vLLM container image. The launcher defaults to the immutable NGC
+  `26.09-py3` digest (vLLM 0.29.0) recorded in `scripts/connectx_env.sh`; do
+  not replace it with a mutable monthly tag during a comparable sweep. The
+  baselines used `26.04-py3` (vLLM 0.19.0), which is too old for several
+  checkpoints in the current matrix.
 - Hugging Face access for the selected model, usually through `HF_TOKEN`.
 - For dual-node runs: working name resolution or IP configuration for both
   nodes, a ConnectX interface, and matching access to the vLLM image on both
@@ -240,6 +259,14 @@ fields:
   load continues until every request started in the measurement window has
   finished; only the remaining replacement requests then drain. The summary
   records the actual boundary extensions.
+- `min_window_requests`, `window_extension_step_s`, `max_measure_s`: the
+  minimum-sample stopping rule (closed loop only; `0` disables it). With it,
+  `measure_s` is the minimum window: while fewer than `min_window_requests`
+  requests have started inside it, the window end moves out in
+  `window_extension_step_s` steps, never past `max_measure_s`. The rule looks
+  only at how many requests started, never at their latency, so it does not
+  bias the percentiles. The index records `configured_measure_s` and
+  `measure_extension_s` beside the actual `measure_s`.
 - `request_timeout_s`: per-request HTTP timeout, including queueing and stream
   drain. Keep it well above the worst-case E2E at the highest load in the
   sweep, or slow-but-successful requests are counted as failures; the shipped
@@ -281,7 +308,7 @@ fields:
 - `out_dir`: output directory, default `results`.
 - `run_note`: free-form note preserved in the resolved configuration block.
 
-Each full result records methodology `steady-exact-v3`, the YAML and harness
+Each full result records methodology `steady-exact-v4`, the YAML and harness
 hashes, the git commit, model/tokenizer revisions, a serving-policy
 fingerprint, an experiment fingerprint, and the independent `repeat_id`.
 These fields prevent rows produced by different code, launch settings, or
@@ -335,7 +362,7 @@ export MAXLEN=8704
 # export TOKENIZER=Qwen/Qwen3-8B
 # export TOKENIZER_REVISION="$REVISION"
 # export TRUST_REMOTE_CODE=1
-export VLLM_IMAGE=nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27
+export VLLM_IMAGE=nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2
 export VLLM_CONTAINER=vllm-spark
 export HF_TOKEN=...
 export HF_CACHE=$HOME/.cache/huggingface
@@ -349,6 +376,10 @@ export HF_CACHE=$HOME/.cache/huggingface
 # export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
 # export NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
 # export NCCL_IB_DISABLE=1   # TCP-socket fallback
+# Per-channel transport evidence in every dual-node server log (set by
+# rdma-dual-cable.env; read by run_models.sh and audit_nccl_transport.py).
+# export NCCL_DEBUG=INFO
+# export NCCL_DEBUG_SUBSYS=INIT,NET
 # Offline serving is the default; predownload exact revisions before launching.
 export HF_HUB_OFFLINE=1
 export BASE_URL=http://127.0.0.1:8000
@@ -361,6 +392,8 @@ export REPEATS="${REPEATS:-3}"
 # export POWER_BACKEND=nvidia_smi
 export MODELS_YAML=configs/models.yaml
 export READY_TIMEOUT=1800
+# Installed into the Ray containers by start_ray.sh. Re-check it against the
+# vLLM release inside VLLM_IMAGE whenever the image changes.
 export RAY_VERSION=2.53.0
 # Work around a serialization failure in the pinned PyTorch build's
 # AOTAutograd disk cache while leaving graph compilation itself enabled.
@@ -527,9 +560,12 @@ DROP_CACHES=1 scripts/start_ray.sh worker
 ```
 
 Before the first dual launch, fetch and validate the pinned snapshots on the
-head and mirror them to the worker's independent cache:
+head and mirror them to the worker's independent cache. The whole matrix is
+~1.44 TB, so select models with `MODEL_LABELS` (the campaign does this one
+model at a time and purges each afterwards):
 
 ```bash
+export MODEL_LABELS="llama3.1-8b"
 scripts/predownload.sh all
 CHECK_ONLY=1 scripts/predownload.sh all
 scripts/mirror_worker_cache.sh all
@@ -672,6 +708,14 @@ CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed lau
 CANARY_ONLY=1 scripts/run_models.sh pp2
 scripts/run_models.sh tp2
 scripts/run_models.sh pp2
+# Single-node serving inside the running Ray head container, so the cluster
+# survives (the default "standalone" replaces the Ray head container).
+SINGLE_CONTAINER=ray scripts/run_models.sh single
+# One replicate on a fresh launch, and a status query that launches nothing.
+REPEATS=3 ONLY_REPEAT=2 MODEL_LABELS=llama3.1-8b scripts/run_models.sh tp2 --skip-done
+STATUS_ONLY=1 REPEATS=3 MODEL_LABELS=llama3.1-8b scripts/run_models.sh tp2
+# Free the disk once a model is done (both nodes; DRY_RUN=1 to preview).
+MODEL_LABELS=llama3.1-8b scripts/purge_model_cache.sh
 scripts/start_ray.sh stop                      # on each node when finished
 
 # Rerun a sweep that failed partway without repeating finished work. Consults
@@ -688,9 +732,9 @@ scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
 fingerprinted benchmark paths (`bench`, `configs`, `scripts`,
-`plotting/plot_results.py`, and the requirements files). Choose a fresh output directory
-for methodology `steady-exact-v3`; do not copy rows from an earlier
-methodology or checkout into it.
+`plotting/plot_results.py`, and the requirements files). Use a fresh output
+directory for methodology `steady-exact-v4`; earlier campaigns live under
+`baselines/` and are never resumed into.
 
 With the locked virtual environment active, run the hardware-free plan first:
 
@@ -700,43 +744,62 @@ export OUT_DIR=results
 PLAN_ONLY=1 scripts/run_job.sh
 ```
 
-The default plan must report 23 model/config combinations, 8 concurrencies,
-and 1 repeat: 184 rows. At the configured 30-minute minimum phase duration,
-that is at least 92 sequential point-hours (about 4 days), before model
-launches and automatic boundary extensions. With 7 single-node and 16 dual-node
-model/config combinations, it represents at least 156 GB10-hours of accelerator
-use per pass; this is not “92 GPU-hours.” Extending to the full three-repeat
-matrix (`FULL_REPEATS=3`, 552 rows) triples those figures to 276 sequential
-point-hours (11.5 days) and 468 GB10-hours. Budget additional time for
-canaries, model loads, cache work, all-reduce validation, and slow requests
-that extend phase boundaries. Then start Ray on Diya and Hoedus as shown above
-and run this on Diya inside `tmux`, using the same `OUT_DIR`:
+The default plan reports 23 model groups, 189 server launches (63
+model/config curves x 3 replicates), and 1512 measurement windows (x 8
+concurrencies). At the configured 750 s minimum per window that is ~315
+sequential hours before automatic extensions; with the extensions seen in the
+baselines (~4 min mean per window) expect ~410 h of measurement (about 17
+days), plus ~16 h of model launches, plus downloads. Of the 1512 windows, 1080
+use two GB10s, so the campaign is at least ~540 GB10-hours of accelerator use;
+this is not "315 GPU-hours." Then start Ray on Diya and Hoedus (sourcing `rdma-dual-cable.env`
+on both) and run this on Diya inside `tmux`, using the same `OUT_DIR`:
 
 ```bash
+source rdma-dual-cable.env
 scripts/run_job.sh
 ```
 
 The job revalidates the clean commit and locked Python environment, records
-`client_environment.json`, validates both caches and the two-node runtime,
-records a successful no-SSH Ray all-reduce microbenchmark atomically, runs every
-TP2 and PP2 launch canary, performs the dual sweeps at `FULL_REPEATS`, and runs
-single-node last (because single mode replaces the Ray head container). A paper
-point is published only with zero failed requests, at least 20 successful
-requests, complete required power coverage, and complete unambiguous vLLM
-metric series. Power and metric samplers must also pass a live preflight before
-the long measurement window starts.
+`client_environment.json`, checks the Ray cluster, idle GPUs, and two-node
+runtime identity, and records the Ray all-reduce gate and the send/recv
+microbenchmark while the GPUs are idle. It then works through
+`configs/models.yaml` one model at a time:
 
-Every sweep leg uses `--skip-done`, so rerunning the same command fills only
-compatible gaps. Resume is deliberately strict: if an existing row for the
-same model/config comes from a different methodology, config, source, client
-environment, or serving policy, the sweep fails before another expensive point
-and tells you to choose a fresh `OUT_DIR`.
+1. **fetch** the pinned snapshot into the head cache (only if it is not
+   already complete), after an exact disk-space check;
+2. **mirror** it to the worker cache if the model runs tp2/pp2;
+3. **measure** every config it lists in 3 replicates, rotating the config
+   order between replicates (see below);
+4. **purge** the snapshot, and vLLM's compile cache, from both nodes.
 
-`REPEAT_CONCS` is empty by default. Publication results may only add complete
-rectangles: when requesting more repeats, set `REPEAT_CONCS` to the same full
-set as `CONCURRENCIES` and set `REPEAT_TOTAL` greater than `FULL_REPEATS`.
-Partial-concurrency extra repeats are rejected because they would create an
-unbalanced paper matrix.
+Peak cache use is therefore the largest single model (~163 GB for Qwen3-Next
+80B BF16), not the whole matrix (~1.44 TB). `PURGE_WEIGHTS=0` keeps everything.
+Single-node launches run inside the Ray head container
+(`SINGLE_CONTAINER=ray`), so the cluster survives them and the old
+"single last" ordering is gone.
+
+Before the first measurement, a **canary pass** fetches each model, launches
+it once under every config with the strict stream contract and the client
+tokenizer preflight, and purges it again. It collects every failure and stops
+the job before any measurement if one failed, so an unsupported architecture or
+an image problem shows up within hours, not on day 10. The pass costs one extra
+download of the matrix plus 63 launches, and it is skipped automatically once
+it has succeeded for the same commit, matrix, image, and network policy.
+`STOP_AFTER_CANARY=1 scripts/run_job.sh` runs only the canary pass, which is
+the right first step after changing the image or `models.yaml`.
+`ALLOW_CANARY_FAILURES=1` measures the models that passed.
+
+A paper point is published only with zero failed requests, at least 20
+successful requests, complete required power coverage, and complete unambiguous
+vLLM metric series. Power and metric samplers must also pass a live preflight
+before the long measurement window starts.
+
+Every measurement call uses `--skip-done`, so rerunning the same command fills
+only compatible gaps. A model whose replicates are all complete is skipped
+without being downloaded again. Resume is deliberately strict: if an existing
+row for the same model/config comes from a different methodology, config,
+source, client environment, or serving policy, the sweep fails before another
+expensive point and tells you to choose a fresh `OUT_DIR`.
 
 Run only one campaign against this physical head/container pair at a time. The
 orchestrators take a nonblocking campaign lock and fail if another sweep or
@@ -744,27 +807,16 @@ all-reduce job is already active. Keep the committed source and YAML unchanged
 until the campaign is complete.
 
 `scripts/predownload.sh` uses the same pinned image, cache mount, model ids, and
-revisions as serving. It queries every unique repo's size from the HF API in a
-prefetch phase before downloading, and exits on an API failure before the first
-download. `CHECK_ONLY=1` uses Hugging Face local-only resolution and fails on a
-missing or partial snapshot; it never substitutes a newer cached revision.
-Because each dual node has its own cache, mirror the checked head cache before
-the dual canary. `CANARY_ONLY=1` performs the full launch and strict SSE
-contract probe for every selected model, including the on-the-fly FP8 and
-distributed paths, but writes no benchmark points.
-
-All runs append to one `OUT_DIR/index.csv` tagged by `model_label`, so a single
-plotting invocation compares across models (see Outputs). The benchmark also
-refuses an index whose header does not exactly match the current schema. Keep
-pre-`steady-exact-v3` results in separate directories and never copy their rows
-into the new index. Set `OUT_DIR=results` consistently for
-canaries, policies, server logs, all three serving configs, validation, and
-plotting.
+revisions as serving. It sizes each pinned revision from the Hub's per-file
+listing (`scripts/hf_snapshot_size.py`), net of blobs already in the cache, and
+exits on an API failure before the first download. `CHECK_ONLY=1` uses Hugging
+Face local-only resolution and fails on a missing or partial snapshot; it never
+substitutes a newer cached revision. `MODEL_LABELS` restricts predownload,
+mirror, purge, and `run_models.sh` to the listed labels.
 
 `run_job.sh` verifies the exact rectangle before plotting and again afterward,
 when it atomically writes the final artifact manifest. To repeat that final
-fail-closed check explicitly, pass the campaign's final repeat count
-(`FULL_REPEATS`, or `REPEAT_TOTAL` when a repeat rectangle was added):
+fail-closed check explicitly:
 
 ```bash
 python scripts/validate_campaign.py verify \
@@ -772,7 +824,7 @@ python scripts/validate_campaign.py verify \
   --experiment configs/experiment.yaml \
   --out-dir "$OUT_DIR" \
   --concurrencies 1 2 4 8 16 32 64 128 \
-  --repeats 1 \
+  --repeats 3 \
   --manifest "$OUT_DIR/campaign_manifest.json"
 ```
 
@@ -781,11 +833,21 @@ indexed artifact sizes and SHA-256 digests, provenance consistency, request and
 observability quality, server logs/policies, and the dual-node all-reduce CSV.
 It also seals configs, trace (when used), dependency locks, benchmark/plot
 source, client environment, raw data, telemetry, summaries, logs, policies,
-all-reduce data, index, and figures into `campaign_manifest.json`.
+all-reduce data, index, and figures into `campaign_manifest.json`. Run it on
+the head node: raw telemetry and server logs are not in git (see
+[Raw data and the repository](#raw-data-and-the-repository)).
+
+Campaign knobs for `run_job.sh`: `OUT_DIR`, `CONCURRENCIES`, `REPEATS`
+(default 3), `CANARY_FIRST` (`auto`, `0`, `1`), `STOP_AFTER_CANARY`,
+`ALLOW_CANARY_FAILURES`, `PURGE_WEIGHTS`, and the subset selectors
+`CAMPAIGN_LABELS` and `CAMPAIGN_CONFIGS`. The old `FULL_REPEATS`,
+`REPEAT_CONCS`, and `REPEAT_TOTAL` knobs are rejected rather than silently
+ignored.
 
 Key environment variables for the multi-model wrapper: `MODELS_YAML` (default
 `configs/models.yaml`), `OUT_DIR`, `BASE_URL`, `POWER_BACKEND`,
-`CONCURRENCIES`, `CONFIG_YAML`, `REPEATS` (default `3`), `CANARY_ONLY`, and
+`CONCURRENCIES`, `CONFIG_YAML`, `REPEATS` (default `3`), `ONLY_REPEAT`,
+`STATUS_ONLY`, `SINGLE_CONTAINER`, `CANARY_ONLY`, `MODEL_LABELS`, and
 `READY_TIMEOUT` (seconds to wait for a model to load, default `1800`).
 `PROBE_TIMEOUT` bounds the two-token streaming canary (default `600`), and
 `CACHE_PREFLIGHT=1` is the default; do not disable that local revision check for
@@ -796,6 +858,109 @@ the ConnectX host/interface settings. The wrapper clears model-specific launch
 overrides before applying each matrix entry, so an unrelated `QUANT`,
 `TOKENIZER`, or `TRUST_REMOTE_CODE` value in `.env` cannot leak into the next
 model.
+
+### Replicates and statistics
+
+The PMBS26 campaign measured each point once, in a 1500 s window, and later
+repeated five points chosen after looking at their margins. That cannot
+support a campaign-wide noise floor, and selecting points by their observed
+margins biases the answer. The v4 design replicates everything instead:
+
+- **Unit of replication.** A replicate is one fresh server launch plus a
+  complete ascending concurrency sweep. Back-to-back windows on one server
+  miss launch-to-launch variance (KV capacity after memory profiling,
+  allocator and compile state, cluster setup), and every single-vs-tp2-vs-pp2
+  comparison spans different launches, so its margin has to beat exactly that
+  variance.
+- **Three replicates per point**, for every model, config, and concurrency:
+  the minimum that gives a variance estimate, and the old variance study's CVs
+  (0.2-6.5%) make it sufficient for the margins the paper reports.
+- **Interleaved, counterbalanced order.** Within a model, replicate r runs
+  the configs rotated by r-1 (r1: single tp2 pp2, r2: tp2 pp2 single,
+  r3: pp2 single tp2), so each config occupies each position once and slow
+  drift cannot favour one of them. All replicates of a model run in one
+  contiguous block between its download and its purge.
+- **Shorter windows, same rigor.** Each replicate's window is a 600 s minimum
+  (the MLPerf Inference minimum duration) that keeps extending in 60 s steps
+  until at least 20 requests have started in it, capped at 3600 s. Three 600 s
+  windows measure more, and more independently, than one 1500 s window, and
+  cost only ~1.45x the single-repeat campaign rather than 3x.
+- **Pre-registered analysis.** Figures plot the replicate mean with its min-max
+  band; tables print mean ± the 95% Student-t half-width;
+  `scripts/variance_report.py` writes per-point CV/CI and a Welch interval for
+  every pairwise config margin at every concurrency to
+  `OUT_DIR/figs/stats/`. A claim that one config beats another needs its Welch
+  interval to exclude zero. These are per-comparison intervals, not
+  family-wise corrected.
+
+`measure_s: 300` in `configs/experiment.yaml` brings the cost back to the
+single-repeat level, at the price of noisier p99 values at mid load.
+
+### Raw data and the repository
+
+Raw telemetry (`*.raw.jsonl`, `*.power.jsonl`, `*.vllm_metrics.jsonl`) is
+~14 MB per measurement window, ~16 GB for a full replicated campaign, so
+`.gitignore` keeps it, the server logs, and the job logs out of git. Commit
+`index.csv`, `*.summary.json`, the `serving_policy_*.json` files, the
+interconnect CSVs, `client_environment.json`, `campaign_manifest.json`, and
+`figs/`. Archive the raw data outside the repository:
+
+```bash
+scripts/pack_raw.sh results          # -> ../dgx-spark-raw/results-raw-<date>.tar.zst
+```
+
+The archive ships a `SHA256SUMS` file; extracting it back into the result
+directory restores everything `validate_campaign.py verify` hashes. Raw files
+that were committed before this policy (under `baselines/`) remain tracked.
+
+### Baselines and comparisons
+
+`baselines/` holds the PMBS26 TCP campaign, its variance subset, and the
+October RDMA pilot; `baselines/README.md` documents each one, and the git tag
+`pre-rdma-campaign-2026-10-15` pins them at their original paths. Two sets of
+models overlap under the same labels and revisions, and `run_job.sh` compares
+both with `scripts/compare_campaigns.py`:
+
+- the Llama 3.1 8B ladder and Nemotron 3 Super NVFP4, against the PMBS26 TCP
+  baseline (`figs/stats/compare_vs_pmbs26_tcp.md`): transport and software
+  changed together;
+- the six RDMA-pilot checkpoints (Nemotron Super 49B, Nemotron Puzzle 75B,
+  Qwen3-Next 80B, each NVFP4 and BF16), against the pilot
+  (`figs/stats/compare_vs_rdma_pilot.md`): same transport and cabling, so the
+  difference isolates the image, window, and replicate changes.
+
+The pilot's rows are not merged into the new index: they are single-repeat
+`steady-exact-v3` rows, so those six checkpoints are re-measured from scratch
+with replicates.
+
+### Transport evidence and the TCP ablation
+
+`NCCL_IB_DISABLE=0` only permits RDMA; NCCL falls back to sockets silently
+when the RoCE handshake fails. With `NCCL_DEBUG=INFO` and
+`NCCL_DEBUG_SUBSYS=INIT,NET` on both Ray containers (`rdma-dual-cable.env`),
+NCCL logs the transport of every channel into the server log.
+`run_models.sh` fails a dual launch whose log shows the wrong transport, and
+`scripts/audit_nccl_transport.py` writes a per-launch table (RDMA devices,
+GPUDirect RDMA channels, verdict) to `figs/stats/nccl_transport_audit.md`.
+
+To attribute differences to RDMA alone, rerun a pre-registered subset over TCP
+with the same image and harness, into its own directory. The most
+transport-sensitive cases are small dense models (all-reduce latency is a
+large share of their per-token time) and the overlap with the PMBS26 baseline:
+
+```bash
+# On both nodes: restart Ray with the TCP fallback.
+scripts/start_ray.sh stop
+NCCL_IB_DISABLE=1 scripts/start_ray.sh head        # Hoedus: ... worker
+# On Diya: same harness, TCP all-reduce thresholds, subset of the matrix.
+NCCL_IB_DISABLE=1 ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8 ALLREDUCE_MAX_8B_LATENCY_S=0.005 \
+  OUT_DIR=results-tcp-ablation \
+  CAMPAIGN_LABELS="llama3.1-8b nemotron3-super-120b-a12b-nvfp4" \
+  CAMPAIGN_CONFIGS="tp2 pp2" scripts/run_job.sh
+```
+
+That subset is 12 launches and 96 windows (~1.5 days). Finalization runs with
+`--completed-only` for subsets.
 
 ## Workloads And Traces
 
@@ -872,10 +1037,13 @@ Every measurement point writes these files under `out_dir`:
 
 Campaign-level files in `OUT_DIR` include immutable `serving_policy_*.json`
 launch records, unique `server_*.log` files, the fingerprinted
-`allreduce_ray_*.csv`, `client_environment.json`, figures and tables under
-`OUT_DIR/figs/`, and the final `campaign_manifest.json`. The manifest is the
+`allreduce_ray_*.csv`, the `interconnect_extra_*.csv` send/recv benchmark,
+`client_environment.json`, figures and tables under `OUT_DIR/figs/` (replicate
+statistics, the NCCL transport audit, and baseline comparisons under
+`figs/stats/`), and the final `campaign_manifest.json`. The manifest is the
 paper bundle's integrity inventory; rerun the verifier after any intentional
-figure regeneration.
+figure regeneration. Raw telemetry and logs stay out of git; see
+[Raw data and the repository](#raw-data-and-the-repository).
 
 When several models were run into one `index.csv` (see Benchmarking Multiple
 Models), `plot_results.py` writes a cross-model `model_comparison` figure and a
@@ -1095,15 +1263,17 @@ Guidance:
   running, so the shipped `120` seconds cannot open the window in the middle of
   a slow first wave: at high concurrency on the slowest models the first-wave
   rule stretches warmup to the worst request lifetime automatically.
-- Set `measure_s` long enough for each *repeat* to back the percentile you will
-  report. The shipped full-run window is `1500` seconds (25 minutes), a budget
-  compromise that backs p50/p90 at every point but leaves the slowest c=1
-  points with ~30-50 completions, below the 100-sample p99 target; the plots
-  flag those p99 points as low-n instead of reporting them as reliable.
+- Treat `measure_s` as the minimum window and let `min_window_requests` size
+  the slow points. The shipped `600` seconds with a 20-request floor backs
+  p50/p90 in every replicate: a slow c=1 point extends in 60 s steps (up to
+  `3600` s) instead of reporting a median from a handful of requests. p99 at
+  the slowest low-load points stays below the 100-sample target per replicate;
+  the plots flag those points as low-n instead of reporting them as reliable.
   Inspect the plotter's per-copy sample warnings after the run.
-- Treat `cooldown_s` as a minimum (shipped `180`). If a measurement-started
+- Treat `cooldown_s` as a minimum (shipped `30`). If a measurement-started
   request remains active, the harness keeps replacement load running until it
-  finishes, preventing drain-down bias without guessing the worst lifetime.
+  finishes, preventing drain-down bias without guessing the worst lifetime, so
+  a long minimum cooldown only adds wall time.
 - Keep `request_timeout_s` above the worst queue-plus-stream lifetime. The
   shipped `14400` seconds gives measurement-started requests room to finish
   under severe backlog instead of converting slow successes into client
@@ -1111,10 +1281,12 @@ Guidance:
 - Aim for at least 20 started-in-window requests for medians and at least 100
   for p99; these are the plotting defaults. Prefer many more at loads you will
   quote.
-- Keep the window consistent across a sweep and across configs you compare.
-  `plot_results.py` still plots mixed-window sweeps but flags them.
-- Run `REPEATS=3` (or rerun the sweep) at least for the points you will quote,
-  so the figures carry run-to-run spread instead of a single sample.
+- Keep the configured window consistent across a sweep and across configs you
+  compare. Points extended by the minimum-sample rule share the configured
+  window and are listed in the plotter's data-quality report.
+- Replicate every point on separate launches (`REPEATS=3`, the campaign
+  default) rather than lengthening one window: see
+  [Replicates and statistics](#replicates-and-statistics).
 
 ## Power Telemetry
 
@@ -1293,6 +1465,28 @@ non-paper diagnostic run.
   an older `index.csv` row was likely missing a trailing newline before another
   run appended, concatenating two rows. New runs guard against this; split the
   concatenated row or start a fresh `OUT_DIR`.
+- The canary pass stops the job: every failure is listed at the end of the
+  pass. Fix the entry or image (a model card's minimum vLLM version is the
+  usual cause), commit, and rerun; the marker `OUT_DIR/.canary_passed` makes
+  later runs skip a pass that already succeeded. `ALLOW_CANARY_FAILURES=1`
+  measures the models that passed.
+- `client tokenizer preflight failed`: the pinned client `transformers`
+  cannot load that model's tokenizer offline. The launch is skipped before any
+  GPU time; check `trust_remote_code` for the entry and that the snapshot is
+  complete (`CHECK_ONLY=1 scripts/predownload.sh`).
+- `NCCL used NET/Socket ... although NCCL_IB_DISABLE=0`: the RoCE handshake
+  failed and NCCL fell back to TCP, so the launch was refused rather than
+  measured as RDMA. Check `ibdev2netdev` on both nodes and the
+  `NET/IB : Using` line in the server log, then restart Ray. A warning about
+  missing NCCL channel lines means Ray was started without `NCCL_DEBUG=INFO`
+  (source `rdma-dual-cable.env` on both nodes before `start_ray.sh`).
+- `purge` refuses with `serving processes still running`: a vLLM server or
+  Ray serving worker is still alive on that node. Stop it
+  (`docker exec vllm-spark pkill -f 'vllm serve'`) and rerun
+  `MODEL_LABELS=... scripts/purge_model_cache.sh`.
+- `predownload` reports too little space: it reserves the exact remaining
+  bytes of the pinned snapshot plus an OS buffer. Purge finished models, or
+  point `HF_CACHE` at a larger drive.
 
 ## Development Checks
 
@@ -1302,7 +1496,8 @@ Useful checks after editing the repository:
 export PYTHONNOUSERSITE=1
 python scripts/check_environment.py
 OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
-python -m compileall bench plotting/plot_results.py plotting/plot_trends.py scripts/models_for_config.py
+python -m compileall bench plotting scripts
+python -m unittest discover -s tests -v
 bash -n scripts/*.sh
 python -m pip check
 python scripts/models_for_config.py configs/models.yaml single
@@ -1312,11 +1507,25 @@ python plotting/plot_results.py --index results/index.csv --out /tmp/dgx-spark-f
 `shellcheck` and `ruff` are not required by the repository, but they are good
 extra checks if installed locally.
 
-## PMBS26 Mapping Checklist
+## Paper Mapping Checklist
 
-- Section 5.1 single Spark: run the `single` closed-loop concurrency sweep.
-- Sections 5.2 and 5.3 dual Spark: run `tp2` and `pp2` sweeps with the same
-  model, tokenizer, workload, SLO, and measurement window.
+- Single Spark: run the `single` closed-loop concurrency sweep.
+- Dual Spark: run `tp2` and `pp2` sweeps with the same model, tokenizer,
+  workload, SLO, and measurement window.
+- Uncertainty: every number comes from 3 independent launches. Quote means
+  with the 95% intervals from `figs/stats/replicate_stats.md`, and claim an
+  ordering between configs only where its Welch interval excludes zero.
+- RDMA evidence: cite the all-reduce and send/recv microbenchmarks
+  (`allreduce_ray_*.csv`, `interconnect_extra_*.csv`) and the per-launch
+  transport audit (`figs/stats/nccl_transport_audit.md`: transport, RDMA
+  devices, GPUDirect RDMA channels for every dual-node launch).
+- RDMA vs TCP: report the transport ablation (same image and harness, see
+  [Transport evidence and the TCP ablation](#transport-evidence-and-the-tcp-ablation)),
+  not only the comparison with the PMBS26 campaign, which also changed
+  software.
+- Precision ladders: state the KV-cache dtype per checkpoint (index column
+  `kv_cache_dtype`). ModelOpt FP8/NVFP4 checkpoints serve an FP8 KV cache;
+  BF16 and Qwen's FP8 checkpoints keep BF16, so a ladder step changes both.
 - Multiple models: list them in `configs/models.yaml` and drive them with
   `scripts/run_models.sh <config>` (see Benchmarking Multiple Models). Report the
   cross-model `model_comparison` figure and `capacity_table` from

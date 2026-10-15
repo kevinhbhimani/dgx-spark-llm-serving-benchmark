@@ -36,6 +36,7 @@ RAY_SETUP="pip install -q 'ray[default]==$RAY_VERSION'"
 docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --device=/dev/infiniband --cap-add=IPC_LOCK --ulimit memlock=-1:-1
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
+  -e NCCL_DEBUG_SUBSYS="$NCCL_DEBUG_SUBSYS"
   -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
   -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
   -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE"

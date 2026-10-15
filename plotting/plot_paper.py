@@ -37,8 +37,14 @@ Usage:
     python plotting/plot_paper.py                       # results/index.csv -> figs/paper
     python plotting/plot_paper.py --index results/index.csv --out figs/paper
     python plotting/plot_paper.py --sans                # keep the sans font
-    python plotting/plot_paper.py --index results-rdma/index.csv \
-        --out results-rdma/figs/paper --sweeps-only     # RDMA campaign set
+    python plotting/plot_paper.py --index baselines/pmbs26-tcp/index.csv \
+        --out figs/pmbs26 \
+        --variance-index baselines/pmbs26-tcp-variance/index.csv  # PMBS26 set
+    python plotting/plot_paper.py --index baselines/rdma-pilot-2026-10/index.csv \
+        --out figs/rdma-pilot --sweeps-only            # RDMA pilot set
+
+The model-specific figures and numbers.tex still cite the PMBS26 matrix; the
+steady-exact-v4 campaign needs them updated once its index exists.
 
 Figures default to serif (Times-like) text to match the IEEE paper body, and
 are written as vector PDF for \\includegraphics plus PNG previews.
@@ -1657,9 +1663,11 @@ def main() -> None:
              "verify the sweeps (default: campaign_manifest.json beside "
              "--index when present)")
     ap.add_argument(
-        "--variance-index", default="results-variance/index.csv",
-        help="repeat-subset index for the variance figure; skipped when the "
-             "file does not exist")
+        "--variance-index", default="",
+        help="separate repeat-subset index for the PMBS26 variance figure "
+             "(baselines/pmbs26-tcp-variance/index.csv); skipped when empty. "
+             "steady-exact-v4 campaigns carry replicates in the main index, "
+             "summarized by scripts/variance_report.py")
     ap.add_argument(
         "--interconnect-dir", default=None,
         help="directory holding interconnect_extra_*.csv (default: the "

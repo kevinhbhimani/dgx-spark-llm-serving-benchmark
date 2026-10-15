@@ -36,6 +36,12 @@
 #      locally complete before launching the first server.
 #      MODEL_LABELS (optional space-separated label allowlist for targeted
 #      canaries or reruns; default is every entry for the serving config).
+#      ONLY_REPEAT (optional replicate id: run only that replicate's missing
+#      concurrencies on a fresh launch; rows still record repeat_count=REPEATS).
+#      STATUS_ONLY=1 reports each model's missing repeat:concurrency pairs
+#      without a cache check or launch; exits 3 when anything is missing.
+#      SINGLE_CONTAINER (standalone|ray, see launch_server.sh; default
+#      standalone). "ray" keeps the Ray cluster alive across single launches.
 #      PYTHON (interpreter for the benchmark and helpers, default python3).
 # Per-model tokenizer defaults to the model name unless configs/models.yaml
 # supplies an explicit tokenizer.
@@ -73,9 +79,16 @@ PROBE_TIMEOUT="${PROBE_TIMEOUT:-600}"
 CACHE_PREFLIGHT="${CACHE_PREFLIGHT:-1}"
 CANARY_ONLY="${CANARY_ONLY:-0}"
 MODEL_LABELS="${MODEL_LABELS:-}"
+ONLY_REPEAT="${ONLY_REPEAT:-}"
+STATUS_ONLY="${STATUS_ONLY:-0}"
+SINGLE_CONTAINER="${SINGLE_CONTAINER:-standalone}"
 PYTHON="${PYTHON:-python3}"
 
-for flag_name in SKIP_DONE CACHE_PREFLIGHT CANARY_ONLY; do
+case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
+  echo "[models] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
+  exit 1 ;;
+esac
+for flag_name in SKIP_DONE CACHE_PREFLIGHT CANARY_ONLY STATUS_ONLY; do
   flag_value="${!flag_name}"
   if [[ "$flag_value" != "0" && "$flag_value" != "1" ]]; then
     echo "[models] $flag_name must be 0 or 1, got '$flag_value'" >&2
@@ -89,6 +102,16 @@ if [[ "$CANARY_ONLY" == "1" ]]; then
 fi
 if [[ ! "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
   echo "[models] REPEATS must be a positive integer, got '$REPEATS'" >&2
+  exit 1
+fi
+if [[ -n "$ONLY_REPEAT" ]]; then
+  if [[ ! "$ONLY_REPEAT" =~ ^[1-9][0-9]*$ ]] || (( ONLY_REPEAT > REPEATS )); then
+    echo "[models] ONLY_REPEAT must be an integer in 1..REPEATS ($REPEATS), got '$ONLY_REPEAT'" >&2
+    exit 1
+  fi
+fi
+if [[ "$STATUS_ONLY" == "1" && "$CANARY_ONLY" == "1" ]]; then
+  echo "[models] STATUS_ONLY and CANARY_ONLY are mutually exclusive" >&2
   exit 1
 fi
 for timeout_name in READY_TIMEOUT PROBE_TIMEOUT; do
@@ -189,7 +212,8 @@ echo "[models] $CONFIG: ${#ENTRIES[@]} model(s) from $MODELS_YAML"
 
 # Cache misses are a deterministic launch failure because serving is offline.
 # Validate the complete selected matrix once, before spending time loading a GPU.
-if [[ "$CACHE_PREFLIGHT" == "1" ]]; then
+# A status query launches nothing, so it must work before weights are fetched.
+if [[ "$CACHE_PREFLIGHT" == "1" && "$STATUS_ONLY" != "1" ]]; then
   CHECK_ONLY=1 MODEL_LABELS="$MODEL_LABELS" MODELS_YAML="$MODELS_YAML" \
     PYTHON="$PYTHON" "$HERE/predownload.sh" "$CONFIG"
 fi
@@ -203,11 +227,13 @@ RUNTIME_SCOPE="single-host"
 RUNTIME_FACTS_JSON=""
 CLUSTER_RUNTIME_FINGERPRINT=""
 if [[ "$CONFIG" == "single" ]]; then
-  if ! RUNTIME_FACTS_JSON="$("$PYTHON" - <<'PY'
+  if ! RUNTIME_FACTS_JSON="$("$PYTHON" - "$SINGLE_CONTAINER" <<'PY'
 import csv
 import json
 import subprocess
 import sys
+
+serving_container = sys.argv[1]
 
 query = (
     ("gpu_name", "name"),
@@ -274,6 +300,9 @@ for (name, _), value in zip(query, values):
 facts = {
     "gpus": [dict((name, value) for (name, _), value in zip(query, values))],
     "query_fields": [field for _, field in query],
+    # Which container hosts the TP=1 server. Part of the hashed runtime
+    # identity, so standalone and in-Ray single rows never resume together.
+    "serving_container": serving_container,
     "source": "host-nvidia-smi",
 }
 print(json.dumps(facts, sort_keys=True, separators=(",", ":")))
@@ -300,6 +329,7 @@ echo "[models] $RUNTIME_SCOPE runtime facts: $RUNTIME_FACTS_JSON"
 LAUNCH_PID=""
 ACTIVE_CHILD=""
 LAST_SERVER_LOG=""
+STATUS_MISSING=0
 
 server_ready() {
   # 200 from /v1/models AND the requested model id is being served
@@ -418,13 +448,15 @@ wait_ready() {
 }
 
 teardown() {
-  case "$CONFIG" in
-    single)
-      docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true ;;
-    tp2|pp2)
-      # stop only the serve process; keep the Ray cluster up for the next model
-      docker exec "$VLLM_CONTAINER" pkill -f "vllm serve" >/dev/null 2>&1 || true ;;
-  esac
+  # A status query never launched anything. Above all it must not remove the
+  # Ray head container, which a standalone single teardown would do.
+  [[ "$STATUS_ONLY" == "1" ]] && return 0
+  if [[ "$CONFIG" == "single" && "$SINGLE_CONTAINER" == "standalone" ]]; then
+    docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
+  else
+    # stop only the serve process; keep the Ray cluster up for the next model
+    docker exec "$VLLM_CONTAINER" pkill -f "vllm serve" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$LAUNCH_PID" ]]; then
     # A docker exec client can linger after its remote process exits. Bound the
     # cleanup so one broken launcher cannot deadlock the whole model matrix.
@@ -472,6 +504,68 @@ wait_endpoint_down() {
   done
   echo "[models] endpoint $BASE_URL is still live after teardown; refusing a stale-server launch" >&2
   return 1
+}
+
+# Keep only one replicate's items of a "rep:c ..." schedule (ONLY_REPEAT).
+restrict_schedule() {
+  local item out=()
+  if [[ -z "$ONLY_REPEAT" ]]; then
+    printf '%s' "$1"
+    return 0
+  fi
+  for item in $1; do
+    [[ "${item%%:*}" == "$ONLY_REPEAT" ]] && out+=("$item")
+  done
+  printf '%s' "${out[*]}"
+}
+
+# The client builds exact token-id prompts with the served tokenizer. Load it
+# offline from the shared cache before a launch, so a tokenizer the pinned
+# client cannot read fails here in seconds rather than at the first point.
+client_tokenizer_check() {
+  local tokenizer="$1" tokrev="$2" trust="$3"
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_CACHE="$HF_CACHE/hub" \
+  HF_MODULES_CACHE="${HF_MODULES_CACHE:-$HOME/.cache/huggingface-client/modules}" \
+  TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
+    "$PYTHON" - "$tokenizer" "$tokrev" "$trust" <<'PY'
+import sys
+from transformers import AutoTokenizer
+
+name, revision, trust = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+try:
+    tok = AutoTokenizer.from_pretrained(name, revision=revision or None,
+                                        trust_remote_code=trust)
+    ids = tok("tokenizer preflight", add_special_tokens=False)["input_ids"]
+except Exception as exc:
+    raise SystemExit(f"[models] client tokenizer preflight failed for {name}: "
+                     f"{type(exc).__name__}: {exc}")
+if not ids:
+    raise SystemExit(f"[models] client tokenizer for {name} produced no token ids")
+print(f"[models] client tokenizer OK: {type(tok).__name__}, vocab {len(tok)}")
+PY
+}
+
+# A dual launch whose NCCL data path silently fell back to TCP would be
+# mislabelled as RDMA (or the reverse in a TCP ablation). With NCCL_DEBUG=INFO
+# on both Ray containers, NCCL logs one "via NET/<transport>" line per channel
+# into the server log. Fail on positive evidence of the wrong transport; only
+# warn when the log carries no channel lines at all.
+nccl_transport_check() {
+  local log="$1" want="IB" wrong="Socket" n_want n_wrong
+  if [[ "$NCCL_IB_DISABLE" == "1" ]]; then want="Socket"; wrong="IB"; fi
+  n_want="$(grep -c "via NET/$want" "$log" || true)"
+  n_wrong="$(grep -c "via NET/$wrong" "$log" || true)"
+  if (( n_wrong > 0 )); then
+    echo "[models] NCCL used NET/$wrong on $n_wrong channel line(s) although" \
+         "NCCL_IB_DISABLE=$NCCL_IB_DISABLE requests NET/$want; see $log" >&2
+    return 1
+  fi
+  if (( n_want == 0 )); then
+    echo "[models] WARNING: no NCCL channel lines in $log; start Ray with" \
+         "NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET to record transport evidence" >&2
+    return 0
+  fi
+  echo "[models] NCCL transport verified: $n_want channel line(s) via NET/$want"
 }
 
 serving_fingerprint() {
@@ -698,7 +792,7 @@ run_one() {
   # Resume at exact (repeat, concurrency) granularity. Only rows produced by
   # the current methodology/config/source/serving-policy identity count as
   # complete; live KV capacity is allowed to differ from launch to launch.
-  if [[ "$SKIP_DONE" == "1" ]]; then
+  if [[ "$SKIP_DONE" == "1" || "$STATUS_ONLY" == "1" ]]; then
     if ! schedule="$(POWER_BACKEND="$POWER_BACKEND" \
                        EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES" \
                        "$PYTHON" "$HERE/swept_concurrencies.py" \
@@ -707,11 +801,28 @@ run_one() {
       echo "[models] resume validation failed; refusing to guess what is complete" >&2
       return 1
     fi
+    schedule="$(restrict_schedule "$schedule")"
+    if [[ "$STATUS_ONLY" == "1" ]]; then
+      local missing=0
+      [[ -n "$schedule" ]] && missing=$(wc -w <<<"$schedule")
+      echo "[models] status: $label $CONFIG missing=$missing${schedule:+ ($schedule)}"
+      (( missing > 0 )) && STATUS_MISSING=$((STATUS_MISSING + 1))
+      return 0
+    fi
     if [[ -z "$schedule" ]]; then
-      echo "[models] $label: all $REPEATS repeat(s) of $CONCURRENCIES are complete; skipping"
+      echo "[models] $label: ${ONLY_REPEAT:+replicate $ONLY_REPEAT of }$REPEATS" \
+           "repeat(s) of $CONCURRENCIES complete; skipping"
       return 0
     fi
     echo "[models] $label missing repeat:concurrency pairs: $schedule"
+  elif [[ -n "$ONLY_REPEAT" ]]; then
+    local c
+    for c in $CONCURRENCIES; do schedule+="${schedule:+ }$ONLY_REPEAT:$c"; done
+  fi
+
+  if ! client_tokenizer_check "$tokenizer" "$tokenizer_revision" "$trust"; then
+    echo "[models] skipping $label: the client cannot build exact prompts" >&2
+    return 1
   fi
 
   # Explicit empty values prevent unrelated .env values from leaking from one
@@ -724,7 +835,8 @@ run_one() {
                     PREFIX_CACHING="${PREFIX_CACHING:-0}"
                     GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
                     TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
-                    HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}")
+                    HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+                    SINGLE_CONTAINER="$SINGLE_CONTAINER")
   teardown
   wait_endpoint_down || return 1
 
@@ -770,6 +882,11 @@ run_one() {
     teardown
     return 1
   fi
+  if [[ "$CONFIG" != "single" ]] && ! nccl_transport_check "$log"; then
+    echo "[models] skipping $label: wrong NCCL transport for this campaign" >&2
+    teardown
+    return 1
+  fi
 
   # Hash the runtime/capacity actually observed after startup. Recorded on
   # every row, and re-checked by run_benchmark.py after the window so a server
@@ -803,6 +920,7 @@ PY
       teardown
       return 1
     fi
+    schedule="$(restrict_schedule "$schedule")"
     if [[ -z "$schedule" ]]; then
       echo "[models] $label became complete before measurement; skipping"
       teardown
@@ -863,6 +981,13 @@ done
 if (( FAILURES > 0 )); then
   echo "[models] $FAILURES model(s) failed for $CONFIG; see logs in $OUT_DIR" >&2
   exit 1
+fi
+
+if [[ "$STATUS_ONLY" == "1" ]]; then
+  # Exit 3 (not 1) so callers can tell "work remains" from a real error.
+  (( STATUS_MISSING > 0 )) && exit 3
+  echo "[models] status: every selected $CONFIG model is complete"
+  exit 0
 fi
 
 if [[ "$CANARY_ONLY" == "1" ]]; then

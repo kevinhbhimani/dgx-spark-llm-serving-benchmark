@@ -5,6 +5,13 @@ Closed-loop measurement does not open until the configured warmup has elapsed
 both engines keep offering replacement load until every request that started in
 the measurement window has finished. Only then do remaining cooldown requests
 drain. This prevents first-wave and drain-down bias in latency percentiles.
+
+With ``min_window_requests`` set, the closed-loop window is a minimum: while
+fewer than that many requests have started inside it, its end moves out in
+fixed ``window_extension_step_s`` steps, up to ``max_measure_s`` (the MLPerf
+"minimum duration and minimum query count" rule). The decision depends only on
+how many requests have started, never on their latencies, so it cannot bias the
+latency percentiles; under steady load it does not bias the windowed rates.
 """
 from __future__ import annotations
 import asyncio
@@ -29,18 +36,54 @@ async def _closed_loop(cfg, workload, session, phase_start, records):
     desired_window_start = phase_start + cfg.warmup_s
     initial_remaining = cfg.concurrency
     measurement_pending = 0
+    min_requests = getattr(cfg, "min_window_requests", 0) or 0
+    step_s = getattr(cfg, "window_extension_step_s", 0.0) or 0.0
+    max_measure_s = getattr(cfg, "max_measure_s", 0.0) or 0.0
     state = {
         "window_start": None,
         "window_end": None,
         "nominal_stop": None,
         "load_stop": None,
+        # Requests whose arrival fell inside [window_start, window_end).
+        "window_requests_started": 0,
+        "window_extensions": 0,
+        # No further extension decisions once set (immediately when the
+        # minimum-sample rule is disabled).
+        "window_final": min_requests <= 0,
     }
+
+    def settle_window(now):
+        """Extend the window past ``now`` while its sample floor is unmet.
+
+        Called before any arrival at or after the current window end is
+        classified, and before a worker considers stopping. Arrivals are
+        classified right after their timestamp is read, with no await in
+        between, so every arrival before window_end has already been counted
+        and the floor test below is exact for [window_start, window_end).
+        """
+        if state["window_start"] is None or state["window_final"]:
+            return
+        while now >= state["window_end"]:
+            if state["window_requests_started"] >= min_requests:
+                state["window_final"] = True
+                return
+            steps = state["window_extensions"] + 1
+            length = cfg.measure_s + steps * step_s
+            if length > max_measure_s + 1e-9:
+                # Cap reached with the floor unmet: the window closes here and
+                # the release quality gate rejects the point.
+                state["window_final"] = True
+                return
+            state["window_extensions"] = steps
+            state["window_end"] = state["window_start"] + length
+            state["nominal_stop"] = state["window_end"] + cfg.cooldown_s
 
     async def worker():
         nonlocal consecutive_failures, initial_remaining, measurement_pending
         first = True
         while True:
             now = time.perf_counter()
+            settle_window(now)
             nominal_stop = state["nominal_stop"]
             if (nominal_stop is not None and now >= nominal_stop
                     and measurement_pending == 0):
@@ -49,11 +92,13 @@ async def _closed_loop(cfg, workload, session, phase_start, records):
                 break
             spec = workload.sample()
             arrival = time.perf_counter()
+            settle_window(arrival)
             is_measurement = (state["window_start"] is not None
                               and state["window_start"] <= arrival
                               < state["window_end"])
             if is_measurement:
                 measurement_pending += 1
+                state["window_requests_started"] += 1
             rec = await send_request(session, cfg, spec, t_start=arrival)
             records.append(rec)
             if first:
@@ -214,7 +259,21 @@ async def run_phase(cfg, workload):
                 or not isinstance(cfg.concurrency, int)
                 or cfg.concurrency < 1):
             raise ValueError("closed-loop concurrency must be a positive integer")
+        if getattr(cfg, "min_window_requests", 0):
+            step = getattr(cfg, "window_extension_step_s", 0.0)
+            cap = getattr(cfg, "max_measure_s", 0.0)
+            if (not isinstance(step, (int, float)) or not math.isfinite(step)
+                    or step <= 0 or not isinstance(cap, (int, float))
+                    or not math.isfinite(cap) or cap < cfg.measure_s):
+                raise ValueError(
+                    "window extension needs a positive window_extension_step_s "
+                    "and max_measure_s >= measure_s"
+                )
     if cfg.mode == "open":
+        if getattr(cfg, "min_window_requests", 0):
+            raise ValueError(
+                "min_window_requests is implemented for closed-loop sweeps only"
+            )
         if (isinstance(cfg.qps, bool)
                 or not isinstance(cfg.qps, (int, float))
                 or not math.isfinite(cfg.qps) or cfg.qps <= 0):
