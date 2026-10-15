@@ -64,6 +64,13 @@ class ExperimentConfig:
     warmup_s: float = 15.0
     measure_s: float = 60.0
     cooldown_s: float = 0.0
+    # Minimum-sample stopping rule (closed loop only). measure_s is then the
+    # minimum window: while fewer than min_window_requests requests have
+    # started inside it, the window end moves out in window_extension_step_s
+    # steps, never past max_measure_s. 0 disables the rule.
+    min_window_requests: int = 0
+    max_measure_s: float = 0.0
+    window_extension_step_s: float = 60.0
     request_timeout_s: float = 600.0
 
     # goodput service level objective. Two ITL tiers scored against one TTFT
@@ -181,6 +188,23 @@ class ExperimentConfig:
         finite_number(self.warmup_s, "warmup_s", nonnegative=True)
         finite_number(self.measure_s, "measure_s", positive=True)
         finite_number(self.cooldown_s, "cooldown_s", nonnegative=True)
+        if (isinstance(self.min_window_requests, bool)
+                or not isinstance(self.min_window_requests, int)
+                or self.min_window_requests < 0):
+            raise ValueError("min_window_requests must be a non-negative integer")
+        finite_number(self.max_measure_s, "max_measure_s", nonnegative=True)
+        finite_number(self.window_extension_step_s, "window_extension_step_s",
+                      positive=True)
+        if self.min_window_requests:
+            if self.mode != "closed":
+                raise ValueError(
+                    "min_window_requests is implemented for closed-loop sweeps only"
+                )
+            if self.max_measure_s < self.measure_s:
+                raise ValueError(
+                    "max_measure_s must be at least measure_s when "
+                    "min_window_requests is set"
+                )
         finite_number(self.request_timeout_s, "request_timeout_s", positive=True)
         finite_number(self.ttft_slo_s, "ttft_slo_s", positive=True)
         finite_number(self.itl_slo_s, "itl_slo_s", positive=True)

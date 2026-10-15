@@ -21,6 +21,8 @@
 # Env: MODELS_YAML, VLLM_CONTAINER (via connectx_env.sh),
 #      PYTHON (host interpreter for the YAML parse, default python3),
 #      MIRROR_MARGIN_GB (free disk to keep on the worker, default 10),
+#      MODEL_LABELS (optional space-separated label allowlist; the campaign
+#                    mirrors one model at a time and purges it afterwards),
 #      DRY_RUN=1 (list the repos it would mirror, then exit).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,6 +36,7 @@ esac
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 PYTHON="${PYTHON:-python3}"
+MODEL_LABELS="${MODEL_LABELS:-}"
 
 CONFIGS=("$CONFIG")
 if [[ "$CONFIG" == "all" ]]; then CONFIGS=(tp2 pp2); fi
@@ -55,6 +58,9 @@ for cfg in "${CONFIGS[@]}"; do
   [[ -z "$entries" ]] && continue
   while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust; do
     [[ -z "$name" ]] && continue
+    if [[ -n "$MODEL_LABELS" && " $MODEL_LABELS " != *" $label "* ]]; then
+      continue
+    fi
     if [[ -z "$revision" ]]; then
       echo "[mirror] $label has no pinned revision in $MODELS_YAML" >&2
       exit 1
@@ -91,7 +97,7 @@ fi
 # Refuse to mirror a metadata stub or partial weight set. This validates the
 # exact revisions selected above, not merely the presence of a repo directory.
 CHECK_ONLY=1 MODELS_YAML="$MODELS_YAML" PYTHON="$PYTHON" \
-  "$HERE/predownload.sh" "$CONFIG"
+  MODEL_LABELS="$MODEL_LABELS" "$HERE/predownload.sh" "$CONFIG"
 
 if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
   echo "[mirror] ERROR: Ray cluster is not active in $VLLM_CONTAINER" >&2

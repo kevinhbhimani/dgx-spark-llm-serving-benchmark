@@ -241,8 +241,12 @@ export OUT_DIR="results"
 bash scripts/run_job.sh
 ```
 
-`run_job.sh` runs tp2, pp2, then single. `--skip-done` is active. A crash
-resumes at the last incomplete point.
+`run_job.sh` runs a canary pass over every model, then measures one model at
+a time: download, mirror to Hoedus, 3 replicates of each config in rotated
+order (single runs inside the Ray head container, so the cluster stays up),
+then purge from both caches. `--skip-done` is active. A crash resumes at the
+last incomplete point, and finished models are not downloaded again. Source
+`rdma-dual-cable.env` on Hoedus too before `scripts/start_ray.sh worker`.
 
 ## Fingerprint
 
@@ -252,18 +256,14 @@ values in the same `OUT_DIR` causes the benchmark to reject mismatched rows.
 
 ## Disk space and HF_CACHE location
 
-Default `HF_CACHE` is `$HOME/.cache/huggingface`. Model weights for the full
-matrix total ~1.05 TB (existing models ~500 GB, new models ~547 GB). The DGX
-Spark internal NVMe is 1–2 TB. The root filesystem shares this drive with the
-OS. A full disk on the root filesystem blocks `sudo` and file deletion.
+Default `HF_CACHE` is `$HOME/.cache/huggingface`. The full matrix is ~1.44 TB
+of weights, but `scripts/run_job.sh` holds only one model at a time on each
+node (largest: Qwen3-Next 80B BF16, ~163 GB) and purges it after its last
+replicate, so ~200 GB free per node is enough. The root filesystem shares the
+internal NVMe with the OS, and a full root filesystem blocks `sudo` and file
+deletion, so keep the margin.
 
-Set `HF_CACHE` to a path with enough space before downloading. Options:
-
-- External USB-C NVMe enclosure with a 2 TB or larger drive, mounted at a
-  dedicated path.
-- A separate partition on the internal NVMe if one was provisioned.
-
-Example:
+To use a larger drive instead:
 ```bash
 sudo mkdir -p /mnt/model-cache
 sudo mount /dev/nvme1n1p1 /mnt/model-cache   # adjust device
@@ -271,24 +271,9 @@ sudo chown $USER:$USER /mnt/model-cache
 export HF_CACHE=/mnt/model-cache
 ```
 
-Add `HF_CACHE` to `.env` so all scripts use it:
-```
-HF_CACHE=/mnt/model-cache
-```
-
-`predownload.sh` queries `https://huggingface.co/api/models/{repo}` for every
-unique repo's `safetensors.total` size in a prefetch phase that runs before any
-download starts. An API failure in the prefetch phase exits the script before
-the first container runs. The script refuses to download if available disk
-space is less than the total download size plus an OS safety buffer (20 GiB or
-5% of total disk, whichever is larger). Override the buffer with
-`PREDOWNLOAD_MIN_FREE_GB`. Requires network access. Skipped in `CHECK_ONLY`
-mode.
-
-## Model pre-download
-
-Revisions are pinned in `configs/models.yaml`. Pre-download before running:
-```bash
-scripts/predownload.sh all
-scripts/mirror_worker_cache.sh all
-```
+`predownload.sh` sizes each pinned revision from the Hub's per-file listing,
+net of blobs already in the cache, and refuses to download when free space is
+below that plus an OS buffer (20 GiB or 5% of the disk, whichever is larger;
+`PREDOWNLOAD_MIN_FREE_GB` overrides). `mirror_worker_cache.sh` checks free
+space on Hoedus before each transfer (`MIRROR_MARGIN_GB`, default 10).
+`purge_model_cache.sh` frees a model on both nodes.
