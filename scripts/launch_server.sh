@@ -331,6 +331,8 @@ case "$CONFIG" in
     _check_local_memory
     run_env=( -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
               -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
+              -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
+              -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
               -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" )
     # Production serving is offline against a pinned, preflighted snapshot, so
     # keep registry credentials out of that container.  Preserve the documented

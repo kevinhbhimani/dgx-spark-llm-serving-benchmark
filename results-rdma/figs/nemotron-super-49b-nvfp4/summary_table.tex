@@ -1,0 +1,16 @@
+% Requires \usepackage{booktabs}.
+\begin{tabular}{l r r r r r r r r r r r}
+\toprule
+Config & Load & Win (s) & $n$ & Tok/s & Req/s & TTFT$_{50}$ (ms) & TTFT$_{99}$ (ms) & ITL$_{50}$ (ms) & E2E$_{50}$ (s) & Goodput & GPU J/tok \\
+\midrule
+Dual Spark, TP=2 & 1 & 1500 & 75\rlap{$^\dagger$} & 13 & 0.05 & 365 & 3430 & 75 & 19.4 & 0.04 & 7.291 \\
+Dual Spark, TP=2 & 2 & 1500 & 137 & 23 & 0.09 & 448 & 3558 & 77 & 21.3 & 0.07 & 3.998 \\
+Dual Spark, TP=2 & 4 & 1500 & 245 & 42 & 0.16 & 979 & 4214 & 80 & 24.4 & 0.13 & 2.367 \\
+Dual Spark, TP=2 & 8 & 1500 & 383 & 66 & 0.26 & 1771 & 3606 & 92 & 30.5 & 0.00 & 1.553 \\
+Dual Spark, TP=2 & 16 & 1500 & 564 & 97 & 0.38 & 1853 & 3949 & 106 & 42.1 & 0.00 & 1.126 \\
+Dual Spark, TP=2 & 32 & 1500 & 781 & 134 & 0.52 & 2002 & 5725 & 121 & 61.2 & 0.00 & 0.882 \\
+Dual Spark, TP=2 & 64 & 1500 & 927 & 159 & 0.62 & 2107 & 4433 & 169 & 102.6 & 0.00 & 0.785 \\
+Dual Spark, TP=2 & 128 & 1500 & 1050 & 179 & 0.70 & 2728 & 6512 & 880 & 182.5 & 0.00 & 0.738 \\
+\bottomrule
+\end{tabular}
+% $^\dagger$ fewer than 100 requests for p99.

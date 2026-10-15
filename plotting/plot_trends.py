@@ -94,6 +94,30 @@ MODEL_META = {
     "nemotron3-super-120b-a12b-nvfp4": dict(
         pretty="Nemotron3-Super-120B-A12B", arch="moe", quant="nvfp4",
         nvidia=True, params_b=120.0, active_b=12.0),
+    # RDMA campaign (results-rdma/): BF16/NVFP4 pairs of the same weights,
+    # parameter counts from rdma-testing/docs/nvfp4-bf16-models.md.
+    "nemotron-super-49b-bf16": dict(
+        pretty="Nemotron-Super-49B", arch="dense", quant="bf16", nvidia=True,
+        params_b=49.9, active_b=49.9, ladder_base="nemotron-super-49b"),
+    "nemotron-super-49b-nvfp4": dict(
+        pretty="Nemotron-Super-49B NVFP4", arch="dense", quant="nvfp4",
+        nvidia=True, params_b=49.9, active_b=49.9,
+        ladder_base="nemotron-super-49b"),
+    "nemotron-puzzle-75b-bf16": dict(
+        pretty="Nemotron3-Puzzle-75B-A9B", arch="moe", quant="bf16",
+        nvidia=True, params_b=78.3, active_b=9.0,
+        ladder_base="nemotron-puzzle-75b"),
+    "nemotron-puzzle-75b-nvfp4": dict(
+        pretty="Nemotron3-Puzzle-75B-A9B NVFP4", arch="moe", quant="nvfp4",
+        nvidia=True, params_b=78.3, active_b=9.0,
+        ladder_base="nemotron-puzzle-75b"),
+    "qwen3-next-80b-bf16": dict(
+        pretty="Qwen3-Next-80B-A3B", arch="moe", quant="bf16", nvidia=False,
+        params_b=80.0, active_b=3.0, ladder_base="qwen3-next-80b"),
+    "qwen3-next-80b-nvfp4": dict(
+        pretty="Qwen3-Next-80B-A3B NVFP4", arch="moe", quant="nvfp4",
+        nvidia=True, params_b=80.0, active_b=3.0,
+        ladder_base="qwen3-next-80b"),
 }
 
 # Same-family, same-precision dense/MoE pairs at comparable total parameter
@@ -420,7 +444,10 @@ def fig_parallelism_scaling(df, out, fmts):
     axp.axvline(1.0, color="0.35", linewidth=0.8)
     ratio_values = list(ratio.values())
     # Headroom for the widest label at the rightmost point (offset + ~5 chars).
-    axp.set_xlim(0.95, max(1.75, max(ratio_values, default=1.0) * 1.26))
+    # The left edge follows the data when PP loses to TP by more than ~5%
+    # (results-rdma has PP/TP = 0.90), so no ratio is clipped off the axis.
+    axp.set_xlim(min(0.95, min(ratio_values, default=1.0) * 0.96),
+                 max(1.75, max(ratio_values, default=1.0) * 1.26))
     axp.set_xlabel("PP maximum / TP maximum")
     axp.set_title(
         "(b) PP versus TP maximum\n"
@@ -738,10 +765,21 @@ def fig_scale_trend(df, out, fmts):
               "skipping")
         return
 
-    def footprint(row, cfg):
+    def footprint(model, row, cfg):
         v = row.get("weight_gb", np.nan)
         if pd.notna(v):
             return float(v)
+        if cfg == "pp2":
+            # PP splits by layer and need not split evenly: the startup log
+            # reports one stage, and Nemotron-Super-49B's NAS blocks put only
+            # 10.0 of its 29.0 GiB there, so doubling it misplaces the point.
+            # The stages together hold the whole model, so take that from the
+            # single-node worker, else the evenly sharded TP=2 worker.
+            for ref, scale in (("single", 1.0), ("tp2", 2.0)):
+                r = _peak(df, model, ref, tcol)
+                if r is not None and pd.notna(r.get("worker_weight_gb",
+                                                    np.nan)):
+                    return float(r["worker_weight_gb"]) * scale
         v = row.get("worker_weight_gb", np.nan)
         if pd.isna(v):
             return np.nan
@@ -755,7 +793,7 @@ def fig_scale_trend(df, out, fmts):
             row = _peak(df, model, cfg, tcol)
             if row is None:
                 continue
-            gib = footprint(row, cfg)
+            gib = footprint(model, row, cfg)
             if pd.isna(gib):
                 continue
             s = CONFIG_STYLE.get(cfg, dict(color="0.3", marker="D",

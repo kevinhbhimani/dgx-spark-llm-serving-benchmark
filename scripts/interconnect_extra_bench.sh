@@ -6,15 +6,16 @@
 # PP's activation hand-off on the same link, and compare TCP sockets vs RoCE.
 #
 # Run on the head node with Ray up on BOTH nodes and NO model being served.
-# The transport is whatever Ray was started with; to compare, restart Ray on
-# both nodes under each setting and rerun (each CSV carries its own transport
-# column, so runs never overwrite each other):
+# The transport is whatever Ray was started with. RDMA is the default
+# (NCCL_IB_DISABLE=0 in connectx_env.sh). To measure the TCP-socket fallback,
+# restart Ray on both nodes with NCCL_IB_DISABLE=1 and rerun; each CSV
+# carries its own transport column, so runs never overwrite each other:
 #
 #   scripts/start_ray.sh head            # Hoedus: scripts/start_ray.sh worker
-#   scripts/interconnect_extra_bench.sh                      # -> transport=tcp
-#   # then, RoCE:
-#   NCCL_IB_DISABLE=0 scripts/start_ray.sh head   # and on Hoedus
 #   scripts/interconnect_extra_bench.sh                      # -> transport=roce
+#   # then, the TCP fallback:
+#   NCCL_IB_DISABLE=1 scripts/start_ray.sh head   # and on Hoedus
+#   scripts/interconnect_extra_bench.sh                      # -> transport=tcp
 #
 # Writes $OUT_DIR/interconnect_extra_<timestamp>.csv beside the serving results.
 set -euo pipefail
@@ -37,9 +38,11 @@ OUT="$OUT_DIR/interconnect_extra_$(date +%Y%m%d-%H%M%S).csv"
 TMP="$OUT.tmp.$$"
 RAW="$OUT.raw.$$"
 trap 'rm -f "$TMP" "$RAW"' EXIT
-# The driver env below is for ray.init on the head; the measured transport is
-# the Ray *workers'* NCCL_IB_DISABLE (set by start_ray.sh), which the Python
-# reads and writes into the transport column.
+# The driver env below is for ray.init on the head. The transport column is
+# not read from this environment: each Ray worker enables NCCL_DEBUG=INFO for
+# its own process and classifies the transport from NCCL's own "via NET/IB" /
+# "via NET/Socket" log lines, so a RoCE request that silently falls back to
+# sockets is labelled tcp rather than roce.
 docker exec -i \
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" \
