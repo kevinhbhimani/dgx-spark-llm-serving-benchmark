@@ -137,19 +137,32 @@ roceP2p1s0f1    enP2p1s0f1np1
 
 On Hoedus (host):
 ```bash
-cd rdma-testing/perftest-suite
-./perftest-suite.sh host --run-name dual-200Gb-Oct-8/run-001
+cd ~/fsaii/perftest-suite-dgx-spark-cluster
+./perftest-suite.sh host --run-name dual-200Gb-Oct-8/run-001 \
+    --modes isolation,concurrent \
+    --peer-host Diya
 ```
 
 On Diya (client):
 ```bash
-cd rdma-testing/perftest-suite
-./perftest-suite.sh client --run-name dual-200Gb-Oct-8/run-001
+cd ~/fsaii/perftest-suite-dgx-spark-cluster
+./perftest-suite.sh client --run-name dual-200Gb-Oct-8/run-001 \
+    --modes isolation,concurrent \
+    --peer-host Hoedus
 ```
 
+`--peer-host` resolves the peer's addresses from `/etc/hosts` (both nodes map
+every cable IP to both hostnames, see above); `--peer-ips` with the four
+addresses works identically.
+
 Check `perftest-results/dual-200Gb-Oct-8/run-001/host/results.csv` and
-`client/results.csv`. Every device must show bandwidth near 200 Gbit/s
-(25 GB/s) per port. `ib_write_lat` must be under 2 µs.
+`client/results.csv`. Each device's isolation bandwidth should be a stable
+fraction of its `ibv_devinfo` link rate (`active_speed x active_width`), and the
+concurrent aggregate (the sum of the `mode=concurrent` rows) is the saturation
+reading: it should sit at the fabric caps (200 Gbit/s unidirectional, 400
+Gbit/s bidirectional on this two-NIC system) rather than at the sum of the
+isolation rates, and a gap between the two sums means the devices share a
+bottleneck. `ib_write_lat` must be under 2 µs.
 
 ### 5. NCCL all-reduce
 
@@ -175,14 +188,14 @@ On Diya:
 ```bash
 export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
 export NCCL_IB_DISABLE=0
-bash rdma-testing/scripts/rdma-start-ray.sh head
+scripts/start_ray.sh head
 ```
 
 On Hoedus:
 ```bash
 export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
 export NCCL_IB_DISABLE=0
-bash rdma-testing/scripts/rdma-start-ray.sh worker
+scripts/start_ray.sh worker
 ```
 
 On Diya, verify:
