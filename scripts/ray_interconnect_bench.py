@@ -22,7 +22,7 @@ uses and labels the rows accordingly. To compare transports, restart Ray on
 both nodes under each setting and run this once per setting:
 
     # TCP sockets (the sealed-campaign default)
-    scripts/start_ray.sh head          # Hoedus: scripts/start_ray.sh worker
+    NCCL_IB_DISABLE=1 scripts/start_ray.sh head  # same setting on Hoedus worker
     scripts/interconnect_extra_bench.sh
 
     # RoCE / RDMA
@@ -30,7 +30,7 @@ both nodes under each setting and run this once per setting:
     scripts/interconnect_extra_bench.sh
 
     # multi-stream sockets (no RDMA, cheap tuning)
-    NCCL_NSOCKS_PERTHREAD=4 NCCL_SOCKET_NTHREADS=4 scripts/start_ray.sh head
+    NCCL_IB_DISABLE=1 NCCL_NSOCKS_PERTHREAD=4 NCCL_SOCKET_NTHREADS=4 scripts/start_ray.sh head
     scripts/interconnect_extra_bench.sh
 
 Like the all-reduce bench it runs with NO model being served (each task
@@ -57,12 +57,10 @@ SIZES = [1 << exponent for exponent in range(3, 31)]  # 8 B .. 1 GiB
 ITERS, WARMUP = 20, 5
 
 # NCCL INFO log markers naming the transport each channel used. The
-# per-channel lines are authoritative; the plugin-selection lines appear even
-# when the data path falls back to sockets, so they are only a fallback.
+# per-channel lines are authoritative; plugin-selection lines can appear even
+# when the data path falls back to sockets and do not verify data transport.
 _NCCL_IB_CHANNEL_MARKER = "via NET/IB"
 _NCCL_SOCKET_CHANNEL_MARKER = "via NET/Socket"
-_NCCL_IB_PLUGIN_MARKER = "NET/IB : Using"
-_NCCL_SOCKET_PLUGIN_MARKER = "NET/Socket : Using"
 
 
 def _gpu_processes() -> list[str]:
@@ -112,9 +110,8 @@ def _transport_label(debug_path: str) -> str:
     NCCL_IB_DISABLE=0 only permits RDMA; NCCL still falls back to sockets when
     the RoCE handshake fails, so a run can post TCP numbers while the launch
     environment says RoCE. The per-channel lines record the transport each
-    channel really used, so they are the authority; the plugin-selection lines
-    are only a fallback because they appear even when the data path later falls
-    back to sockets. When the log is missing or inconclusive, fall back to the
+    channel really used, so they are the authority. Plugin-selection lines
+    cannot verify the transport. When the log is missing or inconclusive, use the
     launch environment and flag the label with a trailing "?" so the row is not
     read as a verified transport.
     """
@@ -123,13 +120,13 @@ def _transport_label(debug_path: str) -> str:
             nccl_log = handle.read()
     except OSError:
         nccl_log = ""
-    if _NCCL_IB_CHANNEL_MARKER in nccl_log:
+    ib = _NCCL_IB_CHANNEL_MARKER in nccl_log
+    socket = _NCCL_SOCKET_CHANNEL_MARKER in nccl_log
+    if ib and socket:
+        return "mixed"
+    if ib:
         transport = "roce"
-    elif _NCCL_SOCKET_CHANNEL_MARKER in nccl_log:
-        transport = "tcp"
-    elif _NCCL_IB_PLUGIN_MARKER in nccl_log:
-        transport = "roce"
-    elif _NCCL_SOCKET_PLUGIN_MARKER in nccl_log:
+    elif socket:
         transport = "tcp"
     else:
         return f"{_env_transport_label()}?"
@@ -152,6 +149,7 @@ def _worker(rank, world, head_ip, iface, port, collective):
     # and is set on this process alone so serving containers keep the default.
     debug_path = f"/tmp/nccl_transport_rank{rank}_{os.getpid()}.log"
     os.environ["NCCL_DEBUG"] = "INFO"
+    os.environ["NCCL_DEBUG_SUBSYS"] = "INIT,NET"
     os.environ["NCCL_DEBUG_FILE"] = debug_path
     try:
         os.remove(debug_path)
@@ -220,7 +218,12 @@ def _worker(rank, world, head_ip, iface, port, collective):
             results.append((size, avg, mn))
         # NCCL selects its transport lazily, on the first collective, so read
         # the log only after the sweep has actually moved data.
-        return _transport_label(debug_path), results
+        try:
+            with open(debug_path, encoding="utf-8", errors="replace") as handle:
+                evidence = "".join(line for line in handle if "NET/" in line)
+        except OSError:
+            evidence = ""
+        return _transport_label(debug_path), results, evidence
     finally:
         if initialized:
             dist.destroy_process_group()
@@ -239,18 +242,21 @@ def _run(collective, head_ip, worker_ip, iface, port) -> tuple[str, list[tuple]]
         for ref in remotes:
             ray.cancel(ref, force=True)
         raise SystemExit(f"[microbench] {collective} tasks timed out after 1800s")
-    for _, rank_results in all_results:
+    for rank, (label, rank_results, evidence) in enumerate(all_results):
+        sys.stderr.write(f"[microbench] {collective} rank {rank} observed {label}\n{evidence}")
         if [row[0] for row in rank_results] != SIZES:
             raise SystemExit(
                 f"[microbench] a rank returned an incomplete {collective} sweep")
+        if any(not (math.isfinite(avg) and math.isfinite(minimum)
+                    and 0 < minimum <= avg)
+               for _, avg, minimum in rank_results):
+            raise SystemExit(f"[microbench] invalid {collective} timings")
     labels = [result[0] for result in all_results]
-    verified = sorted({label for label in labels if not label.endswith("?")})
-    if len(verified) > 1:
-        sys.stderr.write(
-            f"[microbench] ranks disagree on transport: {verified}\n")
-    # Prefer a log-verified label over an environment-only fallback.
-    transport = verified[0] if verified else min(labels)
-    return transport, all_results[0][1]
+    if (len(set(labels)) != 1 or any(label.endswith("?") or label == "mixed"
+                                    for label in labels)):
+        raise SystemExit(
+            f"[microbench] both ranks must verify the same transport; got {labels}")
+    return labels[0], all_results[0][1]
 
 
 def main() -> int:

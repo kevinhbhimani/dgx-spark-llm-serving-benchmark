@@ -76,6 +76,7 @@ class ModelSpec:
     quantization: str
     trust_remote_code: bool
     gpu_utilization: float
+    max_num_seqs: int | None = None
 
 
 @dataclass(frozen=True)
@@ -319,7 +320,15 @@ def validate_models_yaml(
             raise CampaignValidationError(
                 f"{context} trust_remote_code must be a boolean"
             )
-
+        max_num_seqs = entry.get("max_num_seqs")
+        if "max_num_seqs" in entry and (
+            isinstance(max_num_seqs, bool)
+            or not isinstance(max_num_seqs, int)
+            or max_num_seqs < 1
+        ):
+            raise CampaignValidationError(
+                f"{context} max_num_seqs must be a positive integer"
+            )
 
         models.append(
             ModelSpec(
@@ -333,6 +342,7 @@ def validate_models_yaml(
                 quantization=quantization,
                 trust_remote_code=trust_remote_code,
                 gpu_utilization=gpu_utilization,
+                max_num_seqs=max_num_seqs,
             )
         )
     return tuple(models)
@@ -343,6 +353,25 @@ def validate_experiment_yaml(
 ) -> tuple[dict, int]:
     """Validate workload buckets and ensure every model can hold the largest."""
     document = _load_mapping(path, "experiment YAML")
+    # Planning must exercise the same configuration parser as measurement.
+    # Otherwise a typo or invalid duration can pass prep and fail only after a
+    # large checkpoint has been downloaded and loaded on both GPUs.
+    from bench.config import ExperimentConfig
+
+    try:
+        config = ExperimentConfig.from_yaml(str(path))
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+        raise CampaignValidationError(
+            f"experiment YAML is not accepted by the benchmark runner: {exc}"
+        ) from exc
+    if config.require_power_data and config.power_backend == "none":
+        raise CampaignValidationError(
+            "experiment requires power data; power_backend cannot be none"
+        )
+    if config.require_vllm_metrics_data and not config.scrape_vllm_metrics:
+        raise CampaignValidationError(
+            "experiment requires vLLM metrics; scraping must be enabled"
+        )
     raw_buckets = document.get("buckets")
     if not isinstance(raw_buckets, list) or not raw_buckets:
         raise CampaignValidationError(
@@ -362,6 +391,38 @@ def validate_experiment_yaml(
             _positive_float(bucket["weight"], f"{context} weight")
         largest = max(largest, input_len + output_len)
 
+    # A trace replaces the bucket workload in Workload, so its actual maximum
+    # request length must determine the launch context requirement too.
+    if config.trace_path:
+        largest = 0
+        try:
+            with Path(config.trace_path).open(encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    if not line.strip():
+                        continue
+                    context = f"trace {config.trace_path} line {line_number}"
+                    record = json.loads(line)
+                    if not isinstance(record, dict):
+                        raise CampaignValidationError(f"{context} must be a mapping")
+                    input_value = record.get("input_len", 0)
+                    if "prompt" in record and not config.use_token_ids and not input_value:
+                        prompt = record["prompt"]
+                        if not isinstance(prompt, str):
+                            raise CampaignValidationError(
+                                f"{context} prompt must be a string"
+                            )
+                        input_value = len(prompt.split())
+                    input_len = _positive_integer(input_value, f"{context} input_len")
+                    output_len = _positive_integer(
+                        record.get("output_len", record.get("max_tokens", 128)),
+                        f"{context} output_len",
+                    )
+                    largest = max(largest, input_len + output_len)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise CampaignValidationError(f"cannot load workload trace: {exc}") from exc
+        if not largest:
+            raise CampaignValidationError(f"trace is empty: {config.trace_path}")
+
     too_small = [
         f"{model.label} ({model.max_model_len})"
         for model in models
@@ -369,7 +430,7 @@ def validate_experiment_yaml(
     ]
     if too_small:
         raise CampaignValidationError(
-            f"largest workload bucket needs {largest} tokens, exceeding "
+            f"largest workload request needs {largest} tokens, exceeding "
             "max_model_len for: " + ", ".join(too_small)
         )
     return document, largest
@@ -957,6 +1018,16 @@ def _validate_serving_policy(
             f"{context} has gpu_util={policy_gpu_util}, expected "
             f"{model.gpu_utilization} from models.yaml"
         )
+    policy_max_num_seqs = policy.get("max_num_seqs")
+    if model.max_num_seqs is not None:
+        if _positive_integer(policy_max_num_seqs, f"{context} max_num_seqs") != model.max_num_seqs:
+            raise CampaignValidationError(
+                f"{context} max_num_seqs does not match models.yaml"
+            )
+    elif policy_max_num_seqs not in (None, ""):
+        raise CampaignValidationError(
+            f"{context} sets max_num_seqs without a models.yaml policy"
+        )
     expected_human = {
         "model_revision": model.revision,
         "tokenizer": model.tokenizer,
@@ -1163,6 +1234,10 @@ def validate_allreduce_csv(path: str | os.PathLike[str]) -> None:
             for row in rows
         ]
         for row_number, row in enumerate(rows, start=2):
+            if None in row or any(value is None for value in row.values()):
+                raise CampaignValidationError(
+                    f"{source} row {row_number} has the wrong number of columns"
+                )
             # Latencies must be strictly positive; bandwidths may be exactly
             # zero at the smallest transfer sizes, where GB/s rounds to 0.000.
             # The real 1 GiB busbw floor is enforced by ray_allreduce_bench.sh
@@ -1174,6 +1249,10 @@ def validate_allreduce_csv(path: str | os.PathLike[str]) -> None:
             for field in ("algbw_GBps", "busbw_GBps"):
                 _nonnegative_float(
                     row.get(field), f"{source} row {row_number} {field}"
+                )
+            if float(row["min_s"]) > float(row["avg_s"]):
+                raise CampaignValidationError(
+                    f"{source} row {row_number} min_s exceeds avg_s"
                 )
     except CampaignValidationError:
         raise
@@ -1419,6 +1498,7 @@ def verify_campaign(
     commit_values: set[str] = set()
     runtime_fingerprints: dict[str, str] = {}
     runtime_policies: dict[str, Mapping[str, object]] = {}
+    launch_repeats: dict[Path, tuple[str, str, int]] = {}
     raw_paths: list[Path] = []
     serving_policy_paths: list[Path] = []
     summary_paths: list[Path] = []
@@ -1630,6 +1710,13 @@ def verify_campaign(
             output,
             serving_policy,
         )
+        launch_identity = (point.model_label, point.config_label, point.repeat_id)
+        previous_launch = launch_repeats.setdefault(server_log_path.resolve(), launch_identity)
+        if previous_launch != launch_identity:
+            raise CampaignValidationError(
+                "independent replicates must use distinct server launch logs; "
+                f"{server_log_path} is shared by {previous_launch} and {launch_identity}"
+            )
         raw_paths.append(raw_path)
         summary_paths.append(summary_path)
         log_paths.append(server_log_path)
@@ -1692,15 +1779,24 @@ def verify_campaign(
     source_paths = list((ROOT / "bench").glob("*.py"))
     source_paths += list((ROOT / "scripts").glob("*.py"))
     source_paths += list((ROOT / "scripts").glob("*.sh"))
-    plot_source = ROOT / "plotting" / "plot_results.py"
-    if plot_source.is_file():
-        source_paths.append(plot_source)
+    source_paths += list((ROOT / "plotting").glob("*.py"))
     environment_paths = [environment_path]
     figure_root = output / "figs"
     figure_paths = (
         sorted(path for path in figure_root.rglob("*") if path.is_file())
         if figure_root.is_dir()
         else []
+    )
+    # The NCCL channel lines ("via NET/IB") beside each microbenchmark CSV are
+    # the transport evidence behind the RDMA gate, so they are sealed too.
+    allreduce_logs = sorted(
+        log
+        for csv_path in valid_allreduce
+        for log in (
+            csv_path.with_name(f"{csv_path.stem}_raw.log"),
+            csv_path.with_name(f"{csv_path.stem}_nccl.log"),
+        )
+        if log.is_file()
     )
 
     artifacts = {
@@ -1711,6 +1807,12 @@ def verify_campaign(
         "vllm_samples": vllm_sample_paths,
         "log": log_paths,
         "allreduce": valid_allreduce,
+        "allreduce_log": allreduce_logs,
+        "interconnect_extra": sorted(output.glob("interconnect_extra_*.csv")),
+        "interconnect_log": sorted(
+            list(output.glob("interconnect_extra_*_raw.log"))
+            + list(output.glob("interconnect_extra_*_nccl.log"))
+        ),
         "config": config_paths,
         "lock": lock_paths,
         "source": source_paths,

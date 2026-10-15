@@ -13,6 +13,11 @@ workload definition. The client asks vLLM for delta token IDs and final usage,
 counts exact output tokens rather than HTTP/SSE chunks, and accepts a request as
 successful only when the stream ends cleanly with the requested token count.
 
+Before collecting publication results, follow the short
+[RDMA readiness runbook](docs/rdma-readiness.md) and the ordered
+[cluster setup](docs/cluster-setup.md). A passing software plan still requires
+the two-node transport and hardware gates.
+
 ## Quick Start
 
 Run these commands from the repository root.
@@ -50,9 +55,9 @@ OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
 
 Plan mode performs no hardware operations. It checks the isolated environment,
 campaign options, model/config matrix, revisions, workload bounds, and expected
-result rectangle. The shipped matrix is 23 checkpoints in 63 model/config
-curves times 8 concurrencies times `REPEATS=3` independent replicates: 189
-server launches and 1512 measurement windows (see
+result rectangle. The shipped matrix is 19 checkpoints in 53 model/config
+curves times 8 concurrencies times `REPEATS=3` independent replicates: 159
+server launches and 1272 measurement windows (see
 [Replicates and statistics](#replicates-and-statistics)).
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
@@ -146,8 +151,8 @@ scripts/
   start_ray.sh                start or stop the Ray container for dual-node runs
   cluster_runtime_fingerprint.py verify identical dual-node software/hardware
   launch_server.sh            start vLLM in single, tp2, or pp2 mode
-  interconnect_microbench.sh  nccl-tests all-reduce check
-  ray_allreduce_bench.sh      no-SSH Ray/NCCL all-reduce check
+  hardware_smoke.sh           15-minute end-to-end single-node pipeline check
+  ray_allreduce_bench.sh      no-SSH Ray/NCCL all-reduce check (RDMA gate)
   interconnect_extra_bench.sh no-SSH all-reduce + send/recv microbench
   run_all.sh                  sweep a concurrency list for one config
   run_models.sh               pinned multi-model launch/canary/sweep wrapper
@@ -164,8 +169,10 @@ scripts/
   pack_raw.sh                 archive raw telemetry for storage outside git
 plotting/
   plot_results.py             generate PDF/PNG figures from results/index.csv
-  plot_trends.py              cross-model trend figures from a multi-model index
-  plot_paper.py               PMBS26 paper figure set
+  plot_trends.py              cross-model trend figures (metadata from models.yaml)
+  plot_interconnect.py        all-reduce and send/recv latency/bandwidth by transport
+docs/
+  cluster-setup.md            two-node RDMA setup and pre-flight, in order
 tests/                        standard-library regression tests for release paths
 requirements.txt              Python client and plotting dependencies
 requirements.lock             exact direct and transitive release environment
@@ -191,19 +198,23 @@ Server-side requirements for the included scripts:
 - Docker with NVIDIA GPU runtime support.
 - Permission to run `docker` as the current user.
 - The vLLM container image. The launcher defaults to the immutable NGC
-  `26.09-py3` digest (vLLM 0.29.0) recorded in `scripts/connectx_env.sh`; do
-  not replace it with a mutable monthly tag during a comparable sweep. The
-  baselines used `26.04-py3` (vLLM 0.19.0), which is too old for several
-  checkpoints in the current matrix.
+  `26.09-py3` digest recorded in `scripts/connectx_env.sh`: vLLM 0.29.0, CUDA
+  13.4.1, NCCL 2.31.2, and the HPC-X NCCL RDMA plugin. It is the newest NGC
+  vLLM release; upstream vLLM is further ahead (0.31), but its images are not
+  NVIDIA's validated GB10/RDMA stack. Do not replace the digest with a mutable
+  monthly tag during a comparable sweep. The baselines used `26.04-py3` (vLLM
+  0.19.0), which is too old for several checkpoints in the current matrix.
+- Ray `RAY_VERSION` (2.56.1, the release vLLM 0.29.0 is tested against),
+  installed into both containers by `scripts/start_ray.sh`; the image does not
+  bundle Ray.
 - Hugging Face access for the selected model, usually through `HF_TOKEN`.
 - For dual-node runs: working name resolution or IP configuration for both
   nodes, a ConnectX interface, and matching access to the vLLM image on both
   nodes.
 - For RDMA (the default transport): RoCEv2 enabled on the ConnectX ports of
   both nodes. `ibdev2netdev` lists one RDMA device per port. Set
-  `NCCL_IB_DISABLE=1` for the TCP-socket fallback.
-- For `scripts/interconnect_microbench.sh`: `git`, `make`, MPI tooling
-  providing `mpirun`, and NCCL build dependencies.
+  `NCCL_IB_DISABLE=1` for the TCP-socket fallback. The full setup and
+  pre-flight sequence is in [docs/cluster-setup.md](docs/cluster-setup.md).
 
 If Docker reports a socket permission error, add the user to the `docker` group
 and start a new shell:
@@ -371,13 +382,13 @@ export HF_CACHE=$HOME/.cache/huggingface
 # export CONTAINER_DNS=8.8.8.8
 # Optional download-only override; defaults to CONTAINER_DNS.
 # export DOWNLOAD_DNS=8.8.8.8
-# RDMA is the default NCCL transport. CX_IFACE defaults to the single cable;
-# list all four interfaces for the dual-cable layout.
-# export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
+# RDMA over all four dual-cable interfaces is the default. Override CX_IFACE
+# for a single cable.
+# export CX_IFACE=enp1s0f0np0
 # export NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
 # export NCCL_IB_DISABLE=1   # TCP-socket fallback
-# Per-channel transport evidence in every dual-node server log (set by
-# rdma-dual-cable.env; read by run_models.sh and audit_nccl_transport.py).
+# Per-channel transport evidence in every dual-node server log (the
+# connectx_env.sh default; read by run_models.sh and audit_nccl_transport.py).
 # export NCCL_DEBUG=INFO
 # export NCCL_DEBUG_SUBSYS=INIT,NET
 # Offline serving is the default; predownload exact revisions before launching.
@@ -394,7 +405,7 @@ export MODELS_YAML=configs/models.yaml
 export READY_TIMEOUT=1800
 # Installed into the Ray containers by start_ray.sh. Re-check it against the
 # vLLM release inside VLLM_IMAGE whenever the image changes.
-export RAY_VERSION=2.53.0
+export RAY_VERSION=2.56.1
 # Work around a serialization failure in the pinned PyTorch build's
 # AOTAutograd disk cache while leaving graph compilation itself enabled.
 export TORCHINDUCTOR_AUTOGRAD_CACHE=0
@@ -418,7 +429,7 @@ Dual-node network defaults live in `scripts/connectx_env.sh`. Override them
 before running the scripts if your node names, IPs, or interface differ:
 
 ```bash
-export CX_IFACE=enp1s0f0np0
+export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
 export DIYA_HOST=Diya
 export HOEDUS_HOST=Hoedus
 export DIYA_IP=10.10.10.1
@@ -430,9 +441,9 @@ export RAY_PORT=6379
 `CX_IFACE` takes one interface for a single-cable setup or a comma-separated
 list for the dual-cable setup. NCCL RDMA device selection uses `NCCL_IB_HCA`
 and auto-discovery when that variable is empty. `CX_IFACE` also feeds the NCCL
-and Gloo socket interface lists and the serving fingerprint. The RDMA
-verification sequence lives in
-`rdma-testing/docs/dual-cable-campaign-setup.md`. The per-device RDMA perftest
+and Gloo socket interface lists and the serving fingerprint. The RDMA setup
+and verification sequence lives in
+[docs/cluster-setup.md](docs/cluster-setup.md). The per-device RDMA perftest
 matrix runs from the standalone `perftest-suite-dgx-spark-cluster` repository.
 
 ## Running Single-Node Benchmarks
@@ -561,7 +572,7 @@ DROP_CACHES=1 scripts/start_ray.sh worker
 
 Before the first dual launch, fetch and validate the pinned snapshots on the
 head and mirror them to the worker's independent cache. The whole matrix is
-~1.44 TB, so select models with `MODEL_LABELS` (the campaign does this one
+~1.07 TB, so select models with `MODEL_LABELS` (the campaign does this one
 model at a time and purges each afterwards):
 
 ```bash
@@ -644,9 +655,10 @@ either threshold is missed. A campaign run over the TCP fallback must set
 `ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8` and `ALLREDUCE_MAX_8B_LATENCY_S=0.005`
 explicitly. Both values are included in the artifact fingerprint.
 
-`scripts/interconnect_microbench.sh` is an optional MPI/nccl-tests alternative
-only for clusters where head-to-worker SSH is configured. It is not the default
-for this no-SSH topology.
+`scripts/interconnect_extra_bench.sh` adds the point-to-point send/recv
+primitive that pipeline parallelism uses, and labels each row with the
+transport NCCL actually selected. `plotting/plot_interconnect.py` draws both
+primitives by transport.
 
 ## Benchmarking Multiple Models
 
@@ -731,8 +743,8 @@ scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
-fingerprinted benchmark paths (`bench`, `configs`, `scripts`,
-`plotting/plot_results.py`, and the requirements files). Use a fresh output
+fingerprinted benchmark paths (`bench`, `configs`, `scripts`, `plotting`,
+and the requirements files). Use a fresh output
 directory for methodology `steady-exact-v4`; earlier campaigns live under
 `baselines/` and are never resumed into.
 
@@ -744,18 +756,18 @@ export OUT_DIR=results
 PLAN_ONLY=1 scripts/run_job.sh
 ```
 
-The default plan reports 23 model groups, 189 server launches (63
-model/config curves x 3 replicates), and 1512 measurement windows (x 8
-concurrencies). At the configured 750 s minimum per window that is ~315
+The default plan reports 19 model groups, 159 server launches (53
+model/config curves x 3 replicates), and 1272 measurement windows (x 8
+concurrencies). At the configured 750 s minimum per window that is ~265
 sequential hours before automatic extensions; with the extensions seen in the
-baselines (~4 min mean per window) expect ~410 h of measurement (about 17
-days), plus ~16 h of model launches, plus downloads. Of the 1512 windows, 1080
-use two GB10s, so the campaign is at least ~540 GB10-hours of accelerator use;
-this is not "315 GPU-hours." Then start Ray on Diya and Hoedus (sourcing `rdma-dual-cable.env`
-on both) and run this on Diya inside `tmux`, using the same `OUT_DIR`:
+baselines (~4 min mean per window) expect ~346 h of measurement (about 14.5
+days), plus ~13 h of model launches, plus downloads. Of the 1272 windows, 912
+use two GB10s, so the campaign is at least ~455 GB10-hours of accelerator use;
+this is not "265 GPU-hours." Then start Ray on Diya and Hoedus and run this on
+Diya inside `tmux`, using the same `OUT_DIR`. `scripts/connectx_env.sh` already
+defaults to the dual-cable RDMA layout with NCCL transport logging:
 
 ```bash
-source rdma-dual-cable.env
 scripts/run_job.sh
 ```
 
@@ -773,7 +785,7 @@ microbenchmark while the GPUs are idle. It then works through
 4. **purge** the snapshot, and vLLM's compile cache, from both nodes.
 
 Peak cache use is therefore the largest single model (~163 GB for Qwen3-Next
-80B BF16), not the whole matrix (~1.44 TB). `PURGE_WEIGHTS=0` keeps everything.
+80B BF16), not the whole matrix (~1.07 TB). `PURGE_WEIGHTS=0` keeps everything.
 Single-node launches run inside the Ray head container
 (`SINGLE_CONTAINER=ray`), so the cluster survives them and the old
 "single last" ordering is gone.
@@ -783,7 +795,7 @@ it once under every config with the strict stream contract and the client
 tokenizer preflight, and purges it again. It collects every failure and stops
 the job before any measurement if one failed, so an unsupported architecture or
 an image problem shows up within hours, not on day 10. The pass costs one extra
-download of the matrix plus 63 launches, and it is skipped automatically once
+download of the matrix plus 53 launches, and it is skipped automatically once
 it has succeeded for the same commit, matrix, image, and network policy.
 `STOP_AFTER_CANARY=1 scripts/run_job.sh` runs only the canary pass, which is
 the right first step after changing the image or `models.yaml`.
@@ -859,6 +871,13 @@ overrides before applying each matrix entry, so an unrelated `QUANT`,
 `TOKENIZER`, or `TRUST_REMOTE_CODE` value in `.env` cannot leak into the next
 model.
 
+An optional model-matrix `max_num_seqs` sets and fingerprints vLLM's server
+scheduler limit consistently across that checkpoint's configs. Nemotron 3
+Super NVFP4 uses `4` for the pinned image's documented Spark constraint.
+Client concurrency still ranges up to 128, so requests above the server limit
+queue. State this policy when comparing its curves with other checkpoints;
+see the [readiness runbook](docs/rdma-readiness.md).
+
 ### Replicates and statistics
 
 The PMBS26 campaign measured each point once, in a 1500 s window, and later
@@ -924,20 +943,21 @@ both with `scripts/compare_campaigns.py`:
 - the Llama 3.1 8B ladder and Nemotron 3 Super NVFP4, against the PMBS26 TCP
   baseline (`figs/stats/compare_vs_pmbs26_tcp.md`): transport and software
   changed together;
-- the six RDMA-pilot checkpoints (Nemotron Super 49B, Nemotron Puzzle 75B,
-  Qwen3-Next 80B, each NVFP4 and BF16), against the pilot
-  (`figs/stats/compare_vs_rdma_pilot.md`): same transport and cabling, so the
-  difference isolates the image, window, and replicate changes.
+- Qwen3-Next 80B (NVFP4 and BF16), the pilot pair kept in the matrix, against
+  the pilot (`figs/stats/compare_vs_rdma_pilot.md`): same transport and
+  cabling, so the difference isolates the image, window, and replicate
+  changes.
 
 The pilot's rows are not merged into the new index: they are single-repeat
-`steady-exact-v3` rows, so those six checkpoints are re-measured from scratch
-with replicates.
+`steady-exact-v3` rows, so Qwen3-Next is re-measured from scratch with
+replicates. The pilot's Nemotron Super 49B and Nemotron Puzzle 75B pairs are
+not in the new matrix (see the `configs/models.yaml` comments).
 
 ### Transport evidence and the TCP ablation
 
 `NCCL_IB_DISABLE=0` only permits RDMA; NCCL falls back to sockets silently
 when the RoCE handshake fails. With `NCCL_DEBUG=INFO` and
-`NCCL_DEBUG_SUBSYS=INIT,NET` on both Ray containers (`rdma-dual-cable.env`),
+`NCCL_DEBUG_SUBSYS=INIT,NET` on both Ray containers (the `connectx_env.sh` defaults),
 NCCL logs the transport of every channel into the server log.
 `run_models.sh` fails a dual launch whose log shows the wrong transport, and
 `scripts/audit_nccl_transport.py` writes a per-launch table (RDMA devices,
@@ -1456,9 +1476,6 @@ non-paper diagnostic run.
 - Dual-node performance looks like Wi-Fi or management-network traffic: rerun
   `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
   counters during a `tp2` run.
-- `interconnect_microbench.sh` build fails: install MPI/NCCL build
-  dependencies, verify network access to GitHub, or set `NCCL_TESTS_DIR` to an
-  existing MPI-enabled nccl-tests checkout.
 - No energy figure is generated: rerun with a non-`none` power backend. The
   plotting script skips energy when the index has no power columns.
 - `plot_results.py` reports `Expected N fields` (and the schema versions match):
@@ -1479,7 +1496,7 @@ non-paper diagnostic run.
   measured as RDMA. Check `ibdev2netdev` on both nodes and the
   `NET/IB : Using` line in the server log, then restart Ray. A warning about
   missing NCCL channel lines means Ray was started without `NCCL_DEBUG=INFO`
-  (source `rdma-dual-cable.env` on both nodes before `start_ray.sh`).
+  (restart Ray on both nodes without overriding `NCCL_DEBUG`).
 - `purge` refuses with `serving processes still running`: a vLLM server or
   Ray serving worker is still alive on that node. Stop it
   (`docker exec vllm-spark pkill -f 'vllm serve'`) and rerun
@@ -1498,7 +1515,7 @@ python scripts/check_environment.py
 OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
 python -m compileall bench plotting scripts
 python -m unittest discover -s tests -v
-bash -n scripts/*.sh
+(for script in scripts/*.sh; do bash -n "$script" || exit 1; done)
 python -m pip check
 python scripts/models_for_config.py configs/models.yaml single
 python plotting/plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png --table

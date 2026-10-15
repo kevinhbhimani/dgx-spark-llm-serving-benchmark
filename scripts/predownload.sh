@@ -74,10 +74,16 @@ add_spec() {
   fi
 }
 for cfg in "${CONFIGS[@]}"; do
-  # exits 1 when no model requests a config; tolerate that under "all"
-  entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg" 2>/dev/null || true)"
+  # exits 1 when no model requests a config; tolerate that under "all", but
+  # not a malformed matrix (exit 2), which would otherwise fetch nothing.
+  rc=0
+  entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg")" || rc=$?
+  if (( rc > 1 )); then
+    echo "[predownload] cannot read $MODELS_YAML for $cfg" >&2
+    exit 1
+  fi
   [[ -z "$entries" ]] && continue
-  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust; do
+  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust _max_num_seqs; do
     [[ -z "$name" ]] && continue
     if [[ -n "$MODEL_LABELS" ]]; then
       selected=0

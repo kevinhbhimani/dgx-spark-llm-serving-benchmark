@@ -710,6 +710,11 @@ def _validate_result_quality(summary, cfg) -> None:
         raise RuntimeError(
             f"release point has {failed} failed request(s); no row was published"
         )
+    if summary.get("failed_requests_with_window_tokens", 0):
+        raise RuntimeError(
+            "release point includes window tokens from failed request(s); "
+            "no row was published"
+        )
     if completed < cfg.min_successful_requests:
         raise RuntimeError(
             f"release point has {completed} successful request(s), fewer than "
@@ -998,6 +1003,14 @@ def _load_serving_policy(path: str | None, cfg) -> tuple[dict | None, dict | Non
         f"power_backend={policy['power_backend']}\n",
         f"cluster_runtime={runtime_hash}\n",
     ))
+    max_num_seqs = policy.get("max_num_seqs", "")
+    if max_num_seqs != "":
+        if (not isinstance(max_num_seqs, str)
+                or re.fullmatch(r"[1-9][0-9]*", max_num_seqs) is None):
+            raise RuntimeError(
+                "serving policy max_num_seqs must be a positive integer string"
+            )
+        legacy_input += f"max_num_seqs={max_num_seqs}\n"
     if hashlib.sha256(legacy_input.encode()).hexdigest() != fingerprint:
         raise RuntimeError(
             "serving policy fields do not reproduce serving_fingerprint"

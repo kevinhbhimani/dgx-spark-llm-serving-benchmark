@@ -6,11 +6,11 @@
 # scripts/check_environment.py. The benchmark also records a client-environment
 # hash in every row, so an intentional upgrade cannot resume into this
 # environment.
-aiohttp==3.14.1
-numpy==2.5.0
-transformers==5.12.1
-tokenizers==0.22.2
-huggingface_hub==1.21.0
+aiohttp==3.14.5
+numpy==2.5.4
+transformers==5.20.0
+tokenizers==0.23.3
+huggingface_hub==2.2.0
 pyyaml==6.0.3
-pandas==3.0.3
-matplotlib==3.11.0
+pandas==3.0.6
+matplotlib==3.11.2

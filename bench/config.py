@@ -153,6 +153,15 @@ class ExperimentConfig:
     def validate(self) -> None:
         """Reject invalid measurement policy before network or GPU work."""
 
+        for name in (
+            "trust_remote_code", "use_token_ids", "balanced_workload",
+            "scrape_vllm_metrics", "require_power_data",
+            "require_vllm_metrics_data", "require_provenance",
+            "require_zero_request_failures", "collect_hf_metadata",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a boolean")
+
         def finite_number(value, name, *, positive=False, nonnegative=False):
             if (isinstance(value, bool) or not isinstance(value, (int, float))
                     or not math.isfinite(value)):
