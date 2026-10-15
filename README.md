@@ -13,6 +13,11 @@ workload definition. The client asks vLLM for delta token IDs and final usage,
 counts exact output tokens rather than HTTP/SSE chunks, and accepts a request as
 successful only when the stream ends cleanly with the requested token count.
 
+Before collecting publication results, follow the short
+[RDMA readiness runbook](docs/rdma-readiness.md) and the ordered
+[cluster setup](docs/cluster-setup.md). A passing software plan still requires
+the two-node transport and hardware gates.
+
 ## Quick Start
 
 Run these commands from the repository root.
@@ -738,8 +743,8 @@ scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
-fingerprinted benchmark paths (`bench`, `configs`, `scripts`,
-`plotting/plot_results.py`, and the requirements files). Use a fresh output
+fingerprinted benchmark paths (`bench`, `configs`, `scripts`, `plotting`,
+and the requirements files). Use a fresh output
 directory for methodology `steady-exact-v4`; earlier campaigns live under
 `baselines/` and are never resumed into.
 
@@ -790,7 +795,7 @@ it once under every config with the strict stream contract and the client
 tokenizer preflight, and purges it again. It collects every failure and stops
 the job before any measurement if one failed, so an unsupported architecture or
 an image problem shows up within hours, not on day 10. The pass costs one extra
-download of the matrix plus 63 launches, and it is skipped automatically once
+download of the matrix plus 53 launches, and it is skipped automatically once
 it has succeeded for the same commit, matrix, image, and network policy.
 `STOP_AFTER_CANARY=1 scripts/run_job.sh` runs only the canary pass, which is
 the right first step after changing the image or `models.yaml`.
@@ -865,6 +870,13 @@ the ConnectX host/interface settings. The wrapper clears model-specific launch
 overrides before applying each matrix entry, so an unrelated `QUANT`,
 `TOKENIZER`, or `TRUST_REMOTE_CODE` value in `.env` cannot leak into the next
 model.
+
+An optional model-matrix `max_num_seqs` sets and fingerprints vLLM's server
+scheduler limit consistently across that checkpoint's configs. Nemotron 3
+Super NVFP4 uses `4` for the pinned image's documented Spark constraint.
+Client concurrency still ranges up to 128, so requests above the server limit
+queue. State this policy when comparing its curves with other checkpoints;
+see the [readiness runbook](docs/rdma-readiness.md).
 
 ### Replicates and statistics
 
@@ -1503,7 +1515,7 @@ python scripts/check_environment.py
 OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
 python -m compileall bench plotting scripts
 python -m unittest discover -s tests -v
-bash -n scripts/*.sh
+(for script in scripts/*.sh; do bash -n "$script" || exit 1; done)
 python -m pip check
 python scripts/models_for_config.py configs/models.yaml single
 python plotting/plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png --table

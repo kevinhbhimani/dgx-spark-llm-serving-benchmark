@@ -12,8 +12,9 @@ evidence a reviewer asking "was this really RDMA?" needs.
 
     python3 scripts/audit_nccl_transport.py results --md results/figs/stats/nccl_transport_audit.md
 
-Exits 1 when any launch shows the wrong transport; launches without NCCL
-channel lines are reported as "no evidence" (NCCL_DEBUG was not INFO).
+Exits 1 when any launch is unverified or shows the wrong transport, or no
+dual-node logs were found. Use --allow-unverified only for historical,
+exploratory reports that may lack NCCL channel evidence or serving policies.
 """
 from __future__ import annotations
 
@@ -49,7 +50,10 @@ def policy_expectations(out_dir: Path) -> dict[tuple[str, str, str], str]:
         if not fingerprint or not name.endswith(suffix):
             continue
         label = name[: -len(suffix)]
-        transport = "Socket" if str(policy.get("nccl_ib_disable")) == "1" else "IB"
+        mode = str(policy.get("nccl_ib_disable"))
+        if mode not in {"0", "1"}:
+            continue
+        transport = "Socket" if mode == "1" else "IB"
         expected[(label, str(policy.get("config")), fingerprint[:16])] = transport
     return expected
 
@@ -77,6 +81,8 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("out_dir")
     parser.add_argument("--md", help="also write the report as markdown")
+    parser.add_argument("--allow-unverified", action="store_true",
+                        help="allow absent logs/evidence/policies for exploratory reports")
     args = parser.parse_args(argv)
     out_dir = Path(args.out_dir)
     expected = policy_expectations(out_dir)
@@ -129,7 +135,9 @@ def main(argv: list[str]) -> int:
         Path(args.md).parent.mkdir(parents=True, exist_ok=True)
         Path(args.md).write_text("\n".join(lines) + "\n")
         print(f"wrote {args.md}")
-    return 1 if "WRONG TRANSPORT" in verdicts else 0
+    failed = ("WRONG TRANSPORT" in verdicts
+              or not args.allow_unverified and (not rows or any(v != "ok" for v in verdicts)))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

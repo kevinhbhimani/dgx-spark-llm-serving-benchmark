@@ -19,12 +19,47 @@ Usage (inside the container):
 """
 from __future__ import annotations
 import math
+import os
 import subprocess
 import sys
 import time
 
 import ray
 from ray.exceptions import GetTimeoutError
+
+
+def _transport_label(debug_path: str) -> str:
+    """Require channel evidence: merely opening an IB plugin proves nothing."""
+    try:
+        with open(debug_path, encoding="utf-8", errors="replace") as handle:
+            nccl_log = handle.read()
+    except OSError:
+        return "unknown"
+    ib = "via NET/IB" in nccl_log
+    socket = "via NET/Socket" in nccl_log
+    return "mixed" if ib and socket else "IB" if ib else "Socket" if socket else "unknown"
+
+
+def _validated_results(all_results, sizes, expected_transport):
+    """Reject incomplete/invalid ranks and retain the slower rank per size."""
+    if len(all_results) != 2:
+        raise ValueError("expected exactly two rank results")
+    labels = [label for label, _ in all_results]
+    if labels != [expected_transport, expected_transport]:
+        raise ValueError(
+            f"expected {expected_transport} channels on both ranks, got {labels}")
+    for _, rank_results in all_results:
+        if [row[0] for row in rank_results] != sizes:
+            raise ValueError("a rank returned an incomplete size sweep")
+        for _, avg, minimum in rank_results:
+            if not (math.isfinite(avg) and math.isfinite(minimum)
+                    and 0 < minimum <= avg):
+                raise ValueError("a rank returned invalid timings")
+    return [
+        (size, max(rank[1][index][1] for rank in all_results),
+         max(rank[1][index][2] for rank in all_results))
+        for index, size in enumerate(sizes)
+    ]
 
 
 def _gpu_processes() -> list[str]:
@@ -51,9 +86,16 @@ def _worker(rank, world, head_ip, iface, port, sizes, iters, warmup):
 
     os.environ["NCCL_SOCKET_IFNAME"] = iface
     os.environ["GLOO_SOCKET_IFNAME"] = iface
-    os.environ.setdefault(
-        "NCCL_IB_DISABLE", os.environ.get("NCCL_IB_DISABLE", "0")
-    )
+    # Observe each Ray worker's existing policy. The driver environment alone
+    # cannot change the containers on both nodes, so prove the actual data path.
+    debug_path = f"/tmp/nccl_allreduce_rank{rank}_{os.getpid()}.log"
+    os.environ["NCCL_DEBUG"] = "INFO"
+    os.environ["NCCL_DEBUG_SUBSYS"] = "INIT,NET"
+    os.environ["NCCL_DEBUG_FILE"] = debug_path
+    try:
+        os.remove(debug_path)
+    except FileNotFoundError:
+        pass
     import torch
     import torch.distributed as dist
 
@@ -85,7 +127,15 @@ def _worker(rank, world, head_ip, iface, port, sizes, iters, warmup):
                 times.append(time.perf_counter() - t0)
             avg = sum(times) / len(times)
             results.append((size, avg, min(times)))
-        return results
+        transport = _transport_label(debug_path)
+        # The wrapper saves stderr beside the CSV, preserving the channel and
+        # device evidence that justified this gate for later paper auditing.
+        try:
+            with open(debug_path, encoding="utf-8", errors="replace") as handle:
+                evidence = "".join(line for line in handle if "NET/" in line)
+        except OSError:
+            evidence = ""
+        return transport, results, evidence
     finally:
         if initialized:
             dist.destroy_process_group()
@@ -100,8 +150,8 @@ def main() -> int:
     head_ip, worker_ip, iface = sys.argv[1], sys.argv[2], sys.argv[3]
     try:
         port = int(sys.argv[4]) if len(sys.argv) > 4 else 29517
-        min_bw = float(sys.argv[5]) if len(sys.argv) > 5 else 1.8
-        max_latency = float(sys.argv[6]) if len(sys.argv) > 6 else 0.005
+        min_bw = float(sys.argv[5]) if len(sys.argv) > 5 else 16.0
+        max_latency = float(sys.argv[6]) if len(sys.argv) > 6 else 0.0001
     except ValueError as exc:
         sys.stderr.write(f"[microbench] invalid numeric argument: {exc}\n")
         return 2
@@ -167,11 +217,17 @@ def main() -> int:
             ray.cancel(ref, force=True)
         sys.stderr.write("[microbench] all-reduce tasks timed out after 1800s\n")
         return 1
-    if any([row[0] for row in rank_results] != sizes
-           for rank_results in all_results):
-        sys.stderr.write("[microbench] a rank returned an incomplete size sweep\n")
+    expected_transport = "Socket" if os.environ.get("NCCL_IB_DISABLE", "0") == "1" else "IB"
+    for rank, (label, _, evidence) in enumerate(all_results):
+        sys.stderr.write(f"[microbench] rank {rank} observed NET/{label}\n{evidence}")
+    try:
+        results = _validated_results(
+            [(label, rows) for label, rows, _ in all_results], sizes,
+            expected_transport,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"[microbench] {exc}\n")
         return 1
-    results = all_results[0]
 
     print("bytes,avg_s,min_s,algbw_GBps,busbw_GBps")
     rows = {}

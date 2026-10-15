@@ -253,7 +253,7 @@ class CampaignFixture:
         cfg.expected_concurrencies = "1"
         cfg.repeat_id = repeat_id
         cfg.repeat_count = repeat_count
-        log_name = f"server_model-a_{self.config}_fixture.log"
+        log_name = f"server_model-a_{self.config}_r{repeat_id}_fixture.log"
         cfg.server_log = str(self.results / log_name)
 
         serving_policy, serving_policy_artifact = self._write_serving_policy(cfg)
@@ -336,6 +336,7 @@ class CampaignFixture:
         fingerprint_config = dict(summary["config"])
         fingerprint_config.pop("repeat_id", None)
         fingerprint_config.pop("repeat_count", None)
+        fingerprint_config.pop("server_log", None)
         fingerprint_config.pop("deployment_fingerprint", None)
         summary["experiment_fingerprint"] = _sha256_json(
             {
@@ -803,6 +804,34 @@ class VerifyTests(unittest.TestCase):
                 fixture.models, fixture.experiment, fixture.results, [1], 1
             )
             self.assertEqual(report["verified_count"], 1)
+
+    def test_manifest_seals_microbenchmark_nccl_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp), config="tp2")
+            fixture.add_point()
+            fixture.add_allreduce(valid=True)
+            (allreduce_csv,) = fixture.results.glob("allreduce_ray_*.csv")
+            evidence = [
+                allreduce_csv.with_name(f"{allreduce_csv.stem}_nccl.log"),
+                fixture.results / "interconnect_extra_id_fixture_raw.log",
+                fixture.results / "interconnect_extra_id_fixture_nccl.log",
+            ]
+            for path in evidence:
+                path.write_text("NCCL INFO Channel 00/0 : 0 -> 1 via NET/IB/0\n")
+            manifest = fixture.results / "campaign-manifest.json"
+            validator.verify_campaign(
+                fixture.models, fixture.experiment, fixture.results, [1], 1,
+                manifest,
+            )
+            sealed = json.loads(manifest.read_text())["artifacts"]
+            self.assertEqual(
+                [record["path"] for record in sealed["allreduce_log"]],
+                [evidence[0].name],
+            )
+            self.assertEqual(
+                {record["path"] for record in sealed["interconnect_log"]},
+                {evidence[1].name, evidence[2].name},
+            )
 
 
 if __name__ == "__main__":

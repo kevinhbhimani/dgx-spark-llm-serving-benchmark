@@ -67,13 +67,22 @@ fi
 mkdir -p "$OUT_DIR"
 LOG="$OUT_DIR/allreduce_ray_${ARTIFACT_FINGERPRINT}_$(date +%Y%m%d-%H%M%S).csv"
 TMP="$LOG.tmp.$$"
+RAW="${LOG%.csv}_raw.log"
+DIAG="${LOG%.csv}_nccl.log"
 trap 'rm -f "$TMP"' EXIT
 docker exec -i \
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" \
   "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" "$PORT" \
   "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" \
-  < "$HERE/ray_allreduce_bench.py" | tee "$TMP"
+  < "$HERE/ray_allreduce_bench.py" 2> >(tee "$DIAG" >&2) | tee "$RAW"
+
+# Ray may print cluster messages on stdout; retain the raw stream but keep the
+# published CSV limited to data. The Python driver verifies both full sweeps.
+grep -E '^(bytes,|[0-9]+,)' "$RAW" > "$TMP"
+validator_python="${PYTHON:-$HERE/../.venv/bin/python}"
+if [[ -z "${PYTHON:-}" && ! -x "$validator_python" ]]; then validator_python=python3; fi
+"$validator_python" "$HERE/validate_microbench.py" allreduce "$TMP"
 
 # Only a successful complete pipeline becomes a resumable campaign artifact.
 # A failed docker/Ray/NCCL run leaves no allreduce_ray_*.csv for run_job.sh to

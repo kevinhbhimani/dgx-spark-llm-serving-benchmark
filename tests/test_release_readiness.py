@@ -232,7 +232,7 @@ class AtomicArtifactTests(unittest.TestCase):
 
 class ServingPolicyTests(unittest.TestCase):
     @staticmethod
-    def make_policy():
+    def make_policy(max_num_seqs=None):
         runtime_facts = {
             "gpus": [{"gpu_name": "GB10", "power_limit_w": "N/A"}],
             "source": "host-nvidia-smi",
@@ -293,6 +293,9 @@ class ServingPolicyTests(unittest.TestCase):
             f"power_backend={policy['power_backend']}\n",
             f"cluster_runtime={runtime_hash}\n",
         ))
+        if max_num_seqs is not None:
+            policy["max_num_seqs"] = max_num_seqs
+            legacy += f"max_num_seqs={max_num_seqs}\n"
         policy["serving_fingerprint"] = hashlib.sha256(legacy.encode()).hexdigest()
         return policy
 
@@ -332,6 +335,35 @@ class ServingPolicyTests(unittest.TestCase):
         cfg = SimpleNamespace(require_provenance=True)
         with self.assertRaisesRegex(RuntimeError, "requires"):
             _load_serving_policy(None, cfg)
+
+    def test_scheduler_capacity_is_part_of_optional_launch_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = self.make_policy(max_num_seqs="4")
+            path = Path(tmp) / "serving_policy.json"
+            path.write_text(json.dumps(policy))
+            cfg = ExperimentConfig(
+                require_provenance=True, out_dir=tmp,
+                config_label=policy["config"], model=policy["model"],
+                model_revision=policy["revision"], tokenizer=policy["tokenizer"],
+                tokenizer_revision=policy["tokenizer_revision"],
+                serving_fingerprint=policy["serving_fingerprint"],
+            )
+            loaded, _ = _load_serving_policy(str(path), cfg)
+            self.assertEqual(loaded["max_num_seqs"], "4")
+            self.assertNotEqual(policy["serving_fingerprint"],
+                                self.make_policy()["serving_fingerprint"])
+
+            policy["max_num_seqs"] = "8"
+            path.write_text(json.dumps(policy))
+            with self.assertRaisesRegex(RuntimeError, "reproduce"):
+                _load_serving_policy(str(path), cfg)
+
+            for value in (0, False, None, "0", "-1", "1.5"):
+                with self.subTest(value=value):
+                    policy["max_num_seqs"] = value
+                    path.write_text(json.dumps(policy))
+                    with self.assertRaisesRegex(RuntimeError, "max_num_seqs"):
+                        _load_serving_policy(str(path), cfg)
 
 
 if __name__ == "__main__":

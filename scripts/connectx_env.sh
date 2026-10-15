@@ -84,8 +84,9 @@ export RAY_VERSION="${RAY_VERSION:-2.56.1}"
 # interface in the list.
 connectx_local_ipv4() {
   local iface
-  IFS=',' read -ra _cx_ifaces <<< "$CX_IFACE"
-  for iface in "${_cx_ifaces[@]}"; do
+  local -a ifaces
+  IFS=',' read -ra ifaces <<< "$CX_IFACE"
+  for iface in "${ifaces[@]}"; do
     local addr
     addr=$(ip -4 -o addr show "$iface" 2>/dev/null \
       | awk 'NR == 1 {split($4, a, "/"); print a[1]}')
@@ -100,12 +101,13 @@ connectx_local_ipv4() {
 require_local_connectx_ip() {
   local expected="$1" role="${2:-requested role}"
   local iface found=0
-  IFS=',' read -ra _cx_ifaces <<< "$CX_IFACE"
-  for iface in "${_cx_ifaces[@]}"; do
+  local -a ifaces
+  IFS=',' read -ra ifaces <<< "$CX_IFACE"
+  for iface in "${ifaces[@]}"; do
     local actual
     actual=$(ip -4 -o addr show "$iface" 2>/dev/null \
-      | awk 'NR == 1 {split($4, a, "/"); print a[1]}')
-    if [[ -n "$actual" && "$actual" == "$expected" ]]; then
+      | awk '{split($4, a, "/"); print a[1]}')
+    if [[ -n "$actual" ]] && grep -Fxq -- "$expected" <<< "$actual"; then
       found=1
       break
     fi
@@ -114,6 +116,38 @@ require_local_connectx_ip() {
     echo "[cluster] expected IP $expected for $role not found on any interface in CX_IFACE ($CX_IFACE)" >&2
     return 1
   fi
+}
+
+# Link reachability through TCP does not prove that verbs are available. Check
+# each requested rail before a launcher removes/recreates the serving container.
+require_connectx_rdma() {
+  case "$NCCL_IB_DISABLE" in
+    1) return 0 ;;
+    0) ;;
+    *) echo "[cluster] NCCL_IB_DISABLE must be 0 (RDMA) or 1 (TCP)" >&2; return 1 ;;
+  esac
+  local iface links
+  local -a ifaces
+  command -v rdma >/dev/null || {
+    echo "[cluster] rdma command missing; install iproute2 RDMA tooling" >&2
+    return 1
+  }
+  links="$(rdma link show)" || return 1
+  IFS=',' read -ra ifaces <<< "$CX_IFACE"
+  for iface in "${ifaces[@]}"; do
+    if ! awk -v iface="$iface" '
+      {active=0; linked=0; physical=0;
+       for(i=1;i<NF;i++) {
+         if($i=="state" && $(i+1)=="ACTIVE") active=1;
+         if($i=="physical_state" && $(i+1)=="LINK_UP") physical=1;
+         if($i=="netdev" && $(i+1)==iface) linked=1;
+       }
+       if(active && physical && linked) found=1}
+      END {exit !found}' <<< "$links"; then
+      echo "[cluster] no ACTIVE/LINK_UP RDMA port mapped to $iface" >&2
+      return 1
+    fi
+  done
 }
 
 # One fixed serving container and one head GPU means campaigns targeting

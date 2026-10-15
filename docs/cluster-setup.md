@@ -2,8 +2,11 @@
 
 Two DGX Sparks: **Diya** (head, `10.10.10.1`) and **Hoedus** (worker,
 `10.10.10.2`), joined by two QSFP cables, which give four ConnectX-7 interfaces
-per node. Every dual-node measurement uses NCCL over RDMA (RoCEv2) across all
-four. Run the steps in order; each must pass before the next.
+per node. The campaign requests NCCL over RDMA (RoCEv2) with all four interfaces
+available. Confirm the transport in the NCCL logs and the devices actually used
+before claiming four-interface striping. Run the steps in order; each must pass
+before the next. See [RDMA readiness](rdma-readiness.md) for the software checks,
+remaining hardware gates, and paper reporting limits.
 
 ## 1. Firmware and system software (both nodes)
 
@@ -40,22 +43,23 @@ sudo netplan apply
 ```
 10.10.10.1  Diya
 10.10.10.2  Hoedus
-10.10.11.1  Diya
-10.10.11.2  Hoedus
-10.10.12.1  Diya
-10.10.12.2  Hoedus
-10.10.13.1  Diya
-10.10.13.2  Hoedus
 ```
 
-Ray and the API server use the first subnet; NCCL stripes across all four.
+Keep these hostnames bound only to the first subnet so rendezvous addresses are
+unambiguous. Use IP addresses for the other subnets; remove older entries that
+repeat `Diya` or `Hoedus` on them. Ray and the API server use the first subnet;
+all four interfaces are available to NCCL. The interface/RoCE correspondence
+is documented in NVIDIA's
+[ConnectX-7 networking guide](https://docs.nvidia.com/dgx/dgx-spark/spark-clustering.html).
 
 ## 4. Links and RDMA devices
 
 ```bash
-ip -br link show enp1s0f0np0 enP2p1s0f0np0 enp1s0f1np1 enP2p1s0f1np1   # all UP, both nodes
-ibdev2netdev                                                            # four RoCE devices, both nodes
-for s in 10 11 12 13; do ping -c 3 10.10.$s.2; done                     # from Diya, < 2 ms
+for iface in enp1s0f0np0 enP2p1s0f0np0 enp1s0f1np1 enP2p1s0f1np1; do
+  ip -br link show dev "$iface"                  # all UP, both nodes
+done
+ibdev2netdev                                    # four RoCE devices, both nodes
+scripts/verify_connectx.sh                      # on Diya: addresses, routes, per-interface ping
 ```
 
 If NCCL later uses fewer than four devices, set
@@ -67,9 +71,11 @@ If NCCL later uses fewer than four devices, set
 Run the per-device perftest matrix from the separate
 [perftest-suite-dgx-spark-cluster](https://github.com/dmihovch/perftest-suite-dgx-spark-cluster)
 repository (host on Hoedus, client on Diya, `--modes isolation,concurrent`).
-Each device's isolation bandwidth should be a stable fraction of its link
-rate, the concurrent aggregate should sit at the fabric cap (200 Gb/s
-unidirectional per node), and `ib_write_lat` should be under 2 µs.
+Record isolation and concurrent bandwidth per device, the aggregate bandwidth,
+and `ib_write_lat`. Compare them with a healthy baseline for the same cabling,
+MTU, firmware, and transfer sizes. The campaign's 16 GB/s all-reduce gate is an
+empirical threshold for this cluster; it does not establish a theoretical link
+capacity or prove that every rail carries traffic.
 
 ## 6. Client environment (Diya)
 
@@ -115,13 +121,19 @@ pilot reached 23.6 GB/s, so the 16 GB/s floor separates them cleanly.
 
 ```bash
 scripts/hardware_smoke.sh
+SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
+  SMOKE_CONCURRENCIES="1 128" OUT_DIR=results-smoke-lightning \
+  scripts/hardware_smoke.sh
 ```
 
 About 15 minutes, single node, its own container, port, and output directory:
 it fetches a small model, runs the canary, measures two replicates on fresh
 launches with the release gates on, then writes figures and replicate
 statistics and purges the weights. It proves the image, harness, power and
-metrics sampling, and plotting work together before the long run.
+metrics sampling, and plotting work together before the long run. The second
+command runs the Lightning checkpoint at the campaign's top load, since the
+canary cannot catch a failure that appears only under load (see
+[RDMA readiness](rdma-readiness.md)).
 
 ## 10. Plan, canary pass, campaign (Diya, inside tmux)
 

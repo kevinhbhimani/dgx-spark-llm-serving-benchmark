@@ -24,6 +24,8 @@
 #                 Qwen FP8, MXFP4): vLLM auto-detects the method.
 #   tokenizer     optional tokenizer id/path (defaults to name).
 #   trust_remote_code  true only for repos that ship custom modeling code.
+#   max_num_seqs  optional fixed server scheduler capacity, shared by all
+#                 configs. Client concurrency may exceed it and queue normally.
 #   meta          descriptive only, read by plotting/plot_trends.py: pretty
 #                 name, arch (dense|moe), attention (full|linear-hybrid|
 #                 sliding-window|mamba-hybrid), quant (bf16|fp8|nvfp4|mxfp4),
@@ -176,6 +178,9 @@ models:
     revision: 4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6
     configs: [single, tp2, pp2]
     max_model_len: 8704
+    # NGC vLLM 26.09 requires this scheduler limit on DGX Spark for this model:
+    # https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html
+    max_num_seqs: 4
     trust_remote_code: true
     meta: {pretty: "Nemotron3-Super-120B-A12B NVFP4", arch: moe, attention: mamba-hybrid, quant: nvfp4, params_b: 120.0, active_b: 12.0, ladder_base: nemotron3-super-120b-a12b, nvidia: true}
 
