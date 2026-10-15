@@ -402,6 +402,14 @@ verification sequence lives in
 `rdma-testing/docs/dual-cable-campaign-setup.md`. The per-device RDMA perftest
 matrix runs from the standalone `perftest-suite-dgx-spark-cluster` repository.
 
+The dual-cable settings live in `environments/rdma-dual-cable.env`.
+`scripts/load_env.sh` loads only `.env`, so source the file before running any
+script:
+
+```bash
+source environments/rdma-dual-cable.env
+```
+
 ## Running Single-Node Benchmarks
 
 Start vLLM on the serving node:

@@ -80,10 +80,16 @@ Both nodes:
 
 ## Environment
 
-Export before running any script, or add to `.env`:
+The dual-cable settings live in `environments/rdma-dual-cable.env`:
 ```bash
 export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
 export NCCL_IB_DISABLE=0
+```
+
+`scripts/load_env.sh` loads only `.env`, so source the file before running any
+script:
+```bash
+source environments/rdma-dual-cable.env
 ```
 
 `DIYA_IP`, `HOEDUS_IP`, and `HEAD_IP` keep their defaults (`10.10.10.1`,

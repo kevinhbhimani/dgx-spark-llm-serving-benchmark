@@ -63,11 +63,11 @@ pip install -r requirements.txt
 
 Diya only. Source once per shell session:
 ```bash
-source rdma-dual-cable.env
+source environments/rdma-dual-cable.env
 ```
 
 If the internal NVMe has less than ~600 GB free, uncomment `HF_CACHE` in
-`rdma-dual-cable.env` and set it to an external drive path.
+`environments/rdma-dual-cable.env` and set it to an external drive path.
 
 ## 5. Link state
 
