@@ -37,6 +37,8 @@ Usage:
     python plotting/plot_paper.py                       # results/index.csv -> figs/paper
     python plotting/plot_paper.py --index results/index.csv --out figs/paper
     python plotting/plot_paper.py --sans                # keep the sans font
+    python plotting/plot_paper.py --index results-rdma/index.csv \
+        --out results-rdma/figs/paper --sweeps-only     # RDMA campaign set
 
 Figures default to serif (Times-like) text to match the IEEE paper body, and
 are written as vector PDF for \\includegraphics plus PNG previews.
@@ -269,8 +271,42 @@ def _model_grid(df, name, out, fmts, draw_panel, ylabel, *,
     if footnote:
         fig.text(0.5, -0.02, footnote, ha="center", va="top",
                  fontsize=6.0, color="0.30")
+    _fit_panel_titles(fig, flat[:n])
     save(fig, name, out, fmts, tight=footnote is not None)
     return any_low
+
+
+def _fit_panel_titles(fig, axes, pad_px: float = 6.0) -> None:
+    """Shrink only the panel titles that collide.
+
+    A long title (a precision suffix plus "(TP=2 only)") centred over a
+    ~1.6 in panel can run into its neighbour's title or off the figure edge.
+    Each colliding title is scaled down to fit its own slot -- half the
+    distance to the nearest titled panel in its row, clipped at the figure
+    edge -- so two shrunk neighbours cannot overlap either. Titles that clear
+    both keep PANEL_TITLE_FS, so a grid without a collision is unchanged.
+    """
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    width = fig.bbox.width
+    titled = [ax for ax in axes if ax.get_title()]
+    ext = {ax: ax.title.get_window_extent(renderer) for ax in titled}
+    for ax in titled:
+        e = ext[ax]
+        row = [o for o in titled
+               if o is not ax and ext[o].y0 < e.y1 and ext[o].y1 > e.y0]
+        clash = (e.x0 < 0 or e.x1 > width
+                 or any(ext[o].x0 < e.x1 + pad_px
+                        and ext[o].x1 > e.x0 - pad_px for o in row))
+        if not clash:
+            continue
+        cx = (e.x0 + e.x1) / 2
+        half = min([cx, width - cx]
+                   + [abs(cx - (ext[o].x0 + ext[o].x1) / 2) / 2
+                      for o in row]) - pad_px / 2
+        if half < e.width / 2:
+            ax.title.set_fontsize(ax.title.get_fontsize() * 2 * half
+                                  / e.width)
 
 
 # ---- grid figures ------------------------------------------------------------
@@ -1072,7 +1108,7 @@ def _table_name(model: str) -> str:
     """_short_name, minus the active-parameter suffix carried by the Type
     column. Table I is single-column, where ``N3-Super-120B-A12B'' alone is
     wide enough to push the tabular past the column and into the gutter."""
-    return re.sub(r"-A\d+B$", "", _short_name(model))
+    return re.sub(r"-A\d+B(?= |$)", "", _short_name(model))
 
 
 def write_models_table(df, out) -> None:
@@ -1641,6 +1677,13 @@ def main() -> None:
              "still incomplete instead of failing: for mid-campaign paper "
              "snapshots, a partial series must not fake a peak at the "
              "highest load it happens to have reached")
+    ap.add_argument(
+        "--sweeps-only", action="store_true",
+        help="draw only what the index's load sweeps determine: skip the "
+             "all-reduce, interconnect and variance figures and numbers.tex, "
+             "which read the main campaign's sealed side artifacts and cite "
+             "its models by name (use for a secondary index such as "
+             "results-rdma/index.csv)")
     args = ap.parse_args()
 
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
@@ -1681,18 +1724,21 @@ def main() -> None:
     fig_energy_grid(df, args.out, fmts)
     print("mechanism figures")
     fig_kv_capacity(df, args.out, fmts)
-    fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".",
-                  args.allreduce_manifest)
     var_dir = os.path.dirname(args.variance_index) or "."
     ic_dir = args.interconnect_dir or (
         var_dir if glob.glob(os.path.join(var_dir, "interconnect_extra_*.csv"))
         else os.path.dirname(args.index) or ".")
-    fig_interconnect(args.out, fmts, ic_dir)
-    if os.path.exists(args.variance_index):
-        var_df = pd.read_csv(args.variance_index)
-        fig_variance(var_df, df, args.out, fmts)
+    if args.sweeps_only:
+        print("  sweeps-only: skipping allreduce, interconnect, variance")
     else:
-        print(f"  variance: no index at {args.variance_index}, skipping")
+        fig_allreduce(df, args.out, fmts, os.path.dirname(args.index) or ".",
+                      args.allreduce_manifest)
+        fig_interconnect(args.out, fmts, ic_dir)
+        if os.path.exists(args.variance_index):
+            var_df = pd.read_csv(args.variance_index)
+            fig_variance(var_df, df, args.out, fmts)
+        else:
+            print(f"  variance: no index at {args.variance_index}, skipping")
     fig_prefill_scaling(df, args.out, fmts,
                         os.path.dirname(args.index) or ".")
     print("cross-model trends")
@@ -1715,8 +1761,11 @@ def main() -> None:
     write_headline_table(df, args.out)
     write_summary_table(df, args.out)
     write_capacity_table(df, args.out)
-    write_numbers(df, args.out, os.path.dirname(args.index) or ".",
-                  args.allreduce_manifest, interconnect_dir=ic_dir)
+    if args.sweeps_only:
+        print("  sweeps-only: skipping numbers.tex")
+    else:
+        write_numbers(df, args.out, os.path.dirname(args.index) or ".",
+                      args.allreduce_manifest, interconnect_dir=ic_dir)
     print("done")
 
 
