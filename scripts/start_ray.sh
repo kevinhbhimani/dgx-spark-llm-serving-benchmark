@@ -30,8 +30,9 @@ maybe_drop_caches() {
 
 # Installed at container start rather than baked into the image: some
 # nvcr.io/nvidia/vllm tags (e.g. 26.04-py3) do not bundle Ray. See RAY_VERSION
-# in connectx_env.sh.
-RAY_SETUP="pip install -q 'ray[default]==$RAY_VERSION'"
+# in connectx_env.sh. Overridable so an offline image with Ray baked in can skip
+# the install: RAY_SETUP=: scripts/start_ray.sh head
+RAY_SETUP="${RAY_SETUP:-pip install -q 'ray[default]==$RAY_VERSION'}"
 
 docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --device=/dev/infiniband --cap-add=IPC_LOCK --ulimit memlock=-1:-1
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"

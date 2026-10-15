@@ -230,6 +230,8 @@ results-preflight
 # Scratch figures from manual plot_results.py/plot_trends.py runs (default --out).
 # Campaign figures live under a results dir (e.g. results/figs) and are not ignored.
 /figs/
+# Offline bundle build output (offline/build_bundle.sh).
+/offline-bundle/
 points-120b.txt
 points-safe.txt
 temp_run.sh
