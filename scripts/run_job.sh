@@ -1,39 +1,58 @@
 #!/usr/bin/env bash
-# Unattended full re-run campaign. Run this INSIDE tmux on the head node (Diya)
-# after starting Ray on both nodes:
+# Unattended RDMA campaign (methodology steady-exact-v4). Run INSIDE tmux on the
+# head node (Diya) after starting Ray on both nodes:
 #
-#   Diya:    scripts/start_ray.sh head
-#   Hoedus:  scripts/start_ray.sh worker
-#   Diya:    scripts/run_job.sh
+#   Diya:    source rdma-dual-cable.env && scripts/start_ray.sh head
+#   Hoedus:  source rdma-dual-cable.env && scripts/start_ray.sh worker
+#   Diya:    source rdma-dual-cable.env && scripts/run_job.sh
 #
-# Order is chosen so the cheap, fixable failures surface in the first hours
-# instead of on day 3, and so nothing dual-node runs after the single-node leg
-# (launch_server.sh single replaces the Ray head container, which kills the
-# cluster; Hoedus cannot be restarted from here — no SSH path).
+# Model lifecycle. The matrix never has to fit on disk at once. Each model in
+# configs/models.yaml (file order; entries sharing a repo form one group) goes
+# through:
+#   fetch    pinned snapshot into the head cache (skipped when already complete)
+#   mirror   that snapshot to the worker cache (only if it runs tp2/pp2)
+#   measure  REPEATS replicates of every config it lists
+#   purge    the snapshot from both caches (PURGE_WEIGHTS=1, the default)
+# so peak cache use is the largest single model (~139 GB), not the whole
+# matrix (~885 GB).
 #
-#   1. prep (aborts the job on failure): Ray health, pinned head cache
-#      (validate, download only if incomplete), worker mirror, allreduce
-#      microbench (once, while GPUs are idle)
-#   2. strict canaries: every tp2/pp2 model launches once and must pass the
-#      streaming contract; no measurement. Costs a few hours of model loads;
-#      CANARY_FIRST=0 skips (the per-launch contract check still guards sweeps).
-#   3. full pass at REPEATS=$FULL_REPEATS: tp2, then pp2
-#   4. optional extra full rectangles up to $REPEAT_TOTAL copies
-#      (REPEAT_CONCS="" skips; publication indexes cannot add only some loads)
-#   5. single, LAST: full pass then optional extra full rectangle
-#   6. fail-closed campaign validation, plots, and artifact manifest
+# Replicates. A replicate is one fresh server launch plus a complete ascending
+# concurrency sweep, so the spread across replicates includes launch-to-launch
+# variance: KV capacity after memory profiling, allocator and compile state,
+# and cluster setup. Every single-vs-tp2-vs-pp2 margin is a comparison across
+# launches and has to be judged against exactly that variance. Within a model,
+# replicate r runs the configs in a rotated order (r1: single tp2 pp2,
+# r2: tp2 pp2 single, r3: pp2 single tp2), so every config takes every slot
+# once and slow drift cannot favour one of them. Single-node launches exec into
+# the running Ray head container (SINGLE_CONTAINER=ray), so the cluster survives
+# them; the old "single last" ordering is gone.
 #
-# Every sweep leg uses --skip-done, so re-running this script after a crash
-# resumes at (repeat, concurrency) granularity. Two campaign rules:
-#   - finalize configs/experiment.yaml (warmup/measure/cooldown) BEFORE the
-#     first point; it feeds config_file_sha256, so a mid-campaign change is
-#     rejected and requires a fresh OUT_DIR;
-#   - do not edit bench/*.py or the fingerprinted scripts mid-campaign, for the
-#     same reason (harness_source_sha256). The launch gate also requires these
-#     files to be committed, so every row names a recoverable Git revision.
+# Phases:
+#   1. prep (abort on failure): clean committed source, locked client env,
+#      campaign plan, Ray health, idle GPUs, two-node runtime identity, Ray
+#      all-reduce gate; the send/recv microbench is recorded too (non-fatal)
+#   2. canary pass: every model is fetched, launched once under every config
+#      with the strict stream contract, and purged. Failures are collected and
+#      the job stops before any measurement if one failed. CANARY_FIRST=auto
+#      (default) skips the pass once it has succeeded for this exact commit,
+#      matrix, image, and network policy.
+#   3. measurement pass: the lifecycle above, model by model
+#   4. finalization: verify, plots and tables, replicate statistics, NCCL
+#      transport audit, comparison with the TCP baseline, sealed manifest
 #
-# Knobs (env): OUT_DIR, CONCURRENCIES, FULL_REPEATS, REPEAT_CONCS,
-#              REPEAT_TOTAL, CANARY_FIRST.
+# Resume. Every measurement call uses --skip-done. A model whose rectangle is
+# complete is skipped without being downloaded; a partial one is fetched again
+# and only its missing (replicate, concurrency) pairs run. Two campaign rules:
+#   - finalize configs/experiment.yaml BEFORE the first point; it feeds
+#     config_file_sha256, so a mid-campaign change requires a fresh OUT_DIR;
+#   - do not edit bench/*.py or the fingerprinted scripts mid-campaign
+#     (harness_source_sha256). The launch gate also requires these files to be
+#     committed, so every row names a recoverable Git revision.
+#
+# Knobs (env): OUT_DIR, CONCURRENCIES, REPEATS (default 3), CANARY_FIRST
+#   (auto|0|1), STOP_AFTER_CANARY, ALLOW_CANARY_FAILURES, PURGE_WEIGHTS,
+#   CAMPAIGN_LABELS / CAMPAIGN_CONFIGS (space-separated subsets, e.g. for the
+#   TCP transport ablation), PLAN_ONLY.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
@@ -45,10 +64,13 @@ cd "$HERE"
 export OUT_DIR="${OUT_DIR:-results}"
 export CONCURRENCIES="${CONCURRENCIES-1 2 4 8 16 32 64 128}"
 export EXPECTED_CONCURRENCIES="$CONCURRENCIES"
-export FULL_REPEATS="${FULL_REPEATS-1}"
-export REPEAT_CONCS="${REPEAT_CONCS:-}"
-export REPEAT_TOTAL="${REPEAT_TOTAL-3}"
-export CANARY_FIRST="${CANARY_FIRST-1}"
+export REPEATS="${REPEATS-3}"
+export CANARY_FIRST="${CANARY_FIRST-auto}"
+export STOP_AFTER_CANARY="${STOP_AFTER_CANARY-0}"
+export ALLOW_CANARY_FAILURES="${ALLOW_CANARY_FAILURES-0}"
+export PURGE_WEIGHTS="${PURGE_WEIGHTS-1}"
+export CAMPAIGN_LABELS="${CAMPAIGN_LABELS-}"
+export CAMPAIGN_CONFIGS="${CAMPAIGN_CONFIGS-}"
 export PLAN_ONLY="${PLAN_ONLY-0}"
 
 source scripts/connectx_env.sh    # VLLM_CONTAINER, HEAD_IP, HOEDUS_IP, .env
@@ -56,12 +78,16 @@ source scripts/connectx_env.sh    # VLLM_CONTAINER, HEAD_IP, HOEDUS_IP, .env
 # The unattended paper campaign owns these inputs. Clear same-named values
 # inherited from .env or the caller so planning, measurement, and final
 # verification cannot silently target different YAML, a label subset, a
-# canary-only sweep, or a power-policy override.
+# canary-only sweep, or a power-policy override. Subsets go through the
+# explicit CAMPAIGN_* knobs claimed above.
 export MODELS_YAML="configs/models.yaml"
 export CONFIG_YAML="configs/experiment.yaml"
 export POWER_BACKEND=""
 export CANARY_ONLY=0
 export MODEL_LABELS=""
+export STATUS_ONLY=0
+export ONLY_REPEAT=""
+export SINGLE_CONTAINER=ray
 
 if [[ -z "${PYTHON:-}" ]]; then
   if [[ -x "$HERE/.venv/bin/python" ]]; then
@@ -103,70 +129,87 @@ validate_integer_set() {
   done
 }
 
-integer_sets_match() {
-  local left_name="$1" right_name="$2" value
-  local -n left="$left_name" right="$right_name"
-  (( ${#left[@]} == ${#right[@]} )) || return 1
-  for value in "${!left[@]}"; do
-    [[ -n "${right[$value]+x}" ]] || return 1
-  done
-}
-
-# Compare positive decimal strings without overflowing bash arithmetic.
-decimal_is_greater() {
-  local left="$1" right="$2"
-  (( ${#left} > ${#right} )) && return 0
-  (( ${#left} < ${#right} )) && return 1
-  [[ "$left" > "$right" ]]
-}
-
-[[ "$CANARY_FIRST" == "0" || "$CANARY_FIRST" == "1" ]] || \
-  option_error "CANARY_FIRST must be exactly 0 or 1, got '$CANARY_FIRST'"
-[[ "$PLAN_ONLY" == "0" || "$PLAN_ONLY" == "1" ]] || \
-  option_error "PLAN_ONLY must be exactly 0 or 1, got '$PLAN_ONLY'"
-validate_positive_integer FULL_REPEATS "$FULL_REPEATS"
-validate_positive_integer REPEAT_TOTAL "$REPEAT_TOTAL"
-
-declare -A CONCURRENCY_SET=() EXPECTED_CONCURRENCY_SET=() REPEAT_CONCURRENCY_SET=()
-validate_integer_set CONCURRENCIES "$CONCURRENCIES" CONCURRENCY_SET
-validate_integer_set EXPECTED_CONCURRENCIES "$EXPECTED_CONCURRENCIES" \
-  EXPECTED_CONCURRENCY_SET
-integer_sets_match CONCURRENCY_SET EXPECTED_CONCURRENCY_SET || \
-  option_error "CONCURRENCIES and EXPECTED_CONCURRENCIES must contain the same full set"
-
-if [[ -n "$REPEAT_CONCS" ]]; then
-  validate_integer_set REPEAT_CONCS "$REPEAT_CONCS" REPEAT_CONCURRENCY_SET
-  integer_sets_match CONCURRENCY_SET REPEAT_CONCURRENCY_SET || \
-    option_error "REPEAT_CONCS must be empty or contain the same full concurrency set"
-  decimal_is_greater "$REPEAT_TOTAL" "$FULL_REPEATS" || \
-    option_error "REPEAT_TOTAL must exceed FULL_REPEATS when REPEAT_CONCS is nonempty"
+for flag_name in STOP_AFTER_CANARY ALLOW_CANARY_FAILURES PURGE_WEIGHTS PLAN_ONLY; do
+  [[ "${!flag_name}" == "0" || "${!flag_name}" == "1" ]] || \
+    option_error "$flag_name must be exactly 0 or 1, got '${!flag_name}'"
+done
+[[ "$CANARY_FIRST" == "auto" || "$CANARY_FIRST" == "0" || "$CANARY_FIRST" == "1" ]] || \
+  option_error "CANARY_FIRST must be auto, 0, or 1, got '$CANARY_FIRST'"
+validate_positive_integer REPEATS "$REPEATS"
+if [[ -n "${FULL_REPEATS:-}${REPEAT_CONCS:-}${REPEAT_TOTAL:-}" ]]; then
+  option_error "FULL_REPEATS/REPEAT_CONCS/REPEAT_TOTAL were replaced by REPEATS" \
+    "(every point gets REPEATS independent launches); remove them from the" \
+    "environment or .env"
 fi
-FINAL_REPEATS="$FULL_REPEATS"
-[[ -n "$REPEAT_CONCS" ]] && FINAL_REPEATS="$REPEAT_TOTAL"
+for config in $CAMPAIGN_CONFIGS; do
+  [[ "$config" == "single" || "$config" == "tp2" || "$config" == "pp2" ]] || \
+    option_error "CAMPAIGN_CONFIGS may only contain single, tp2, pp2; got '$config'"
+done
+
+declare -A CONCURRENCY_SET=()
+validate_integer_set CONCURRENCIES "$CONCURRENCIES" CONCURRENCY_SET
+
+# One line per model group: "LABELS|NEEDS_DUAL|rep:config:label;...".
+# The helper rejects unknown labels and an empty selection.
+if ! SCHEDULE_TEXT="$("$PYTHON" scripts/campaign_schedule.py \
+    "$MODELS_YAML" "$REPEATS" --labels "$CAMPAIGN_LABELS" \
+    --configs "$CAMPAIGN_CONFIGS")"; then
+  option_error "cannot build the campaign schedule (see the message above)"
+fi
+MODEL_GROUPS=()
+if [[ -n "$SCHEDULE_TEXT" ]]; then
+  mapfile -t MODEL_GROUPS <<<"$SCHEDULE_TEXT"
+fi
+
+count_steps() {
+  local entry steps total=0
+  for entry in "${MODEL_GROUPS[@]}"; do
+    [[ -z "$entry" ]] && continue
+    IFS='|' read -r _ _ steps <<<"$entry"
+    total=$(( total + $(tr ';' '\n' <<<"$steps" | grep -c .) ))
+  done
+  echo "$total"
+}
 
 print_plan() {
-  local canary_legs=0 repeat_legs=0
-  [[ "$CANARY_FIRST" == "1" ]] && canary_legs=2
-  [[ -n "$REPEAT_CONCS" ]] && repeat_legs=3
+  local launches points point_s="" minimum_h="?"
+  launches="$(count_steps)"
+  points=$(( launches * ${#CONCURRENCY_SET[@]} ))
+  point_s="$("$PYTHON" -c 'import sys, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+print(int(float(c["warmup_s"]) + float(c["measure_s"]) + float(c["cooldown_s"])))' \
+    "$CONFIG_YAML" 2>/dev/null || true)"
+  if [[ "$point_s" =~ ^[0-9]+$ ]]; then
+    minimum_h=$(( points * point_s / 3600 ))
+  fi
   echo "[plan] campaign options valid; no hardware operations will be performed"
   echo "[plan] PYTHON=$PYTHON PYTHONNOUSERSITE=$PYTHONNOUSERSITE OUT_DIR=$OUT_DIR"
   echo "[plan] canonical inputs: MODELS_YAML=$MODELS_YAML CONFIG_YAML=$CONFIG_YAML POWER_BACKEND=<experiment.yaml> MODEL_LABELS=<all> CANARY_ONLY=$CANARY_ONLY"
+  echo "[plan] selection: labels=${CAMPAIGN_LABELS:-<all>} configs=${CAMPAIGN_CONFIGS:-<all>}"
   echo "[plan] concurrencies (${#CONCURRENCY_SET[@]}): $CONCURRENCIES"
   echo "[plan] expected concurrency order: $EXPECTED_CONCURRENCIES"
-  echo "[plan] prep legs (8): source, environment, matrix, Ray, runtime, head cache, worker cache, allreduce"
-  echo "[plan] canary legs ($canary_legs): CANARY_FIRST=$CANARY_FIRST (tp2, pp2 when enabled)"
-  echo "[plan] full measurement legs (3): tp2, pp2, single; $FULL_REPEATS repeat(s) per concurrency"
-  if [[ -n "$REPEAT_CONCS" ]]; then
-    echo "[plan] repeat measurement legs ($repeat_legs): tp2, pp2, single; target $REPEAT_TOTAL total repeat(s) per concurrency"
-  else
-    echo "[plan] repeat measurement legs (0): REPEAT_CONCS is empty"
+  echo "[plan] replicates: REPEATS=$REPEATS independent launches per model/config, rotated config order"
+  echo "[plan] model groups: ${#MODEL_GROUPS[@]}; server launches: $launches; measurement windows: $points"
+  local entry labels dual steps first
+  for entry in "${MODEL_GROUPS[@]}"; do
+    IFS='|' read -r labels dual steps <<<"$entry"
+    # Replicate 1's order names the group's configs.
+    first="$(tr ';' '\n' <<<"$steps" | awk -F: '$1 == 1 {print $2}' | paste -sd' ')"
+    printf '[plan]   %-40s configs: %-16s launches: %s\n' "$labels" "$first" \
+      "$(tr ';' '\n' <<<"$steps" | grep -c .)"
+  done
+  echo "[plan] minimum measurement time: ~${minimum_h} h (${point_s:-?} s per window before automatic extensions)"
+  echo "[plan] canary pass: CANARY_FIRST=$CANARY_FIRST STOP_AFTER_CANARY=$STOP_AFTER_CANARY ALLOW_CANARY_FAILURES=$ALLOW_CANARY_FAILURES"
+  echo "[plan] weights: PURGE_WEIGHTS=$PURGE_WEIGHTS (fetch, mirror, measure, purge per model)"
+  echo "[plan] finalization: verify, plots/tables, replicate statistics, transport audit, baseline comparison, sealed manifest"
+  if (( REPEATS < 3 )); then
+    echo "[plan] NOTE: REPEATS=$REPEATS gives no usable 95% interval; the paper design uses 3"
   fi
-  echo "[plan] finalization legs (5): source audit, verify, plots/table in $OUT_DIR/figs, pre-seal audit, sealed manifest"
 }
 
 if [[ "$PLAN_ONLY" == "1" ]]; then
   "$PYTHON" scripts/check_environment.py || exit 1
-  "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" --repeats "$FINAL_REPEATS" || exit 1
+  "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" --repeats "$REPEATS" >/dev/null || exit 1
   print_plan
   exit 0
 fi
@@ -218,8 +261,8 @@ prep() {
   fi
 }
 
-# A sweep-leg failure is logged and the campaign moves on; --skip-done makes a
-# later rerun of this script pick up exactly the missing points.
+# A leg failure is logged and the campaign moves on; --skip-done makes a later
+# rerun of this script pick up exactly the missing points.
 leg() {
   local name="$1"; shift
   log "=== leg: $name ==="
@@ -230,11 +273,19 @@ leg() {
 
 ray_ok() {
   if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
-    log "Ray is not active in $VLLM_CONTAINER. Start it first:"
-    log "  Diya:   scripts/start_ray.sh head"
-    log "  Hoedus: scripts/start_ray.sh worker"
-    log "(If this is a rerun after the single leg already finished, single"
-    log " replaced the Ray head container; restart Ray on both nodes.)"
+    log "Ray is not active in $VLLM_CONTAINER. Start it on both nodes:"
+    log "  Diya:   source rdma-dual-cable.env && scripts/start_ray.sh head"
+    log "  Hoedus: source rdma-dual-cable.env && scripts/start_ray.sh worker"
+    return 1
+  fi
+}
+
+# A stale server collides with the first launch and breaks the idle-GPU
+# precondition of the interconnect microbenchmarks.
+no_stale_server() {
+  if docker exec "$VLLM_CONTAINER" pgrep -f "vllm serve" >/dev/null 2>&1; then
+    log "a vLLM server is already running in $VLLM_CONTAINER; stop it first:"
+    log "  docker exec $VLLM_CONTAINER pkill -f 'vllm serve'"
     return 1
   fi
 }
@@ -271,14 +322,6 @@ cluster_runtime_ok() {
   log "cluster runtime fingerprint: $CLUSTER_RUNTIME_FINGERPRINT"
 }
 
-# Validate the pinned snapshots offline first; only touch the network when
-# something is actually missing, so a dead DNS can't block a warm cache.
-warm_head_cache() {
-  CHECK_ONLY=1 scripts/predownload.sh all && return 0
-  log "head cache incomplete; downloading pinned snapshots"
-  scripts/predownload.sh all
-}
-
 # Interconnect microbench: reuse only a complete artifact from this exact
 # cluster runtime and benchmark source.
 allreduce_once() {
@@ -309,12 +352,139 @@ raise SystemExit(0 if valid else 1)' "$artifact"; then
   scripts/ray_allreduce_bench.sh
 }
 
+# Point-to-point send/recv is PP's primitive; the all-reduce gate covers TP.
+# Recorded once per campaign while the GPUs are idle.
+sendrecv_once() {
+  if compgen -G "$OUT_DIR/interconnect_extra_*.csv" >/dev/null; then
+    log "send/recv microbench already recorded in $OUT_DIR"
+    return 0
+  fi
+  scripts/interconnect_extra_bench.sh
+}
+
+canary_identity() {
+  { cat "$MODELS_YAML"
+    printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" "$CX_IFACE" \
+      "$NCCL_IB_DISABLE" "$CAMPAIGN_LABELS" "$CAMPAIGN_CONFIGS"
+  } | sha256sum | awk '{print $1}'
+}
+
+fetch_group() {
+  local labels="$1" needs_dual="$2"
+  if ! env MODEL_LABELS="$labels" CHECK_ONLY=1 scripts/predownload.sh all; then
+    log "head cache lacks $labels; downloading the pinned snapshot(s)"
+    env MODEL_LABELS="$labels" scripts/predownload.sh all || return 1
+  fi
+  if [[ "$needs_dual" == "1" ]]; then
+    env MODEL_LABELS="$labels" scripts/mirror_worker_cache.sh all || return 1
+  fi
+}
+
+purge_group() {
+  env MODEL_LABELS="$1" PURGE_COMPILE_CACHE=1 scripts/purge_model_cache.sh
+}
+
+# 0: every (label, config) of the group is complete; 3: work remains; else an
+# error (an incompatible index row, Ray down, ...).
+group_status() {
+  local steps="$1" step rep config label rc result=0
+  local -A seen=()
+  local -a step_list=()
+  IFS=';' read -ra step_list <<<"$steps"
+  for step in "${step_list[@]}"; do
+    IFS=':' read -r rep config label <<<"$step"
+    [[ -n "${seen[$config:$label]:-}" ]] && continue
+    seen[$config:$label]=1
+    rc=0
+    env STATUS_ONLY=1 MODEL_LABELS="$label" REPEATS="$REPEATS" \
+        CONCURRENCIES="$CONCURRENCIES" EXPECTED_CONCURRENCIES="$CONCURRENCIES" \
+        scripts/run_models.sh "$config" --skip-done || rc=$?
+    case "$rc" in
+      0) ;;
+      3) result=3 ;;
+      *) return 1 ;;
+    esac
+  done
+  return "$result"
+}
+
+canary_pass() {
+  local entry labels needs_dual steps step rep config label
+  local -a failures=() step_list=()
+  log "=== canary pass: ${#MODEL_GROUPS[@]} model group(s) ==="
+  for entry in "${MODEL_GROUPS[@]}"; do
+    IFS='|' read -r labels needs_dual steps <<<"$entry"
+    ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
+    log "--- canary: $labels ---"
+    if ! run_child fetch_group "$labels" "$needs_dual"; then
+      failures+=("$labels: fetch/mirror")
+    else
+      IFS=';' read -ra step_list <<<"$steps"
+      for step in "${step_list[@]}"; do
+        IFS=':' read -r rep config label <<<"$step"
+        [[ "$rep" == "1" ]] || continue
+        if ! run_child env CANARY_ONLY=1 SKIP_DONE=0 MODEL_LABELS="$label" \
+            scripts/run_models.sh "$config"; then
+          failures+=("$label/$config")
+        fi
+      done
+    fi
+    run_child purge_group "$labels" || failures+=("$labels: purge")
+  done
+  if (( ${#failures[@]} )); then
+    log "canary pass FAILED for ${#failures[@]} item(s):"
+    printf '  - %s\n' "${failures[@]}"
+    if [[ "$ALLOW_CANARY_FAILURES" != "1" ]]; then
+      log "fix models.yaml/image (or set ALLOW_CANARY_FAILURES=1), commit, and rerun"
+      exit 1
+    fi
+    log "ALLOW_CANARY_FAILURES=1: measuring the models that passed"
+    return 0
+  fi
+  canary_identity > "$OUT_DIR/.canary_passed"
+  log "canary pass OK; marker $OUT_DIR/.canary_passed"
+}
+
+measure_group() {
+  local labels="$1" needs_dual="$2" steps="$3" step rep config label status
+  local -a step_list=()
+  ray_ok || { log "Ray cluster lost; restart it on both nodes and rerun"; exit 1; }
+  log "=== model: $labels ==="
+  status=0
+  group_status "$steps" || status=$?
+  if [[ "$status" == "0" ]]; then
+    log "$labels: every replicate is complete; not downloading"
+    return 0
+  elif [[ "$status" != "3" ]]; then
+    log "$labels: status check failed; skipping without downloading"
+    FAILED+=("$labels: status")
+    return 0
+  fi
+  if ! run_child fetch_group "$labels" "$needs_dual"; then
+    FAILED+=("$labels: fetch/mirror")
+    [[ "$PURGE_WEIGHTS" == "1" ]] && leg "purge $labels" purge_group "$labels"
+    return 0
+  fi
+  IFS=';' read -ra step_list <<<"$steps"
+  for step in "${step_list[@]}"; do
+    IFS=':' read -r rep config label <<<"$step"
+    leg "$label $config replicate $rep/$REPEATS" \
+      env REPEATS="$REPEATS" ONLY_REPEAT="$rep" MODEL_LABELS="$label" \
+          CONCURRENCIES="$CONCURRENCIES" EXPECTED_CONCURRENCIES="$CONCURRENCIES" \
+          scripts/run_models.sh "$config" --skip-done
+  done
+  if [[ "$PURGE_WEIGHTS" == "1" ]]; then
+    leg "purge $labels" purge_group "$labels"
+  else
+    log "PURGE_WEIGHTS=0: keeping $labels in the caches"
+  fi
+}
+
 trap 'handle_signal 130' INT
 trap 'handle_signal 143' TERM
 
 log "campaign start; log: $LOG"
-log "OUT_DIR=$OUT_DIR FULL_REPEATS=$FULL_REPEATS REPEAT_CONCS='$REPEAT_CONCS'" \
-    "REPEAT_TOTAL=$REPEAT_TOTAL CONCURRENCIES='$CONCURRENCIES'"
+print_plan
 
 prep "clean committed benchmark source tree" source_tree_ok
 prep "isolated locked client environment" \
@@ -323,46 +493,40 @@ prep "isolated locked client environment" \
 prep "valid complete campaign definition" \
   "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" \
     --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" \
-    --repeats "$FINAL_REPEATS"
+    --repeats "$REPEATS"
 prep "Ray cluster active on head+worker"      ray_ok
+prep "no stale vLLM server"                   no_stale_server
 prep "two-node runtime identity matches"      cluster_runtime_ok
-prep "head HF cache has pinned snapshots"     warm_head_cache
-prep "mirror pinned snapshots to Hoedus"      scripts/mirror_worker_cache.sh all
 prep "allreduce interconnect microbench"      allreduce_once
+leg  "send/recv interconnect microbench"      sendrecv_once
 
-if [[ "$CANARY_FIRST" == "1" ]]; then
-  prep "tp2 canaries (launch + stream contract)" \
-    env CANARY_ONLY=1 SKIP_DONE=0 scripts/run_models.sh tp2
-  prep "pp2 canaries (launch + stream contract)" \
-    env CANARY_ONLY=1 SKIP_DONE=0 scripts/run_models.sh pp2
+case "$CANARY_FIRST" in
+  1) canary_pass ;;
+  auto)
+    if [[ -f "$OUT_DIR/.canary_passed" ]] \
+        && [[ "$(cat "$OUT_DIR/.canary_passed")" == "$(canary_identity)" ]]; then
+      log "canary pass already succeeded for this commit/matrix/image; skipping"
+    else
+      canary_pass
+    fi ;;
+  0) log "CANARY_FIRST=0: no canary pass (every launch still checks the stream contract)" ;;
+esac
+if [[ "$STOP_AFTER_CANARY" == "1" ]]; then
+  log "STOP_AFTER_CANARY=1: stopping before measurement"
+  exit 0
 fi
 
-leg "tp2 full pass (REPEATS=$FULL_REPEATS)" \
-  env REPEATS="$FULL_REPEATS" CONCURRENCIES="$CONCURRENCIES" \
-  scripts/run_models.sh tp2 --skip-done
-leg "pp2 full pass (REPEATS=$FULL_REPEATS)" \
-  env REPEATS="$FULL_REPEATS" CONCURRENCIES="$CONCURRENCIES" \
-  scripts/run_models.sh pp2 --skip-done
+for entry in "${MODEL_GROUPS[@]}"; do
+  IFS='|' read -r group_labels group_dual group_steps <<<"$entry"
+  measure_group "$group_labels" "$group_dual" "$group_steps"
+done
 
-if [[ -n "$REPEAT_CONCS" ]]; then
-  leg "tp2 repeats x$REPEAT_TOTAL at c={$REPEAT_CONCS}" \
-    env REPEATS="$REPEAT_TOTAL" CONCURRENCIES="$REPEAT_CONCS" \
-    scripts/run_models.sh tp2 --skip-done
-  leg "pp2 repeats x$REPEAT_TOTAL at c={$REPEAT_CONCS}" \
-    env REPEATS="$REPEAT_TOTAL" CONCURRENCIES="$REPEAT_CONCS" \
-    scripts/run_models.sh pp2 --skip-done
-fi
-
-# single LAST: its launcher does `docker rm -f $VLLM_CONTAINER`, replacing the
-# Ray head container. Nothing dual-node may run after this point.
-log "NOTE: starting single-node legs; the Ray cluster will be torn down."
-leg "single full pass (REPEATS=$FULL_REPEATS)" \
-  env REPEATS="$FULL_REPEATS" CONCURRENCIES="$CONCURRENCIES" \
-  scripts/run_models.sh single --skip-done
-if [[ -n "$REPEAT_CONCS" ]]; then
-  leg "single repeats x$REPEAT_TOTAL at c={$REPEAT_CONCS}" \
-    env REPEATS="$REPEAT_TOTAL" CONCURRENCIES="$REPEAT_CONCS" \
-    scripts/run_models.sh single --skip-done
+if (( ${#FAILED[@]} )); then
+  log "measurement pass finished WITH FAILURES:"
+  printf '  - %s\n' "${FAILED[@]}"
+  log "fix the cause and re-run scripts/run_job.sh; --skip-done resumes the gaps"
+  log "(complete models are not downloaded again)"
+  exit 1
 fi
 
 # Recheck after the multi-day measurement campaign. This catches any source
@@ -370,27 +534,52 @@ fi
 # files can be sealed beside rows produced by a different revision.
 prep "final clean committed benchmark source tree" source_tree_ok
 
+VERIFY_ARGS=(--models "$MODELS_YAML" --experiment "$CONFIG_YAML"
+             --out-dir "$OUT_DIR" --concurrencies "$CONCURRENCIES"
+             --repeats "$REPEATS")
+if [[ -n "$CAMPAIGN_LABELS$CAMPAIGN_CONFIGS" ]]; then
+  VERIFY_ARGS+=(--completed-only)
+fi
 prep "complete result grid + artifact verification" \
-  "$PYTHON" scripts/validate_campaign.py verify --models "$MODELS_YAML" \
-    --experiment "$CONFIG_YAML" --out-dir "$OUT_DIR" \
-    --concurrencies "$CONCURRENCIES" --repeats "$FINAL_REPEATS"
+  "$PYTHON" scripts/validate_campaign.py verify "${VERIFY_ARGS[@]}"
 
 prep "plots + summary table" \
   "$PYTHON" plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" \
     --format both --table
 
+# Written under figs/ so the sealed manifest covers them.
+mkdir -p "$OUT_DIR/figs/stats"
+leg "replicate statistics" \
+  "$PYTHON" scripts/variance_report.py --index "$OUT_DIR/index.csv" \
+    --md "$OUT_DIR/figs/stats/replicate_stats.md" \
+    --tex "$OUT_DIR/figs/stats/replicate_stats.tex"
+leg "NCCL transport audit" \
+  "$PYTHON" scripts/audit_nccl_transport.py "$OUT_DIR" \
+    --md "$OUT_DIR/figs/stats/nccl_transport_audit.md"
+# Same-model comparisons: over TCP (PMBS26, Llama ladder + Nemotron Super) and
+# over RDMA (October pilot, its six carried-over checkpoints).
+if [[ -f baselines/pmbs26-tcp/index.csv ]]; then
+  leg "comparison with the PMBS26 TCP baseline" \
+    "$PYTHON" scripts/compare_campaigns.py --new "$OUT_DIR/index.csv" \
+      --baseline baselines/pmbs26-tcp/index.csv \
+      --md "$OUT_DIR/figs/stats/compare_vs_pmbs26_tcp.md"
+fi
+if [[ -f baselines/rdma-pilot-2026-10/index.csv ]]; then
+  leg "comparison with the October RDMA pilot" \
+    "$PYTHON" scripts/compare_campaigns.py --new "$OUT_DIR/index.csv" \
+      --baseline baselines/rdma-pilot-2026-10/index.csv \
+      --md "$OUT_DIR/figs/stats/compare_vs_rdma_pilot.md"
+fi
+
 prep "pre-seal clean committed benchmark source tree" source_tree_ok
 
 prep "sealed final artifact manifest" \
-  "$PYTHON" scripts/validate_campaign.py verify --models "$MODELS_YAML" \
-    --experiment "$CONFIG_YAML" --out-dir "$OUT_DIR" \
-    --concurrencies "$CONCURRENCIES" --repeats "$FINAL_REPEATS" \
+  "$PYTHON" scripts/validate_campaign.py verify "${VERIFY_ARGS[@]}" \
     --manifest "$OUT_DIR/campaign_manifest.json"
 
 if (( ${#FAILED[@]} )); then
-  log "campaign finished WITH FAILURES:"
+  log "campaign sealed; optional reports failed:"
   printf '  - %s\n' "${FAILED[@]}"
-  log "fix the cause and re-run scripts/run_job.sh; --skip-done resumes the gaps"
   exit 1
 fi
-log "campaign complete: $OUT_DIR/index.csv, figures in $OUT_DIR/figs/"
+log "campaign complete: $OUT_DIR/index.csv, figures and statistics in $OUT_DIR/figs/"
