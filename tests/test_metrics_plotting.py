@@ -223,6 +223,60 @@ class RepeatAggregationTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["repeat_count"], 3)
         self.assertIn("incomplete repeat rectangle", stderr.getvalue())
 
+    def test_replicates_on_separate_launches_are_averaged(self):
+        # v4 replicates are independent launches: live KV capacity and the
+        # deployment fingerprint differ per launch, and that is not a reason
+        # to refuse the curve.
+        rows = self._rows()
+        rows[1].update({"deployment_fingerprint": "deployment-2",
+                        "requests_completed": 12, "requests_failed": 0,
+                        "tok_thru_tps": 110.0})
+        rows[0]["gpu_blocks"], rows[1]["gpu_blocks"] = 4100, 4096
+        rows[0]["total_kv_tokens"], rows[1]["total_kv_tokens"] = 65600, 65536
+        extra = {**rows[1], "repeat_id": 3, "repeat_count": 3,
+                 "deployment_fingerprint": "deployment-3", "tok_thru_tps": 120.0}
+        for row in rows:
+            row["repeat_count"] = 3
+        rows.append(extra)
+
+        result = plot_results.collapse_repeats(pd.DataFrame(rows))
+
+        point = result.iloc[0]
+        self.assertEqual(point["n_repeats"], 3)
+        self.assertAlmostEqual(point["tok_thru_tps"], 110.0)
+        self.assertAlmostEqual(point["tok_thru_tps__sd"], 10.0)
+        self.assertAlmostEqual(point["tok_thru_tps__ci95"],
+                               4.303 * 10.0 / math.sqrt(3))
+        self.assertEqual(point["tok_thru_tps__lo"], 100.0)
+        self.assertEqual(point["tok_thru_tps__hi"], 120.0)
+
+    def test_extended_windows_collapse_but_configured_windows_must_match(self):
+        rows = self._rows()
+        for row in rows:
+            row["configured_measure_s"] = 10.0
+        rows[1]["measure_s"] = 12.0
+        rows[1]["measure_extension_s"] = 2.0
+
+        result = plot_results.collapse_repeats(pd.DataFrame(rows))
+        self.assertEqual(result.iloc[0]["n_repeats"], 2)
+
+        rows[1]["configured_measure_s"] = 20.0
+        with self.assertRaisesRegex(SystemExit, "configured_measure_s"):
+            plot_results.collapse_repeats(pd.DataFrame(rows))
+
+    def test_replicate_spanning_two_launches_is_reported(self):
+        rows = self._rows()
+        rows.extend([
+            {**rows[0], "concurrency": 2, "deployment_fingerprint": "relaunch"},
+            {**rows[1], "concurrency": 2},
+        ])
+        stderr = io.StringIO()
+
+        with mock.patch("sys.stderr", stderr):
+            plot_results.collapse_repeats(pd.DataFrame(rows))
+
+        self.assertIn("replicate 1 spans 2 server launches", stderr.getvalue())
+
     def test_experiment_fingerprint_may_differ_between_loads(self):
         rows = self._rows()
         rows.extend([

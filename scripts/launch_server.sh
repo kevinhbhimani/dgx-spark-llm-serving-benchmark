@@ -31,6 +31,12 @@
 #                   burns minutes on doomed metadata retries before falling back to
 #                   cache. Set HF_HUB_OFFLINE=0 only to pull a not-yet-cached model
 #                   (predownload it first with scripts/predownload.sh).
+#   SINGLE_CONTAINER  where `single` runs. "standalone" (default) starts its own
+#                   container named $VLLM_CONTAINER, which replaces a running Ray
+#                   head. "ray" execs the TP=1 PP=1 server into the running Ray
+#                   head container instead, so the cluster survives and a
+#                   campaign can interleave single with tp2/pp2 launches (the
+#                   worker cannot be restarted from the head).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
@@ -55,6 +61,11 @@ GPU_UTIL="${GPU_UTIL:-0.80}"
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+SINGLE_CONTAINER="${SINGLE_CONTAINER:-standalone}"
+case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
+  echo "[launch] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
+  exit 1 ;;
+esac
 
 # Serve from the local HF cache by default; the worker node cannot reach
 # huggingface.co, so online metadata lookups only add slow, failing retries.
@@ -327,6 +338,19 @@ MSG
 
 case "$CONFIG" in
   single)
+    if [[ "$SINGLE_CONTAINER" == "ray" ]]; then
+      # Same image, mounts, and offline policy as the dual configs. With
+      # TP=PP=1 vLLM uses its in-process executor and never touches Ray.
+      echo "[launch] single node TP=1 PP=1 inside the Ray head container $VLLM_CONTAINER"
+      _require_ray
+      _check_local_memory
+      docker exec "${hf_offline_env[@]}" \
+        -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
+        "$VLLM_CONTAINER" \
+        vllm serve "$MODEL" "${common[@]}" \
+        --tensor-parallel-size 1 --pipeline-parallel-size 1
+      exit $?
+    fi
     echo "[launch] single node TP=1 PP=1, standalone container"
     _check_local_memory
     run_env=( -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"

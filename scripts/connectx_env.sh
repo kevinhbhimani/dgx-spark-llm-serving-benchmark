@@ -37,7 +37,11 @@ export VLLM_HOST_IP="${VLLM_HOST_IP:-$HEAD_IP}"
 # to fall back to TCP sockets, for example to diagnose a RoCE fault.
 # GLOO and the Ray rendezvous use TCP sockets in both modes.
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
+# NCCL_DEBUG=INFO with NCCL_DEBUG_SUBSYS=INIT,NET (rdma-dual-cable.env) logs one
+# "via NET/IB" or "via NET/Socket" line per channel at communicator setup only.
+# run_models.sh fails a dual launch whose log shows the wrong transport.
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-}"
 # NCCL RDMA device allowlist. Empty discovers every device. Set for the
 # dual-cable layout when NCCL selects fewer than all four devices:
 # NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
@@ -48,9 +52,12 @@ export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-}"
 # RoCEv2 GID index used by the built-in IB transport. Empty defers to NCCL.
 export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 
-# Container settings. The digest is the validated 26.04-py3 image; a mutable
-# monthly tag alone is not sufficient provenance for a paper rerun.
-export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27}"
+# Container settings. A mutable monthly tag alone is not sufficient provenance
+# for a paper rerun, so the image is pinned by digest. This is NGC 26.09-py3
+# (vLLM 0.29.0, CUDA 13.4.1, NCCL 2.31.2, HPC-X 2.51), required by the newer
+# checkpoints in configs/models.yaml. The baselines/ campaigns used 26.04-py3
+# (vLLM 0.19.0): nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27
+export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 # Use Docker's host-derived resolver by default. An explicit public resolver can

@@ -61,13 +61,16 @@ pip install -r requirements.txt
 
 ## 4. Environment
 
-Diya only. Source once per shell session:
+Both nodes. Source once per shell session, and always before
+`scripts/start_ray.sh` (the Ray containers inherit `CX_IFACE`,
+`NCCL_IB_DISABLE`, and the `NCCL_DEBUG` transport logging from it):
 ```bash
 source rdma-dual-cable.env
 ```
 
-If the internal NVMe has less than ~600 GB free, uncomment `HF_CACHE` in
-`rdma-dual-cable.env` and set it to an external drive path.
+The campaign keeps one model at a time in the cache (largest ~163 GB). If
+the internal NVMe has less than ~200 GB free on either node, set `HF_CACHE`
+in `rdma-dual-cable.env` to a larger drive.
 
 ## 5. Link state
 
@@ -156,32 +159,35 @@ bash scripts/ray_allreduce_bench.sh
 
 `results/allreduce_ray_*.csv` bus bandwidth at 1 GiB must reflect four ports.
 
-## 12. Pre-download
+## 12. Disk
 
-Diya:
+Both nodes:
 ```bash
-scripts/predownload.sh all
-scripts/mirror_worker_cache.sh all
+df -h ~/.cache/huggingface
+```
+At least ~200 GB free. `scripts/run_job.sh` downloads, mirrors, measures, and
+purges one model at a time, so nothing has to be pre-downloaded.
+
+## 13. Plan and canary pass
+
+Diya, from a clean commit:
+```bash
+PLAN_ONLY=1 scripts/run_job.sh
+STOP_AFTER_CANARY=1 scripts/run_job.sh
 ```
 
-`predownload.sh` queries the HF API for every unique repo's size in a prefetch
-phase before any download starts. An API failure in that phase exits before the
-first download. The script then checks available disk space plus OS buffer.
+The canary pass fetches each model, launches it under every config it lists
+(strict stream contract, client tokenizer, NCCL transport check), and purges
+it. It lists every failure at the end. Fix them, commit, and rerun until it
+passes; a passed canary is remembered in `results/.canary_passed`.
 
-## 13. Canary (quick pre-flight test)
+## 14. Campaign
 
-Launches every model, validates the streaming contract, tears down. No
-measurement. Run before the campaign to catch config and memory issues:
-```bash
-CANARY_ONLY=1 bash scripts/run_models.sh single
-CANARY_ONLY=1 bash scripts/run_models.sh tp2
-```
-
-## 14. Campaign 
-
-Runs the full matrix: tp2, pp2, single. All models, all concurrencies.
-`--skip-done` active. The process must survive SSH disconnects, run under `tmux`,
+All models, all configs, all concurrencies, 3 replicates each. `--skip-done`
+is active, so a rerun resumes and skips finished models without downloading
+them. The process must survive SSH disconnects; run it under `tmux`.
 On Diya:
 ```bash
+source rdma-dual-cable.env
 OUT_DIR="results" bash scripts/run_job.sh
 ```
