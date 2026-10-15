@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Two-node NCCL all-reduce microbenchmark over the shared Ray cluster.
 
-The nccl-tests path (scripts/interconnect_microbench.sh) needs mpirun with SSH
-from head to worker, which this cluster does not have. This script runs inside
+It needs no SSH or MPI between the nodes. This script runs inside
 the serving container on the head node (see scripts/ray_allreduce_bench.sh),
 pins one actor per Ray node, and times torch.distributed all-reduce across the
 ConnectX link for sizes from 8 B to 1 GiB. The numbers feed the paper's

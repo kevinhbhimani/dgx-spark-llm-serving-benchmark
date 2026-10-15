@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Two-node all-reduce microbenchmark through the Ray cluster (no SSH needed).
-# Companion to interconnect_microbench.sh, which requires mpirun+SSH this
-# cluster does not have. Run on the head node with Ray up on both nodes
-# (scripts/start_ray.sh head|worker) and NO model being served.
+# Two-node all-reduce microbenchmark through the Ray cluster (no SSH or MPI
+# needed); scripts/run_job.sh uses it as the RDMA gate. Run on the head node
+# with Ray up on both nodes (scripts/start_ray.sh head|worker) and NO model
+# being served.
 #
 # Writes results to $OUT_DIR/allreduce_ray_<timestamp>.csv so the interconnect
 # numbers live beside the serving results they explain.
