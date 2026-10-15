@@ -33,17 +33,22 @@ maybe_drop_caches() {
 # in connectx_env.sh.
 RAY_SETUP="pip install -q 'ray[default]==$RAY_VERSION'"
 
-docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --device=/dev/infiniband --cap-add=IPC_LOCK --ulimit memlock=-1:-1
+docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --cap-add=IPC_LOCK --ulimit memlock=-1:-1
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
   -e NCCL_DEBUG_SUBSYS="$NCCL_DEBUG_SUBSYS"
   -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
   -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
+  -e NCCL_NSOCKS_PERTHREAD="${NCCL_NSOCKS_PERTHREAD:-1}"
+  -e NCCL_SOCKET_NTHREADS="${NCCL_SOCKET_NTHREADS:-1}"
   -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE"
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1
   -e BENCH_VLLM_IMAGE="$VLLM_IMAGE" -e BENCH_RAY_VERSION="$RAY_VERSION"
   --entrypoint /bin/bash
   -v "$HF_CACHE":/root/.cache/huggingface )
+if [[ -d /dev/infiniband ]]; then
+  docker_common+=( --device=/dev/infiniband )
+fi
 if [[ -n "$CONTAINER_DNS" ]]; then docker_common+=( --dns "$CONTAINER_DNS" ); fi
 # Ray workers serve exclusively from the preflighted, mounted cache.  Do not
 # pass registry credentials into these long-lived offline containers.
@@ -84,6 +89,11 @@ require_running() {
 case "$ROLE" in
   head)
     require_local_connectx_ip "$HEAD_IP" "Ray head role" || exit 1
+    require_connectx_rdma || exit 1
+    if [[ "$NCCL_IB_DISABLE" == "0" && ! -d /dev/infiniband ]]; then
+      echo "[ray] RDMA requires the host /dev/infiniband device directory" >&2
+      exit 1
+    fi
     echo "[ray] head on $HEAD_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
@@ -92,6 +102,11 @@ case "$ROLE" in
     ;;
   worker)
     require_local_connectx_ip "$HOEDUS_IP" "Ray worker role" || exit 1
+    require_connectx_rdma || exit 1
+    if [[ "$NCCL_IB_DISABLE" == "0" && ! -d /dev/infiniband ]]; then
+      echo "[ray] RDMA requires the host /dev/infiniband device directory" >&2
+      exit 1
+    fi
     echo "[ray] worker $HOEDUS_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true

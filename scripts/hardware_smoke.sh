@@ -15,9 +15,16 @@
 #
 # Env: OUT_DIR (default results-smoke), SMOKE_LABEL (default llama3.1-8b-nvfp4,
 #      any label in configs/models.yaml that can run single), SMOKE_GPU_UTIL
-#      (default 0.10), PORT (default 8100), VLLM_CONTAINER (default
-#      vllm-spark-smoke), PYTHON, DROP_CACHES (passed to the launcher),
-#      KEEP_WEIGHTS=1 (skip the final purge).
+#      (default 0.10), SMOKE_CONCURRENCIES (default "1 4"), PORT (default
+#      8100), VLLM_CONTAINER (default vllm-spark-smoke), PYTHON, DROP_CACHES
+#      (passed to the launcher), KEEP_WEIGHTS=1 (skip the final purge).
+#
+# The canary sends one short request, so it cannot catch a model that fails
+# only under load. Stress a suspect checkpoint at the campaign's top load:
+#
+#   SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
+#     SMOKE_CONCURRENCIES="1 128" OUT_DIR=results-smoke-lightning \
+#     scripts/hardware_smoke.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
@@ -29,6 +36,11 @@ export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark-smoke}"
 export SINGLE_CONTAINER=standalone
 SMOKE_LABEL="${SMOKE_LABEL:-llama3.1-8b-nvfp4}"
 SMOKE_GPU_UTIL="${SMOKE_GPU_UTIL:-0.10}"
+SMOKE_CONCURRENCIES="${SMOKE_CONCURRENCIES:-1 4}"
+if ! [[ "$SMOKE_CONCURRENCIES" =~ ^[1-9][0-9]*( [1-9][0-9]*)*$ ]]; then
+  echo "[smoke] SMOKE_CONCURRENCIES must be space-separated positive integers" >&2
+  exit 2
+fi
 KEEP_WEIGHTS="${KEEP_WEIGHTS:-0}"
 if [[ -z "${PYTHON:-}" ]]; then
   PYTHON=python3
@@ -51,13 +63,14 @@ export CONFIG_YAML="$OUT_DIR/smoke-experiment.yaml"
 # One-entry matrix built from the campaign's own entry, single only, with a
 # small KV budget; and the campaign experiment with short windows. The release
 # gates (power, vLLM metrics, provenance, zero failures) stay on.
-"$PYTHON" - "$SMOKE_LABEL" "$SMOKE_GPU_UTIL" "$MODELS_YAML" "$CONFIG_YAML" <<'PY'
+"$PYTHON" - "$SMOKE_LABEL" "$SMOKE_GPU_UTIL" "$MODELS_YAML" "$CONFIG_YAML" \
+  "$SMOKE_CONCURRENCIES" <<'PY'
 import re
 import sys
 
 import yaml
 
-label, gpu_util, models_out, experiment_out = sys.argv[1:]
+label, gpu_util, models_out, experiment_out, concurrencies = sys.argv[1:]
 models = yaml.safe_load(open("configs/models.yaml"))["models"]
 entry = next((m for m in models if m.get("label") == label), None)
 if entry is None or "single" not in entry.get("configs", []):
@@ -75,11 +88,13 @@ for key, value in (("warmup_s", "15.0"), ("measure_s", "30.0"),
     if count != 1:
         raise SystemExit(f"[smoke] cannot set {key} in configs/experiment.yaml")
 open(experiment_out, "w").write("# Smoke-test windows; not a paper config.\n" + text)
-print(f"[smoke] {label}: single, gpu_util {gpu_util}, 30 s windows, c = 1 4, 2 replicates")
+print(f"[smoke] {label}: single, gpu_util {gpu_util}, 30 s windows, "
+      f"c = {concurrencies}, 2 replicates")
 PY
 
 step() { echo; echo "[smoke] === $* ==="; }
-export MODEL_LABELS="$SMOKE_LABEL" CONCURRENCIES="1 4" EXPECTED_CONCURRENCIES="1 4" REPEATS=2
+export MODEL_LABELS="$SMOKE_LABEL" CONCURRENCIES="$SMOKE_CONCURRENCIES"
+export EXPECTED_CONCURRENCIES="$SMOKE_CONCURRENCIES" REPEATS=2
 
 downloaded=0
 step "fetch"

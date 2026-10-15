@@ -4,9 +4,9 @@
 Entries of configs/models.yaml that share a model repository form one group:
 the group is downloaded once, measured, and purged once. Groups keep the file
 order. Within a group, replicate r runs the configs in a rotated order, so
-over R replicates every config takes every position in the run order equally
-often and slow drift (thermals, page cache, cluster state) cannot
-systematically favour one config.
+over R replicates position counts differ by at most one. They are exactly
+balanced when R is a multiple of the number of configs. This limits order
+bias from slow drift (thermals, page cache, cluster state).
 
 Output, one line per group:
 

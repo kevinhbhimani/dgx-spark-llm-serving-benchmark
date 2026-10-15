@@ -16,6 +16,8 @@
 #                   hold the KV budget policy constant; 0.80 is the highest that
 #                   clears the two-node preflight and Ray's node memory monitor
 #                   on Grace unified memory (see README troubleshooting).
+#   MAX_NUM_SEQS    optional positive scheduler sequence limit. A model-specific
+#                   value applies consistently to single, tp2, and pp2.
 #   PREFIX_CACHING  1 re-enables vLLM prefix caching. Default off: the synthetic
 #                   workload can repeat prompt slices, and cache hits skipped up
 #                   to a third of prefill work in some models but not others,
@@ -60,6 +62,11 @@ TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-}"  # non-empty adds --trust-remote-code
 # vLLM max model length is prompt + generated tokens. The default experiment's
 # largest bucket is 8192 input + 512 output, so use at least 8704 by default.
 MAXLEN="${MAXLEN:-8704}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
+if [[ -n "$MAX_NUM_SEQS" && ! "$MAX_NUM_SEQS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[launch] MAX_NUM_SEQS must be a positive integer" >&2
+  exit 2
+fi
 GPU_UTIL="${GPU_UTIL:-0.80}"
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
@@ -95,6 +102,7 @@ if [[ "$PREFIX_CACHING" != "1" ]]; then
   common+=( --no-enable-prefix-caching )
 fi
 if [[ -n "$QUANT" ]]; then common+=( --quantization "$QUANT" ); fi
+if [[ -n "$MAX_NUM_SEQS" ]]; then common+=( --max-num-seqs "$MAX_NUM_SEQS" ); fi
 if [[ -n "$TOKENIZER" ]]; then common+=( --tokenizer "$TOKENIZER" ); fi
 if [[ -n "$REVISION" ]]; then common+=( --revision "$REVISION" ); fi
 if [[ -n "$TOKENIZER_REVISION" ]]; then

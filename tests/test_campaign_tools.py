@@ -222,8 +222,24 @@ class TransportAuditTests(unittest.TestCase):
             self.assertEqual(self._run(out), 0)
         with tempfile.TemporaryDirectory() as tmp:
             out = self._campaign(tmp, ["INFO vllm ready"])
-            self.assertEqual(self._run(out), 0)
+            self.assertEqual(self._run(out), 1)
             self.assertIn("no evidence", (out / "a.md").read_text())
+
+    def test_empty_or_policyless_campaign_is_not_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self._run(Path(tmp)), 1)
+            with mock.patch("sys.stdout", io.StringIO()):
+                self.assertEqual(audit_nccl_transport.main([tmp, "--allow-unverified"]), 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._campaign(tmp, ["via NET/IB/0"], ib_disable="invalid")
+            self.assertEqual(self._run(out), 1)
+            self.assertIn("no policy", (out / "a.md").read_text())
+
+    def test_exploratory_mode_never_allows_wrong_transport(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._campaign(tmp, ["via NET/IB/0", "via NET/Socket/0"])
+            with mock.patch("sys.stdout", io.StringIO()):
+                self.assertEqual(audit_nccl_transport.main([str(out), "--allow-unverified"]), 1)
 
 
 class CompareCampaignsTests(unittest.TestCase):
