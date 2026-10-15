@@ -33,9 +33,11 @@ maybe_drop_caches() {
 # in connectx_env.sh.
 RAY_SETUP="pip install -q 'ray[default]==$RAY_VERSION'"
 
-docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host
+docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --device=/dev/infiniband --cap-add=IPC_LOCK --ulimit memlock=-1:-1
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
+  -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
+  -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
   -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE"
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1
   -e BENCH_VLLM_IMAGE="$VLLM_IMAGE" -e BENCH_RAY_VERSION="$RAY_VERSION"
@@ -89,16 +91,11 @@ case "$ROLE" in
     ;;
   worker)
     require_local_connectx_ip "$HOEDUS_IP" "Ray worker role" || exit 1
-    LOCAL_IP="$(connectx_local_ipv4)"
-    if [[ -z "$LOCAL_IP" ]]; then
-      echo "[ray] could not find an IPv4 address on $CX_IFACE" >&2
-      exit 1
-    fi
-    echo "[ray] worker $LOCAL_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
+    echo "[ray] worker $HOEDUS_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
-    docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$LOCAL_IP" "$VLLM_IMAGE" \
-      -lc "$RAY_SETUP && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$LOCAL_IP --block"
+    docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$HOEDUS_IP" "$VLLM_IMAGE" \
+      -lc "$RAY_SETUP && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$HOEDUS_IP --block"
     ;;
   stop)
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true

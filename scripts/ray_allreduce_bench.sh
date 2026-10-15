@@ -14,12 +14,15 @@ acquire_campaign_lock || exit 1
 
 OUT_DIR="${OUT_DIR:-results}"
 PORT="${ALLREDUCE_PORT:-29517}"
-# Floor calibrated on this cluster 2026-07-16: NCCL socket transport
-# (NCCL_IB_DISABLE=1) over the 200GbE ConnectX link plateaus at ~2.08 GB/s
-# from 8 MiB to 1 GiB, so 1.8 accepts the healthy link and still fails a
-# degraded one. Keep in sync with ray_allreduce_bench.py/validate_campaign.py.
-MIN_1G_BUSBW="${ALLREDUCE_MIN_1G_BUSBW_GBPS:-1.8}"
-MAX_8B_LATENCY="${ALLREDUCE_MAX_8B_LATENCY_S:-0.005}"
+# Floor calibrated on this cluster 2026-10-12: NCCL RDMA all-reduce plateaus
+# at 19.4-23.6 GB/s at 1 GiB. 16 GB/s (~13% below the lowest healthy run)
+# accepts a healthy RDMA link and rejects the TCP-socket fallback
+# (2.09 GB/s) and any misrouted path. A TCP fallback campaign must lower
+# ALLREDUCE_MIN_1G_BUSBW_GBPS explicitly. RDMA 8-byte latency measured
+# 22-63 us; the 100 us ceiling rejects the socket path, which sits in the
+# millisecond range. Keep in sync with ray_allreduce_bench.py/validate_campaign.py.
+MIN_1G_BUSBW="${ALLREDUCE_MIN_1G_BUSBW_GBPS:-16}"
+MAX_8B_LATENCY="${ALLREDUCE_MAX_8B_LATENCY_S:-0.0001}"
 if ! python3 - "$PORT" "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" <<'PY_VALIDATE'
 import math
 import sys

@@ -115,6 +115,134 @@ fi
 
 mkdir -p "$HF_CACHE"
 
+# Pre-fetch all HF model repo sizes before any downloading.
+# On success, exports HF_PREFETCHED_TOTAL_BYTES (total bytes across all unique repos).
+# Exits 1 if any repo's HF API query fails.
+prefetch_hf_sizes() {
+  local repo revision kind prefix_total=0
+  declare -A seen_repos=()
+  for spec in "${SPECS[@]}"; do
+    IFS='|' read -r repo revision kind <<<"$spec"
+    if [[ -n "${seen_repos[$repo]:-}" ]]; then
+      continue
+    fi
+    seen_repos[$repo]=1
+    local size_bytes
+    size_bytes=$("$PYTHON" -c '
+import json, sys, urllib.request, urllib.error
+repo = sys.argv[1]
+url = f"https://huggingface.co/api/models/{repo}"
+req = urllib.request.Request(url, headers={"User-Agent": "dgx-spark-benchmark/1.0"})
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode())
+    total = data.get("safetensors", {}).get("total")
+    if not isinstance(total, (int, float)) or total <= 0:
+        total = data.get("usedStorage")
+    if not isinstance(total, (int, float)) or total <= 0:
+        raise ValueError(f"no size metadata (safetensors.total={data.get("safetensors",{}).get("total")!r}, usedStorage={data.get("usedStorage")!r})")
+    print(int(total))
+except Exception as exc:
+    print(f"ERROR: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+' "$repo" 2>/dev/null) || {
+      echo "[predownload] FAILED: cannot query HF API for $repo" >&2
+      exit 1
+    }
+    prefix_total=$((prefix_total + size_bytes))
+  done
+  export HF_PREFETCHED_TOTAL_BYTES=$prefix_total
+}
+
+# Pre-fetch all HF model sizes before any downloading.
+if [[ "$CHECK_ONLY" != "1" ]]; then
+  prefetch_hf_sizes || exit 1
+fi
+
+# Query huggingface.co/api/models for each unique repo's safetensors.total
+# size, sum them, and refuse to download if available disk space is less than
+# the total plus an OS safety buffer. The buffer is 20 GiB or 5% of total
+# disk, whichever is larger. PREDOWNLOAD_MIN_FREE_GB overrides the buffer.
+# Requires network access; skipped in CHECK_ONLY mode (which does not download).
+_check_disk_space() {
+  local repo revision kind total_bytes=0
+  declare -A seen_repos=()
+
+  # Use pre-fetched model sizes if available (from prefetch_hf_sizes),
+  # otherwise query the HF API per-repo as below.
+  if [[ -n "${HF_PREFETCHED_TOTAL_BYTES:-}" ]]; then
+    total_bytes=$HF_PREFETCHED_TOTAL_BYTES
+    # Compute unique repo count from SPECS for the summary message
+    seen_repos=()
+    for spec in "${SPECS[@]}"; do
+      IFS='|' read -r repo revision kind <<<"$spec"
+      if [[ -z "${seen_repos[$repo]:-}" ]]; then
+        seen_repos[$repo]=1
+      fi
+    done
+  else
+    for spec in "${SPECS[@]}"; do
+    IFS='|' read -r repo revision kind <<<"$spec"
+    if [[ -n "${seen_repos[$repo]:-}" ]]; then
+      continue
+    fi
+    seen_repos[$repo]=1
+    local size_bytes
+    size_bytes=$("$PYTHON" -c '
+import json, sys, urllib.request, urllib.error
+repo = sys.argv[1]
+url = f"https://huggingface.co/api/models/{repo}"
+req = urllib.request.Request(url, headers={"User-Agent": "dgx-spark-benchmark/1.0"})
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode())
+    total = data.get("safetensors", {}).get("total")
+    if not isinstance(total, (int, float)) or total <= 0:
+        total = data.get("usedStorage")
+    if not isinstance(total, (int, float)) or total <= 0:
+        raise ValueError(f"no size metadata (safetensors.total={data.get('safetensors',{}).get('total')!r}, usedStorage={data.get('usedStorage')!r})")
+    print(int(total))
+except Exception as exc:
+    print(f"ERROR: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+' "$repo" 2>/dev/null) || {
+      echo "[predownload] FAILED: cannot query HF API for $repo" >&2
+      return 1
+    }
+    total_bytes=$((total_bytes + size_bytes))
+  done
+
+  fi
+  local available_kb total_kb need_kb buffer_kb pct_buffer_kb
+  available_kb=$(df --output=avail "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
+  total_kb=$(df --output=size "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
+  if [[ -z "$available_kb" || -z "$total_kb" || "$available_kb" -le 0 ]]; then
+    echo "[predownload] cannot determine free space on $HF_CACHE" >&2
+    return 1
+  fi
+
+  need_kb=$((total_bytes / 1024))
+  pct_buffer_kb=$((total_kb * 5 / 100))
+  buffer_kb=$((20 * 1024 * 1024))
+  if [[ "$pct_buffer_kb" -gt "$buffer_kb" ]]; then
+    buffer_kb=$pct_buffer_kb
+  fi
+  if [[ -n "${PREDOWNLOAD_MIN_FREE_GB:-}" ]]; then
+    buffer_kb=$((PREDOWNLOAD_MIN_FREE_GB * 1024 * 1024))
+  fi
+
+  echo "[predownload] HF API: $(awk "BEGIN {printf \"%.1f\", $total_bytes / 1073741824}") GiB across ${#seen_repos[@]} repo(s)"
+  echo "[predownload] $HF_CACHE: $((available_kb / 1024 / 1024)) GiB free, need $((need_kb / 1024 / 1024)) GiB + $((buffer_kb / 1024 / 1024)) GiB OS buffer"
+  if [[ "$available_kb" -lt $((need_kb + buffer_kb)) ]]; then
+    echo "[predownload] FAILED: need $(((need_kb + buffer_kb) / 1024 / 1024)) GiB, have $((available_kb / 1024 / 1024)) GiB." >&2
+    echo "[predownload] Set HF_CACHE to a path with more space, or override with PREDOWNLOAD_MIN_FREE_GB=0." >&2
+    return 1
+  fi
+}
+if [[ "$CHECK_ONLY" != "1" ]]; then
+  _check_disk_space || exit 1
+fi
+
 run_env=()
 dns_args=()
 if [[ -n "$DOWNLOAD_DNS" ]]; then dns_args=( --dns "$DOWNLOAD_DNS" ); fi

@@ -25,14 +25,15 @@ if [[ ! -x "$NCCL_TESTS_DIR/build/all_reduce_perf" ]]; then
 fi
 
 export NCCL_SOCKET_IFNAME="$IFACE"
-export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
+export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+export NCCL_IB_HCA="${NCCL_IB_HCA:-}"
 
 # two ranks, one GPU per node, sizes from 8 bytes to 1 GiB doubling
 mkdir -p "$OUT_DIR"
 LOG="$OUT_DIR/allreduce_$(date +%Y%m%d-%H%M%S).log"
 mpirun --allow-run-as-root -np 2 -H "${HOST0}:1,${HOST1}:1" \
-  -x NCCL_SOCKET_IFNAME -x NCCL_IB_DISABLE -x NCCL_DEBUG \
+  -x NCCL_SOCKET_IFNAME -x NCCL_IB_DISABLE -x NCCL_DEBUG -x NCCL_IB_HCA \
   "$NCCL_TESTS_DIR/build/all_reduce_perf" -b 8 -e 1G -f 2 -g 1 \
   | tee "$LOG"
 

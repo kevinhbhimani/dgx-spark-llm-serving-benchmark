@@ -1202,8 +1202,8 @@ def _expected_allreduce_fingerprint(
         os.environ.get("ALLREDUCE_PORT", "29517"),
         str(policy["connectx_iface"]),
         str(policy["nccl_ib_disable"]),
-        os.environ.get("ALLREDUCE_MIN_1G_BUSBW_GBPS", "1.8"),
-        os.environ.get("ALLREDUCE_MAX_8B_LATENCY_S", "0.005"),
+        os.environ.get("ALLREDUCE_MIN_1G_BUSBW_GBPS", "16"),
+        os.environ.get("ALLREDUCE_MAX_8B_LATENCY_S", "0.0001"),
     )
     serialized = "".join(f"{value}\n" for value in values).encode()
     return hashlib.sha256(serialized).hexdigest()

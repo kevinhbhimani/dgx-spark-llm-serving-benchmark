@@ -4,6 +4,12 @@
 # Diya = 10.10.10.1, Hoedus = 10.10.10.2 on ConnectX interface enp1s0f0np0.
 # The names Diya and Hoedus resolve to these ConnectX addresses on both nodes
 # via /etc/hosts, including self references, so prefer the names everywhere.
+#
+# CX_IFACE accepts a comma-separated list for multi-cable setups, e.g.:
+#   export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
+# NCCL_SOCKET_IFNAME and GLOO_SOCKET_IFNAME inherit the full list. NCCL stripes
+# across all listed interfaces. DIYA_IP / HOEDUS_IP / HEAD_IP stay on one subnet
+# for the Ray rendezvous.
 
 _CONNECTX_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_CONNECTX_HERE/load_env.sh"
@@ -27,11 +33,20 @@ export NCCL_SOCKET_IFNAME="$CX_IFACE"
 export GLOO_SOCKET_IFNAME="$CX_IFACE"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-$HEAD_IP}"
 
-# ConnectX is an Ethernet NIC. Keep NCCL on sockets unless you have verified
-# RoCE is configured, in which case set NCCL_IB_DISABLE=0 and test it as a
-# separate data point for the paper.
-export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
+# NCCL data plane uses RDMA over ConnectX by default. Set NCCL_IB_DISABLE=1
+# to fall back to TCP sockets, for example to diagnose a RoCE fault.
+# GLOO and the Ray rendezvous use TCP sockets in both modes.
+export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+# NCCL RDMA device allowlist. Empty discovers every device. Set for the
+# dual-cable layout when NCCL selects fewer than all four devices:
+# NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
+export NCCL_IB_HCA="${NCCL_IB_HCA:-}"
+# Empty loads the library NCCL discovers. Set to "none" to use the built-in
+# IB transport instead of the HPC-X RDMA plugin bundled in the vLLM image.
+export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-}"
+# RoCEv2 GID index used by the built-in IB transport. Empty defers to NCCL.
+export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 
 # Container settings. The digest is the validated 26.04-py3 image; a mutable
 # monthly tag alone is not sufficient provenance for a paper rerun.
@@ -52,16 +67,39 @@ export RAY_VERSION="${RAY_VERSION:-2.53.0}"
 
 # Safety helpers shared by every launcher/orchestrator. Paper measurements must
 # originate on the configured head because local GPU power is part of each row.
+#
+# CX_IFACE may be a comma-separated list. These functions iterate over every
+# interface in the list.
 connectx_local_ipv4() {
-  ip -4 -o addr show "$CX_IFACE" 2>/dev/null \
-    | awk 'NR == 1 {split($4, a, "/"); print a[1]}'
+  local iface
+  IFS=',' read -ra _cx_ifaces <<< "$CX_IFACE"
+  for iface in "${_cx_ifaces[@]}"; do
+    local addr
+    addr=$(ip -4 -o addr show "$iface" 2>/dev/null \
+      | awk 'NR == 1 {split($4, a, "/"); print a[1]}')
+    if [[ -n "$addr" ]]; then
+      echo "$addr"
+      return 0
+    fi
+  done
+  return 1
 }
 
 require_local_connectx_ip() {
-  local expected="$1" role="${2:-requested role}" actual
-  actual="$(connectx_local_ipv4)"
-  if [[ -z "$actual" || "$actual" != "$expected" ]]; then
-    echo "[cluster] this host has ${actual:-no IPv4} on $CX_IFACE; $role requires $expected" >&2
+  local expected="$1" role="${2:-requested role}"
+  local iface found=0
+  IFS=',' read -ra _cx_ifaces <<< "$CX_IFACE"
+  for iface in "${_cx_ifaces[@]}"; do
+    local actual
+    actual=$(ip -4 -o addr show "$iface" 2>/dev/null \
+      | awk 'NR == 1 {split($4, a, "/"); print a[1]}')
+    if [[ -n "$actual" && "$actual" == "$expected" ]]; then
+      found=1
+      break
+    fi
+  done
+  if [[ "$found" != "1" ]]; then
+    echo "[cluster] expected IP $expected for $role not found on any interface in CX_IFACE ($CX_IFACE)" >&2
     return 1
   fi
 }
