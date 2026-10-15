@@ -25,7 +25,7 @@
 # a mismatched header).
 #
 # Env: MODELS_YAML BASE_URL OUT_DIR POWER_BACKEND CONCURRENCIES CONFIG_YAML
-#      REPEATS (fixed-workload repeated windows for spread, default 3)
+#      REPEATS (independent server launches for spread, default 3)
 #      READY_TIMEOUT (seconds to wait for a model to come up, default 1800;
 #      large models on tp2/pp2 can take >20 min to load weights + capture graphs)
 #      PROBE_TIMEOUT (seconds for the strict two-token streaming canary, default 600)
@@ -571,6 +571,7 @@ nccl_transport_check() {
 serving_fingerprint() {
   local name="$1" revision="$2" tokenizer="$3" tokrev="$4"
   local maxlen="$5" gpu_util="$6" quant="$7" trust="$8"
+  local max_num_seqs="${9:-}"
   {
     printf 'schema=serving-v1\n'
     printf 'config=%s\n' "$CONFIG"
@@ -588,6 +589,7 @@ serving_fingerprint() {
     printf 'head_ip=%s\nworker_ip=%s\npower_backend=%s\n' \
       "$HEAD_IP" "$HOEDUS_IP" "$EFFECTIVE_POWER_BACKEND"
     printf 'cluster_runtime=%s\n' "$CLUSTER_RUNTIME_FINGERPRINT"
+    [[ -z "$max_num_seqs" ]] || printf 'max_num_seqs=%s\n' "$max_num_seqs"
   } | sha256sum | awk '{print $1}'
 }
 
@@ -596,6 +598,7 @@ write_serving_policy() {
   local destination="$1" fingerprint="$2" name="$3" revision="$4"
   local tokenizer="$5" tokrev="$6" maxlen="$7" gpu_util="$8"
   local quant="$9" trust="${10}"
+  local max_num_seqs="${11:-}"
   "$PYTHON" - "$destination" "$fingerprint" "serving-v1" "$CONFIG" \
     "$VLLM_IMAGE" "$name" "$revision" "$tokenizer" "$tokrev" \
     "${DTYPE:-auto}" "$quant" "$maxlen" "$gpu_util" \
@@ -604,7 +607,7 @@ write_serving_policy() {
     "$trust" "$RAY_VERSION" "$CX_IFACE" "$NCCL_IB_DISABLE" \
     "$HEAD_IP" "$HOEDUS_IP" "$EFFECTIVE_POWER_BACKEND" \
     "$CLUSTER_RUNTIME_FINGERPRINT" "$RUNTIME_SCOPE" \
-    "$RUNTIME_FACTS_JSON" <<'PY'
+    "$RUNTIME_FACTS_JSON" "$max_num_seqs" <<'PY'
 import hashlib
 import json
 import os
@@ -640,6 +643,7 @@ from pathlib import Path
     runtime_hash,
     runtime_scope,
     runtime_json,
+    max_num_seqs,
 ) = sys.argv[1:]
 
 try:
@@ -675,6 +679,10 @@ legacy_input = "".join((
     f"head_ip={head_ip}\nworker_ip={worker_ip}\npower_backend={power_backend}\n",
     f"cluster_runtime={runtime_hash}\n",
 ))
+if max_num_seqs:
+    if not max_num_seqs.isascii() or not max_num_seqs.isdigit() or int(max_num_seqs) <= 0:
+        raise SystemExit("[models] max_num_seqs must be a positive integer")
+    legacy_input += f"max_num_seqs={max_num_seqs}\n"
 computed_fingerprint = hashlib.sha256(legacy_input.encode()).hexdigest()
 if computed_fingerprint != fingerprint:
     raise SystemExit(
@@ -711,6 +719,8 @@ policy = {
     "trust_remote_code": trust_remote_code,
     "worker_ip": worker_ip,
 }
+if max_num_seqs:
+    policy["max_num_seqs"] = max_num_seqs
 encoded = (
     json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
 ).encode()
@@ -750,6 +760,7 @@ PY
 run_one() {
   local label="$1" name="$2" revision="$3" maxlen="$4" gpu_util="$5"
   local quant="$6" tok="$7" tokrev="$8" trust="$9"
+  local max_num_seqs="${10:-}"
   local log="" policy_file="" launch_timestamp="" fingerprint_prefix=""
   local tokenizer="${tok:-$name}"
   local tokenizer_revision="$tokrev"
@@ -776,14 +787,14 @@ run_one() {
   fi
   fingerprint="$(serving_fingerprint "$name" "$revision" "$tokenizer" \
                     "$tokenizer_revision" "$actual_maxlen" "$actual_gpu_util" \
-                    "$quant" "$trust")"
+                    "$quant" "$trust" "$max_num_seqs")"
   echo "[models] serving fingerprint: $fingerprint"
   fingerprint_prefix="${fingerprint:0:16}"
 
   policy_file="$OUT_DIR/serving_policy_${label}_${CONFIG}_${fingerprint}.json"
   if ! write_serving_policy "$policy_file" "$fingerprint" "$name" \
       "$revision" "$tokenizer" "$tokenizer_revision" "$actual_maxlen" \
-      "$actual_gpu_util" "$quant" "$trust"; then
+      "$actual_gpu_util" "$quant" "$trust" "$max_num_seqs"; then
     echo "[models] failed to persist serving policy for $label" >&2
     return 1
   fi
@@ -829,6 +840,7 @@ run_one() {
   # model entry into another.
   local launch_env=(MODEL="$name" REVISION="$revision"
                     MAXLEN="$actual_maxlen" GPU_UTIL="$actual_gpu_util"
+                    MAX_NUM_SEQS="$max_num_seqs"
                     QUANT="$quant" TOKENIZER="$tok"
                     TOKENIZER_REVISION="$tokenizer_revision"
                     TRUST_REMOTE_CODE="$trust" DTYPE="${DTYPE:-auto}"
@@ -960,26 +972,37 @@ trap 'handle_signal 130' INT
 trap 'handle_signal 143' TERM
 
 FAILURES=0
+REQUESTED_REPEAT="$ONLY_REPEAT"
+REPLICATE_IDS=("$REQUESTED_REPEAT")
+if [[ -z "$REQUESTED_REPEAT" && "$STATUS_ONLY" != "1" && "$CANARY_ONLY" != "1" ]]; then
+  mapfile -t REPLICATE_IDS < <(seq 1 "$REPEATS")
+fi
 for entry in "${ENTRIES[@]}"; do
-  IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust <<<"$entry"
-  if ! run_one "$label" "$name" "$revision" "$maxlen" "$gpu_util" \
-               "$quant" "$tok" "$tokrev" "$trust"; then
-    FAILURES=$((FAILURES + 1))
-    # A failed launcher preflight means a node is short on memory; every later
-    # model would fail the same way, so stop instead of cycling through them.
-    if [[ -n "$LAST_SERVER_LOG" ]] && \
-        grep -q "PREFLIGHT FAILED" "$LAST_SERVER_LOG" 2>/dev/null; then
-      echo "[models] cluster memory preflight failed for $label; aborting the" \
-           "sweep. Free memory on the low node (see the log), then rerun" \
-           "with --skip-done." >&2
-      exit 1
+  IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust max_num_seqs <<<"$entry"
+  for replicate in "${REPLICATE_IDS[@]}"; do
+    # The direct wrapper must honor the same launch-level replicate design as
+    # run_job.sh. A status query still checks the entire requested rectangle,
+    # and a canary runs only once per model.
+    ONLY_REPEAT="$replicate"
+    if ! run_one "$label" "$name" "$revision" "$maxlen" "$gpu_util" \
+                 "$quant" "$tok" "$tokrev" "$trust" "$max_num_seqs"; then
+      FAILURES=$((FAILURES + 1))
+      # A failed launcher preflight means a node is short on memory; every later
+      # model would fail the same way, so stop instead of cycling through them.
+      if [[ -n "$LAST_SERVER_LOG" ]] && \
+          grep -q "PREFLIGHT FAILED" "$LAST_SERVER_LOG" 2>/dev/null; then
+        echo "[models] cluster memory preflight failed for $label; aborting the" \
+             "sweep. Free memory on the low node (see the log), then rerun" \
+             "with --skip-done." >&2
+        exit 1
+      fi
+      echo "[models] $label${replicate:+ replicate $replicate} did not complete; continuing" >&2
     fi
-    echo "[models] $label did not complete; continuing" >&2
-  fi
+  done
 done
 
 if (( FAILURES > 0 )); then
-  echo "[models] $FAILURES model(s) failed for $CONFIG; see logs in $OUT_DIR" >&2
+  echo "[models] $FAILURES model launch(es) failed for $CONFIG; see logs in $OUT_DIR" >&2
   exit 1
 fi
 

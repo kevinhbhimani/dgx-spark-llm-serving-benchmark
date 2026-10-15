@@ -16,6 +16,8 @@
 #                   hold the KV budget policy constant; 0.80 is the highest that
 #                   clears the two-node preflight and Ray's node memory monitor
 #                   on Grace unified memory (see README troubleshooting).
+#   MAX_NUM_SEQS    optional positive scheduler sequence limit. A model-specific
+#                   value applies consistently to single, tp2, and pp2.
 #   PREFIX_CACHING  1 re-enables vLLM prefix caching. Default off: the synthetic
 #                   workload can repeat prompt slices, and cache hits skipped up
 #                   to a third of prefill work in some models but not others,
@@ -45,6 +47,9 @@ CONFIG="${1:-single}"          # single, tp2, pp2
 MODEL="${MODEL:-Qwen/Qwen3-8B}"
 REVISION="${REVISION:-}"
 PORT="${PORT:-8000}"
+# The benchmark client always runs on the head, so the API listens on loopback
+# only; HOST=0.0.0.0 exposes it for a remote client.
+HOST="${HOST:-127.0.0.1}"
 DTYPE="${DTYPE:-auto}"
 QUANT="${QUANT:-}"             # for example fp8; empty means none
 TOKENIZER="${TOKENIZER:-}"     # optional tokenizer id/path; empty means model default
@@ -57,6 +62,11 @@ TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-}"  # non-empty adds --trust-remote-code
 # vLLM max model length is prompt + generated tokens. The default experiment's
 # largest bucket is 8192 input + 512 output, so use at least 8704 by default.
 MAXLEN="${MAXLEN:-8704}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
+if [[ -n "$MAX_NUM_SEQS" && ! "$MAX_NUM_SEQS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[launch] MAX_NUM_SEQS must be a positive integer" >&2
+  exit 2
+fi
 GPU_UTIL="${GPU_UTIL:-0.80}"
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
@@ -79,14 +89,20 @@ if [[ -n "$CONTAINER_DNS" ]]; then
   container_dns_args=( --dns "$CONTAINER_DNS" )
 fi
 
-common=( --host 0.0.0.0 --port "$PORT" --dtype "$DTYPE"
+# --language-model-only: the workload is text-only. Vision-language checkpoints
+# (Qwen3.6, Gemma 4, Mistral Medium 3.5) would otherwise reserve memory for
+# their vision encoder and its profiling, shrinking their KV cache relative to
+# text-only models. vLLM ignores the flag for text-only architectures.
+common=( --host "$HOST" --port "$PORT" --dtype "$DTYPE"
          --max-model-len "$MAXLEN" --gpu-memory-utilization "$GPU_UTIL"
          --generation-config "$GENERATION_CONFIG"
+         --language-model-only
          --no-enable-log-requests )
 if [[ "$PREFIX_CACHING" != "1" ]]; then
   common+=( --no-enable-prefix-caching )
 fi
 if [[ -n "$QUANT" ]]; then common+=( --quantization "$QUANT" ); fi
+if [[ -n "$MAX_NUM_SEQS" ]]; then common+=( --max-num-seqs "$MAX_NUM_SEQS" ); fi
 if [[ -n "$TOKENIZER" ]]; then common+=( --tokenizer "$TOKENIZER" ); fi
 if [[ -n "$REVISION" ]]; then common+=( --revision "$REVISION" ); fi
 if [[ -n "$TOKENIZER_REVISION" ]]; then
@@ -105,6 +121,16 @@ if [[ "${DROP_CACHES:-0}" == "1" ]]; then
   echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
   echo "[launch] page cache flushed"
 fi
+
+# A TP=1 server inside the Ray head container needs only that container and
+# its Ray head; it does not need the worker node.
+_require_ray_head() {
+  if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
+    echo "[launch] ERROR: Ray is not active in $VLLM_CONTAINER" >&2
+    echo "[launch] Start it first: scripts/start_ray.sh head" >&2
+    exit 1
+  fi
+}
 
 # For distributed configs, confirm Ray is healthy before committing to the launch.
 _require_ray() {
@@ -342,7 +368,7 @@ case "$CONFIG" in
       # Same image, mounts, and offline policy as the dual configs. With
       # TP=PP=1 vLLM uses its in-process executor and never touches Ray.
       echo "[launch] single node TP=1 PP=1 inside the Ray head container $VLLM_CONTAINER"
-      _require_ray
+      _require_ray_head
       _check_local_memory
       docker exec "${hf_offline_env[@]}" \
         -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \

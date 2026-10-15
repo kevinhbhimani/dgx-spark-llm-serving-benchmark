@@ -2,9 +2,12 @@
 # Unattended RDMA campaign (methodology steady-exact-v4). Run INSIDE tmux on the
 # head node (Diya) after starting Ray on both nodes:
 #
-#   Diya:    source rdma-dual-cable.env && scripts/start_ray.sh head
-#   Hoedus:  source rdma-dual-cable.env && scripts/start_ray.sh worker
-#   Diya:    source rdma-dual-cable.env && scripts/run_job.sh
+#   Diya:    scripts/start_ray.sh head
+#   Hoedus:  scripts/start_ray.sh worker
+#   Diya:    scripts/run_job.sh
+#
+# scripts/connectx_env.sh defaults to the dual-cable RDMA layout with NCCL
+# transport logging; nothing has to be sourced first.
 #
 # Model lifecycle. The matrix never has to fit on disk at once. Each model in
 # configs/models.yaml (file order; entries sharing a repo form one group) goes
@@ -274,8 +277,8 @@ leg() {
 ray_ok() {
   if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
     log "Ray is not active in $VLLM_CONTAINER. Start it on both nodes:"
-    log "  Diya:   source rdma-dual-cable.env && scripts/start_ray.sh head"
-    log "  Hoedus: source rdma-dual-cable.env && scripts/start_ray.sh worker"
+    log "  Diya:   scripts/start_ray.sh head"
+    log "  Hoedus: scripts/start_ray.sh worker"
     return 1
   fi
 }
@@ -296,15 +299,15 @@ source_tree_ok() {
     log "repository has no recoverable Git commit"
     return 1
   }
-  if ! git diff --quiet -- bench configs scripts plotting/plot_results.py requirements.txt requirements.lock; then
+  if ! git diff --quiet -- bench configs scripts plotting requirements.txt requirements.lock; then
     log "tracked benchmark sources have uncommitted changes"
     return 1
   fi
-  if ! git diff --cached --quiet -- bench configs scripts plotting/plot_results.py requirements.txt requirements.lock; then
+  if ! git diff --cached --quiet -- bench configs scripts plotting requirements.txt requirements.lock; then
     log "benchmark sources are staged but not committed"
     return 1
   fi
-  untracked="$(git ls-files --others --exclude-standard -- bench configs scripts plotting/plot_results.py requirements.txt requirements.lock)"
+  untracked="$(git ls-files --others --exclude-standard -- bench configs scripts plotting requirements.txt requirements.lock)"
   if [[ -n "$untracked" ]]; then
     log "untracked benchmark source/input files are not recoverable:"
     printf '%s\n' "$untracked"
@@ -329,21 +332,17 @@ allreduce_once() {
   artifact_id="$(scripts/ray_allreduce_bench.sh --fingerprint-only)" || return 1
   for artifact in "$OUT_DIR"/allreduce_ray_"$artifact_id"_*.csv; do
     [[ -e "$artifact" ]] || continue
-    if "$PYTHON" -c 'import csv, math, sys
-path = sys.argv[1]
-with open(path, newline="") as handle:
-    reader = csv.DictReader(handle)
-    rows = list(reader)
-expected_header = ["bytes", "avg_s", "min_s", "algbw_GBps", "busbw_GBps"]
-expected_sizes = [1 << exponent for exponent in range(3, 31)]
-valid = reader.fieldnames == expected_header
-valid = valid and [int(row["bytes"]) for row in rows] == expected_sizes
-valid = valid and all(
-    math.isfinite(float(row[field])) and float(row[field]) > 0
-    for row in rows
-    for field in expected_header[1:]
-)
-raise SystemExit(0 if valid else 1)' "$artifact"; then
+    if "$PYTHON" - "$artifact" <<'PY'
+import sys
+from scripts.validate_campaign import CampaignValidationError, validate_allreduce_csv
+
+try:
+    validate_allreduce_csv(sys.argv[1])
+except (CampaignValidationError, OSError) as exc:
+    print(f"[job] invalid allreduce artifact: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+    then
       log "valid allreduce artifact for runtime/source $artifact_id: $artifact"
       return 0
     fi
@@ -355,17 +354,34 @@ raise SystemExit(0 if valid else 1)' "$artifact"; then
 # Point-to-point send/recv is PP's primitive; the all-reduce gate covers TP.
 # Recorded once per campaign while the GPUs are idle.
 sendrecv_once() {
-  if compgen -G "$OUT_DIR/interconnect_extra_*.csv" >/dev/null; then
-    log "send/recv microbench already recorded in $OUT_DIR"
-    return 0
-  fi
+  local artifact_id artifact want="roce"
+  [[ "$NCCL_IB_DISABLE" == "1" ]] && want="tcp"
+  artifact_id="$(scripts/interconnect_extra_bench.sh --fingerprint-only)" || return 1
+  for artifact in "$OUT_DIR"/interconnect_extra_"$artifact_id"_*.csv; do
+    [[ -e "$artifact" ]] || continue
+    if "$PYTHON" scripts/validate_microbench.py interconnect "$artifact" \
+        --expected-transport "$want"; then
+      log "valid send/recv artifact for runtime/source $artifact_id: $artifact"
+      return 0
+    fi
+    log "ignoring malformed send/recv artifact: $artifact"
+  done
   scripts/interconnect_extra_bench.sh
 }
 
 canary_identity() {
-  { cat "$MODELS_YAML"
-    printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" "$CX_IFACE" \
-      "$NCCL_IB_DISABLE" "$CAMPAIGN_LABELS" "$CAMPAIGN_CONFIGS"
+  { sha256sum "$MODELS_YAML" "$CONFIG_YAML"
+    # A successful canary is reusable only for the exact client, cluster,
+    # serving policy, and network policy that passed it. The Git commit alone
+    # does not identify environment-supplied launch options or live hardware.
+    sha256sum "$OUT_DIR/client_environment.json"
+    printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" "$RAY_VERSION" \
+      "$CLUSTER_RUNTIME_FINGERPRINT" "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" \
+      "$NCCL_IB_DISABLE" "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" \
+      "${NCCL_NET_PLUGIN:-}" "${DTYPE:-auto}" "${PREFIX_CACHING:-0}" \
+      "${GENERATION_CONFIG:-vllm}" "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
+      "${HF_HUB_OFFLINE:-1}" "$SINGLE_CONTAINER" \
+      "$CAMPAIGN_LABELS" "$CAMPAIGN_CONFIGS"
   } | sha256sum | awk '{print $1}'
 }
 
@@ -549,6 +565,11 @@ prep "plots + summary table" \
 
 # Written under figs/ so the sealed manifest covers them.
 mkdir -p "$OUT_DIR/figs/stats"
+leg "interconnect figure (all-reduce and send/recv by transport)" \
+  "$PYTHON" plotting/plot_interconnect.py "$OUT_DIR" --out "$OUT_DIR/figs/stats"
+leg "cross-model trend figures" \
+  "$PYTHON" plotting/plot_trends.py --index "$OUT_DIR/index.csv" \
+    --out "$OUT_DIR/figs/trends" --format both --models "$MODELS_YAML"
 leg "replicate statistics" \
   "$PYTHON" scripts/variance_report.py --index "$OUT_DIR/index.csv" \
     --md "$OUT_DIR/figs/stats/replicate_stats.md" \
@@ -557,7 +578,7 @@ leg "NCCL transport audit" \
   "$PYTHON" scripts/audit_nccl_transport.py "$OUT_DIR" \
     --md "$OUT_DIR/figs/stats/nccl_transport_audit.md"
 # Same-model comparisons: over TCP (PMBS26, Llama ladder + Nemotron Super) and
-# over RDMA (October pilot, its six carried-over checkpoints).
+# over RDMA (October pilot, the carried-over Qwen3-Next pair).
 if [[ -f baselines/pmbs26-tcp/index.csv ]]; then
   leg "comparison with the PMBS26 TCP baseline" \
     "$PYTHON" scripts/compare_campaigns.py --new "$OUT_DIR/index.csv" \

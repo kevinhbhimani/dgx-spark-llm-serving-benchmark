@@ -5,7 +5,7 @@ Used by scripts/run_models.sh to iterate models in the shell. Prints one
 pipe-delimited line per selected model:
 
     label|name|revision|max_model_len|gpu_util|quant|tokenizer|
-    tokenizer_revision|trust_remote_code
+    tokenizer_revision|trust_remote_code|max_num_seqs
 
 The trust_remote_code field is emitted as "1" when truthy, else empty.
 gpu_util may be a scalar (applies to every config) or a mapping keyed by
@@ -68,7 +68,8 @@ def main() -> int:
                   str(m.get("quant", "") or ""),
                   str(m.get("tokenizer", "") or ""),
                   str(m.get("tokenizer_revision", "") or ""),
-                  "1" if m.get("trust_remote_code") else ""]
+                  "1" if m.get("trust_remote_code") else "",
+                  str(m.get("max_num_seqs", ""))]
         if any("|" in f for f in fields):
             sys.stderr.write(f"{path}: '|' is not allowed in model fields\n")
             return 2

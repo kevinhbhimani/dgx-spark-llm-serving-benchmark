@@ -54,6 +54,11 @@ def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None,
 
     n = len(ok)
     tokens_in_window = _tokens_in_window(records, window_start, window_end)
+    failed_with_window_tokens = sum(
+        1 for r in records if not r.success
+        and any(window_start <= t < window_end
+                for t in (getattr(r, "token_times", None) or []))
+    )
     completed_tokens = sum(r.output_tokens for r in completed_in_window)
     token_gaps = [gap for r in ok for gap in r.inter_token_latencies]
     avg_input = (sum(r.input_len for r in started) / len(started)) if started else float("nan")
@@ -105,6 +110,10 @@ def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None,
         "requests_started": len(started),
         "requests_completed": n,
         "requests_failed": len(failed),
+        # The throughput cohort also includes warmup-started streams. Retain
+        # their failures so a release cannot count corrupted partial output as
+        # good throughput merely because its request started before the window.
+        "failed_requests_with_window_tokens": failed_with_window_tokens,
         "requests_completed_in_window": len(completed_in_window),
         "requests_started_and_completed_in_window":
             len(started_and_completed_in_window),

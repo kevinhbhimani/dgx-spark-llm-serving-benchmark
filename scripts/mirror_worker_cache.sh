@@ -54,9 +54,14 @@ add_spec() {
   fi
 }
 for cfg in "${CONFIGS[@]}"; do
-  entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg" 2>/dev/null || true)"
+  rc=0
+  entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg")" || rc=$?
+  if (( rc > 1 )); then
+    echo "[mirror] cannot read $MODELS_YAML for $cfg" >&2
+    exit 1
+  fi
   [[ -z "$entries" ]] && continue
-  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust; do
+  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust _max_num_seqs; do
     [[ -z "$name" ]] && continue
     if [[ -n "$MODEL_LABELS" && " $MODEL_LABELS " != *" $label "* ]]; then
       continue
