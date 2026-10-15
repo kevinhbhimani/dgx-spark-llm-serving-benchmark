@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 # Shared ConnectX and container settings for the two node DGX Spark benchmark.
 # Source from other scripts: source scripts/connectx_env.sh
-# Diya = 10.10.10.1, Hoedus = 10.10.10.2 on ConnectX interface enp1s0f0np0.
-# The names Diya and Hoedus resolve to these ConnectX addresses on both nodes
-# via /etc/hosts, including self references, so prefer the names everywhere.
+# Diya = 10.10.10.1, Hoedus = 10.10.10.2. The names Diya and Hoedus resolve to
+# these ConnectX addresses on both nodes via /etc/hosts, including self
+# references, so prefer the names everywhere.
 #
-# CX_IFACE accepts a comma-separated list for multi-cable setups, e.g.:
-#   export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
-# NCCL_SOCKET_IFNAME and GLOO_SOCKET_IFNAME inherit the full list. NCCL stripes
-# across all listed interfaces. DIYA_IP / HOEDUS_IP / HEAD_IP stay on one subnet
-# for the Ray rendezvous.
+# Defaults describe the campaign cluster: two QSFP cables, four ConnectX-7
+# interfaces per node (one subnet each, see docs/cluster-setup.md), RDMA (RoCEv2)
+# for every NCCL collective and point-to-point transfer, and NCCL logging of
+# the transport each channel actually used. NCCL_SOCKET_IFNAME and
+# GLOO_SOCKET_IFNAME inherit the full CX_IFACE list; DIYA_IP / HOEDUS_IP /
+# HEAD_IP stay on the first subnet for the Ray rendezvous. Override CX_IFACE
+# for a single cable and NCCL_IB_DISABLE=1 for the TCP-socket ablation.
 
 _CONNECTX_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_CONNECTX_HERE/load_env.sh"
 unset _CONNECTX_HERE
 
-export CX_IFACE="${CX_IFACE:-enp1s0f0np0}"
+export CX_IFACE="${CX_IFACE:-enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1}"
 
 export DIYA_HOST="${DIYA_HOST:-Diya}"
 export HOEDUS_HOST="${HOEDUS_HOST:-Hoedus}"
@@ -37,11 +39,12 @@ export VLLM_HOST_IP="${VLLM_HOST_IP:-$HEAD_IP}"
 # to fall back to TCP sockets, for example to diagnose a RoCE fault.
 # GLOO and the Ray rendezvous use TCP sockets in both modes.
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
-# NCCL_DEBUG=INFO with NCCL_DEBUG_SUBSYS=INIT,NET (rdma-dual-cable.env) logs one
-# "via NET/IB" or "via NET/Socket" line per channel at communicator setup only.
-# run_models.sh fails a dual launch whose log shows the wrong transport.
-export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
-export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-}"
+# NCCL_DEBUG=INFO with NCCL_DEBUG_SUBSYS=INIT,NET logs one "via NET/IB" or
+# "via NET/Socket" line per channel, at communicator setup only, so it never
+# touches a measurement window. run_models.sh fails a dual launch whose log
+# shows the wrong transport; audit_nccl_transport.py reports every launch.
+export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,NET}"
 # NCCL RDMA device allowlist. Empty discovers every device. Set for the
 # dual-cable layout when NCCL selects fewer than all four devices:
 # NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
@@ -66,11 +69,13 @@ export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 # this only when the local Docker resolver is known to be broken.
 export CONTAINER_DNS="${CONTAINER_DNS-}"
 
-# nvcr.io/nvidia/vllm tags do not consistently bundle Ray (26.04-py3 does not,
-# though earlier tags did), so start_ray.sh installs it explicitly. Pinned to
-# the version NVIDIA's own 26.01-py3 image shipped, a combination already
-# validated against this vLLM build. Re-check when bumping VLLM_IMAGE.
-export RAY_VERSION="${RAY_VERSION:-2.53.0}"
+# nvcr.io/nvidia/vllm 26.04 and 26.09 do not bundle Ray, so start_ray.sh
+# installs it into both containers. 2.56.1 is the release vLLM 0.29.0's CI pins
+# (requirements/test/cuda.txt: ray>=2.56.0,<2.57). Pipeline-parallel stage
+# transfers use vLLM's own NCCL communicator (VLLM_USE_RAY_WRAPPED_PP_COMM=1,
+# the default), so the cgraph/cupy extra is not needed. Re-check when bumping
+# VLLM_IMAGE.
+export RAY_VERSION="${RAY_VERSION:-2.56.1}"
 
 # Safety helpers shared by every launcher/orchestrator. Paper measurements must
 # originate on the configured head because local GPU power is part of each row.

@@ -3,7 +3,7 @@
 
 NCCL_IB_DISABLE=0 only *permits* RDMA: NCCL silently falls back to TCP
 sockets when the RoCE handshake fails. With NCCL_DEBUG=INFO and
-NCCL_DEBUG_SUBSYS=INIT,NET on both Ray containers (rdma-dual-cable.env), NCCL
+NCCL_DEBUG_SUBSYS=INIT,NET on both Ray containers (the connectx_env.sh default), NCCL
 logs one "via NET/<transport>" line per channel into the server log, plus the
 RDMA devices it opened. This report reads every tp2/pp2 server log in a result
 directory, compares the observed transport with the one the launch's serving

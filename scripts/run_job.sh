@@ -2,9 +2,12 @@
 # Unattended RDMA campaign (methodology steady-exact-v4). Run INSIDE tmux on the
 # head node (Diya) after starting Ray on both nodes:
 #
-#   Diya:    source rdma-dual-cable.env && scripts/start_ray.sh head
-#   Hoedus:  source rdma-dual-cable.env && scripts/start_ray.sh worker
-#   Diya:    source rdma-dual-cable.env && scripts/run_job.sh
+#   Diya:    scripts/start_ray.sh head
+#   Hoedus:  scripts/start_ray.sh worker
+#   Diya:    scripts/run_job.sh
+#
+# scripts/connectx_env.sh defaults to the dual-cable RDMA layout with NCCL
+# transport logging; nothing has to be sourced first.
 #
 # Model lifecycle. The matrix never has to fit on disk at once. Each model in
 # configs/models.yaml (file order; entries sharing a repo form one group) goes
@@ -274,8 +277,8 @@ leg() {
 ray_ok() {
   if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
     log "Ray is not active in $VLLM_CONTAINER. Start it on both nodes:"
-    log "  Diya:   source rdma-dual-cable.env && scripts/start_ray.sh head"
-    log "  Hoedus: source rdma-dual-cable.env && scripts/start_ray.sh worker"
+    log "  Diya:   scripts/start_ray.sh head"
+    log "  Hoedus: scripts/start_ray.sh worker"
     return 1
   fi
 }
@@ -549,6 +552,11 @@ prep "plots + summary table" \
 
 # Written under figs/ so the sealed manifest covers them.
 mkdir -p "$OUT_DIR/figs/stats"
+leg "interconnect figure (all-reduce and send/recv by transport)" \
+  "$PYTHON" plotting/plot_interconnect.py "$OUT_DIR" --out "$OUT_DIR/figs/stats"
+leg "cross-model trend figures" \
+  "$PYTHON" plotting/plot_trends.py --index "$OUT_DIR/index.csv" \
+    --out "$OUT_DIR/figs/trends" --format both --models "$MODELS_YAML"
 leg "replicate statistics" \
   "$PYTHON" scripts/variance_report.py --index "$OUT_DIR/index.csv" \
     --md "$OUT_DIR/figs/stats/replicate_stats.md" \
@@ -557,7 +565,7 @@ leg "NCCL transport audit" \
   "$PYTHON" scripts/audit_nccl_transport.py "$OUT_DIR" \
     --md "$OUT_DIR/figs/stats/nccl_transport_audit.md"
 # Same-model comparisons: over TCP (PMBS26, Llama ladder + Nemotron Super) and
-# over RDMA (October pilot, its six carried-over checkpoints).
+# over RDMA (October pilot, the carried-over Qwen3-Next pair).
 if [[ -f baselines/pmbs26-tcp/index.csv ]]; then
   leg "comparison with the PMBS26 TCP baseline" \
     "$PYTHON" scripts/compare_campaigns.py --new "$OUT_DIR/index.csv" \
