@@ -59,6 +59,12 @@ machine arch differs from `TARGET_PLATFORM`.
 `docker pull --platform linux/arm64` and `docker save` do not need QEMU. Only
 the image build and the Ray verification run do.
 
+Verify the saved image is arm64:
+
+```bash
+docker image inspect --format '{{.Architecture}}' dgx-spark-vllm-ray:2.53.0   # arm64
+```
+
 Docker Desktop has the arm64 handler built in; skip the registration step.
 
 ## Transfer
