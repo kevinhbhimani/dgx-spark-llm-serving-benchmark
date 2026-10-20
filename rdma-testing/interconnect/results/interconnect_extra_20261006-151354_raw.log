@@ -1,0 +1,360 @@
+collective,transport,bytes,avg_s,min_s,algbw_GBps,busbw_GBps
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NCCL_SOCKET_IFNAME set by environment to enp1s0f0np0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Bootstrap: Using enp1s0f0np0:10.10.10.1<0>
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO cudaDriverVersion 13020
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NCCL version 2.29.7+cuda13.2
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NCCL git version stable b81d6a5a3
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Comm config Blocking set to 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NET/Plugin: Loaded net plugin NCCL RDMA Plugin v11 (v11)
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NET/Plugin: Loaded collnet plugin SHARP (v11)
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Successfully loaded external network plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Plugin Path : /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO P2P plugin v11 IBext_v11
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NCCL_SOCKET_IFNAME set by environment to enp1s0f0np0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NET/IB : Using [0]rocep1s0f0:1/RoCE [1]roceP2p1s0f0:1/RoCE [RO]; OOB enp1s0f0np0:10.10.10.1<0>
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Initialized NET plugin IBext_v11
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Assigned NET plugin IBext_v11 to comm
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO GIN/Plugin: Could not find: libnccl-gin.so
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Successfully loaded external gin plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NCCL_IB_DISABLE set by environment to 0.
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NCCL_SOCKET_IFNAME set by environment to enp1s0f0np0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO NET/IB : Using [0]rocep1s0f0:1/RoCE [1]roceP2p1s0f0:1/RoCE [RO]; OOB enp1s0f0np0:10.10.10.1<0>
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Assigned GIN plugin GIN_IB_GDAKI to comm
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Assigned RMA plugin GIN_IB_PROXY to comm
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Using network IBext_v11
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x275e44b0 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x23995b5ee1ed1717 - Init START
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO RAS client listening socket at 127.0.0.1<28028>
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Bootstrap timings total 0.022574 (create 0.000034, send 0.000083, recv 0.020708, ring 0.000394, delay 0.000001)
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is empty, ignoring. (GPU affinity =  ; CPU affinity = 0-19).
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO comm 0x275e44b0 rank 0 nRanks 2 nNodes 2 localRanks 1 localRank 0 MNNVL 0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 00/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 01/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 02/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 03/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 04/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 05/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 06/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 07/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 08/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 09/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 10/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 11/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 12/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 13/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 14/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 15/16 : 0 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1 [2] 1/-1/-1->0->-1 [3] 1/-1/-1->0->-1 [4] 1/-1/-1->0->-1 [5] 1/-1/-1->0->-1 [6] 1/-1/-1->0->-1 [7] 1/-1/-1->0->-1 [8] -1/-1/-1->0->1 [9] -1/-1/-1->0->1 [10] -1/-1/-1->0->1 [11] -1/-1/-1->0->1 [12] -1/-1/-1->0->1 [13] -1/-1/-1->0->1 [14] -1/-1/-1->0->1 [15] -1/-1/-1->0->1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO P2P Chunksize set to 262144
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Check P2P Type isAllDirectP2p 1 directMode 0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:563 [0] NCCL INFO [Proxy Service] Device 0 CPU core 2
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:564 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 18
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO TUNER/Plugin: Could not find: libnccl-tuner.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO 16 coll channels, 16 collnet channels, 0 nvls channels, 16 p2p channels, 2 p2p channels per peer
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Symmetric VA size=124GB
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Symmetric memory is not supported. cuMemEnable 1, globalGinSupport 0, globalNicFused 0 cuMemGdrSupport 0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO ncclCommInitRankConfig comm 0x15b5f4c0 rank 1 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x23995b5ee1ed1717 - Init COMPLETE
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Init timings - n
+[36m(_worker pid=1274)[0m  isAllCudaP2p 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO CC Off, workFifoBytes 1048576
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.22 (kernels 0.14, alloc 0.04, bootstrap 0.02, allgathers 0.00, topo 0.00, graphs 0.00, connections 0.01, rest 0.00)
+[36m(_worker pid=1274)[0m cisc-diya:1274:2310 [0] NCCL INFO [Proxy Progress] Device 0 CPU core 15
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 00/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 01/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 02/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 03/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 04/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 05/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 06/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 07/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 08/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 09/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 10/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 11/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 12/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 13/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 14/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 15/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 00/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 01/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 02/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 03/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 04/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 05/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 06/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 07/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 08/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 09/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 10/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 11/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 12/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 13/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 14/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Channel 15/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Co
+allreduce,roce,8,8.164950e-05,2.240000e-05,0.000,0.000
+allreduce,roce,16,2.406105e-05,2.235200e-05,0.001,0.001
+allreduce,roce,32,2.628105e-05,2.188800e-05,0.001,0.001
+allreduce,roce,64,2.439065e-05,2.284800e-05,0.003,0.003
+allreduce,roce,128,2.521860e-05,2.243300e-05,0.005,0.005
+allreduce,roce,256,3.262190e-05,2.188800e-05,0.008,0.008
+allreduce,roce,512,2.472105e-05,2.211200e-05,0.021,0.021
+allreduce,roce,1024,2.473140e-05,2.320100e-05,0.041,0.041
+allreduce,roce,2048,2.588750e-05,2.353600e-05,0.079,0.079
+allreduce,roce,4096,2.976750e-05,2.683200e-05,0.138,0.138
+allreduce,roce,8192,3.225950e-05,3.129600e-05,0.254,0.254
+allreduce,roce,16384,3.404115e-05,3.254400e-05,0.481,0.481
+allreduce,roce,32768,4.245005e-05,3.982400e-05,0.772,0.772
+allreduce,roce,65536,7.042545e-05,5.940900e-05,0.931,0.931
+allreduce,roce,131072,1.106218e-04,1.018720e-04,1.185,1.185
+allreduce,roce,262144,1.975828e-04,1.742890e-04,1.327,1.327
+allreduce,roce,524288,2.982285e-04,2.749140e-04,1.758,1.758
+allreduce,roce,1048576,6.582512e-04,5.654290e-04,1.593,1.593
+allreduce,roce,2097152,1.358929e-03,1.132667e-03,1.543,1.543
+allreduce,roce,4194304,2.509714e-03,2.036948e-03,1.671,1.671
+allreduce,roce,8388608,2.700193e-03,2.668506e-03,3.107,3.107
+allreduce,roce,16777216,5.364630e-03,5.339764e-03,3.127,3.127
+allreduce,roce,33554432,1.091851e-02,1.086875e-02,3.073,3.073
+allreduce,roce,67108864,2.244245e-02,2.235948e-02,2.990,2.990
+allreduce,roce,134217728,4.468212e-02,4.451298e-02,3.004,3.004
+allreduce,roce,268435456,8.874754e-02,8.854985e-02,3.025,3.025
+allreduce,roce,536870912,1.770119e-01,1.764965e-01,3.033,3.033
+allreduce,roce,1073741824,3.526107e-01,3.519948e-01,3.045,3.045
+[36m(_worker pid=1274)[0m nnected all rings, use ring PXN 0 GDR 0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO comm 0x275e44b0 rank 0 nranks 2 cudaDev 0 busId f01000 - Destroy COMPLETE
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Unloading plugin libnccl-net.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO NCCL_SOCKET_IFNAME set by environment to enp1s0f0np0[32m [repeated 3x across cluster] (Ray deduplicates logs by default. Set RAY_DEDUP_LOGS=0 to disable log deduplication, or see https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#log-deduplication for more options.)[0m
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Bootstrap: Using enp1s0f0np0:10.10.10.2<0>
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO cudaDriverVersion 13020
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO NCCL version 2.29.7+cuda13.2
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO NCCL git version stable b81d6a5a3
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Comm config Blocking set to 1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO NET/Plugin: Loaded net plugin NCCL RDMA Plugin v11 (v11)
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO NET/Plugin: Loaded collnet plugin SHARP (v11)
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Successfully loaded external network plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Plugin Path : /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO P2P plugin v11 IBext_v11
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO NET/IB : Using [0]rocep1s0f0:1/RoCE [1]roceP2p1s0f0:1/RoCE [RO]; OOB enp1s0f0np0:10.10.10.2<0>[32m [repeated 2x across cluster][0m
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Initialized NET plugin IBext_v11
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Assigned NET plugin IBext_v11 to comm
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO GIN/Plugin: Could not find: libnccl-gin.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Successfully loaded external gin plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO NCCL_IB_DISABLE set by environment to 0.
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Assigned GIN plugin GIN_IB_GDAKI to comm
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Assigned RMA plugin GIN_IB_PROXY to comm
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Using network IBext_v11
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x15b5f4c0 rank 1 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x23995b5ee1ed1717 - Init START
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO RAS client listening socket at 127.0.0.1<28028>
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Bootstrap timings total 0.002607 (create 0.000038, send 0.000564, recv 0.000637, ring 0.000429, delay 0.000000)
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is empty, ignoring. (GPU affinity =  ; CPU affinity = 0-19).
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO comm 0x15b5f4c0 rank 1 nRanks 2 nNodes 2 localRanks 1 localRank 0 MNNVL 0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0 [2] -1/-1/-1->1->0 [3] -1/-1/-1->1->0 [4] -1/-1/-1->1->0 [5] -1/-1/-1->1->0 [6] -1/-1/-1->1->0 [7] -1/-1/-1->1->0 [8] 0/-1/-1->1->-1 [9] 0/-1/-1->1->-1 [10] 0/-1/-1->1->-1 [11] 0/-1/-1->1->-1 [12] 0/-1/-1->1->-1 [13] 0/-1/-1->1->-1 [14] 0/-1/-1->1->-1 [15] 0/-1/-1->1->-1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO P2P Chunksize set to 262144
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Check P2P Type isAllDirectP2p 1 directMode 0 isAllCudaP2p 1
+[36m(_worker pid=1274)[0m cisc-diya:1274:2308 [0] NCCL INFO [Proxy Service] Device 0 CPU core 19
+[36m(_worker pid=1274)[0m cisc-diya:1274:2309 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 13
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO TUNER/Plugin: Could not find: libnccl-tuner.so
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO 16 coll channels, 16 collnet channels, 0 nvls channels, 16 p2p channels, 2 p2p channels per peer
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Symmetric VA size=124GB
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO Symmetric memory is not supported. cuMemEnable 1, globalGinSupport 0, globalNicFused 0 cuMemGdrSupport 0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO ncclCommInitRankConfig comm 0x275e44b0 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x23995b5ee1ed1717 - Init COMPLETE
+[36m(_worker pid=448, ip=10.10.10.2)[0m cclCommInitRankConfig: rank 1 nranks 2 total 0.21 (kernels 0.14, alloc 0.06, bootstrap 0.00, allgathers 0.00, topo 0.00, graphs 0.00, connections 0.01, rest 0.00)
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:565 [0] NCCL INFO [Proxy Progress] Device 0 CPU core 12
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 00/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 01/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 02/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 03/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 04/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 05/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 06/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 07/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 08/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 09/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 10/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 11/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 12/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 13/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 14/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 15/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 00/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 01/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 02/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 03/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 04/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 05/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 06/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 07/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 08/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 09/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 10/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 11/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 12/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 13/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 14/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Channel 15/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 0
+[36m(_worker pid=448, ip=10.10.10.2)[0m cisc-hoedus:448:448 [0] NCCL INFO ENV/Plugin: Closing env plugin ncclEnvDefault
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Bootstrap: Using enp1s0f0np0:10.10.10.1<0>
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO cudaDriverVersion 13020
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO NCCL version 2.29.7+cuda13.2
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO NCCL git version stable b81d6a5a3
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Comm config Blocking set to 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO NET/Plugin: Loaded net plugin NCCL RDMA Plugin v11 (v11)
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO NET/Plugin: Loaded collnet plugin SHARP (v11)
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Successfully loaded external network plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Plugin Path : /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO P2P plugin v11 IBext_v11
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Initialized NET plugin IBext_v11
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Assigned NET plugin IBext_v11 to comm
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO GIN/Plugin: Could not find: libnccl-gin.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Successfully loaded external gin plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO NCCL_IB_DISABLE set by environment to 0.
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Assigned GIN plugin GIN_IB_GDAKI to comm
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Assigned RMA plugin GIN_IB_PROXY to comm
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Using network IBext_v11
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x14d5e710 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0xe14c634b5282081a - Init START
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO RAS client listening socket at 127.0.0.1<28028>
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Bootstrap timings total 0.018525 (create 0.000035, send 0.000117, recv 0.016103, ring 0.000160, delay 0.000000)
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is empty, ignoring. (GPU affinity =  ; CPU affinity = 0-19).
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO comm 0x14d5e710 rank 0 nRanks 2 nNodes 2 localRanks 1 localRank 0 MNNVL 0
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 00/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 01/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 02/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 03/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 04/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 05/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 06/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 07/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 08/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 09/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 10/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 11/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 12/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 13/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 14/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 15/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1 [2] 1/-1/-1->0->-1 [3] 1/-1/-1->0->-1 [4] 1/-1/-1->0->-1 [5] 1/-1/-1->0->-1 [6] 1/-1/-1->0->-1 [7] 1/-1/-1->0->-1 [8] -1/-1/-1->0->1 [9] -1/-1/-1->0->1 [10] -1/-1/-1->0->1 [11] -1/-1/-1->0->1 [12] -1/-1/-1->0->1 [13] -1/-1/-1->0->1 [14] -1/-1/-1->0->1 [15] -1/-1/-1->0->1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO P2P Chunksize set to 262144
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Check P2P Type isAllDirectP2p 1 directMode 0
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:641 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 2
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:640 [0] NCCL INFO [Proxy Service] Device 0 CPU core 10
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO TUNER/Plugin: Could not find: libnccl-tuner.so
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO 16 coll channels, 16 collnet channels, 0 nvls channels, 16 p2p channels, 2 p2p channels per peer
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Symmetric VA size=124GB
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Symmetric memory is not supported. cuMemEnable 1, globalGinSupport 0, globalNicFused 0 cuMemGdrSupport 0
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO ncclCommInitRankConfig comm 0x2bb49bf0 rank 1 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0xe14c634b5282081a - Init COMPLETE
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Init timings - n
+[36m(_worker pid=1280)[0m  isAllCudaP2p 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO CC Off, workFifoBytes 1048576
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.19 (kernels 0.12, alloc 0.04, bootstrap 0.02, allgathers 0.00, topo 0.00, graphs 0.00, connections 0.01, rest 0.00)
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Channel 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 00/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 01/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 02/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 03/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 04/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 05/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 06/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 07/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 08/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 09/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 10/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 11/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 12/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 13/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 14/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 15/16 : 0 1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO CC Off, workFifoBytes 1048576
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL 
+sendrecv,roce,8,3.238828e-05,1.828000e-05,0.000,0.000
+sendrecv,roce,16,2.336743e-05,1.824000e-05,0.001,0.001
+sendrecv,roce,32,2.288740e-05,1.813600e-05,0.001,0.001
+sendrecv,roce,64,2.609907e-05,2.110400e-05,0.002,0.002
+sendrecv,roce,128,2.262060e-05,1.972050e-05,0.006,0.006
+sendrecv,roce,256,2.003655e-05,1.781600e-05,0.013,0.013
+sendrecv,roce,512,2.405098e-05,1.840050e-05,0.021,0.021
+sendrecv,roce,1024,5.419653e-05,2.058450e-05,0.019,0.019
+sendrecv,roce,2048,2.396543e-05,1.988800e-05,0.085,0.085
+sendrecv,roce,4096,2.371305e-05,2.113600e-05,0.173,0.173
+sendrecv,roce,8192,2.467985e-05,2.372850e-05,0.332,0.332
+sendrecv,roce,16384,2.750463e-05,2.490450e-05,0.596,0.596
+sendrecv,roce,32768,3.149030e-05,3.006450e-05,1.041,1.041
+sendrecv,roce,65536,4.379922e-05,4.269600e-05,1.496,1.496
+sendrecv,roce,131072,6.992585e-05,6.852850e-05,1.874,1.874
+sendrecv,roce,262144,1.238463e-04,6.880050e-05,2.117,2.117
+sendrecv,roce,524288,1.316176e-04,1.221290e-04,3.983,3.983
+sendrecv,roce,1048576,2.209381e-04,2.118500e-04,4.746,4.746
+sendrecv,roce,2097152,4.014914e-04,3.962040e-04,5.223,5.223
+sendrecv,roce,4194304,8.092921e-04,7.638235e-04,5.183,5.183
+sendrecv,roce,8388608,1.523372e-03,1.481078e-03,5.507,5.507
+sendrecv,roce,16777216,2.938450e-03,2.926900e-03,5.710,5.710
+sendrecv,roce,33554432,5.841985e-03,5.826328e-03,5.744,5.744
+sendrecv,roce,67108864,1.166740e-02,1.160466e-02,5.752,5.752
+sendrecv,roce,134217728,2.326920e-02,2.321349e-02,5.768,5.768
+sendrecv,roce,268435456,4.646927e-02,4.632280e-02,5.777,5.777
+sendrecv,roce,536870912,9.295925e-02,9.255333e-02,5.775,5.775
+sendrecv,roce,1073741824,1.854782e-01,1.851392e-01,5.789,5.789
+[36m(_worker pid=578, ip=10.10.10.2)[0m 5/0 : 0[0] -> 1[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO comm 0x2bb49bf0 rank 1 nranks 2 cudaDev 0 busId f01000 - Destroy COMPLETE[32m [repeated 3x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Unloading plugin libnccl-net.so[32m [repeated 2x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO NCCL_SOCKET_IFNAME set by environment to enp1s0f0np0[32m [repeated 6x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO NET/IB : Using [0]rocep1s0f0:1/RoCE [1]roceP2p1s0f0:1/RoCE [RO]; OOB enp1s0f0np0:10.10.10.2<0>[32m [repeated 4x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cclCommInitRankConfig: rank 1 nranks 2 total 0.18 (kernels 0.12, alloc 0.05, bootstrap 0.00, allgathers 0.00, topo 0.00, graphs 0.00, connections 0.01, rest 0.00)
+[36m(_worker pid=1280)[0m cisc-diya:1280:2443 [0] NCCL INFO [Proxy Progress] Device 0 CPU core 14[32m [repeated 4x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 04/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/0[32m [repeated 24x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Channel 15/0 : 1[0] -> 0[0] [send] via NET/IBext_v11/1[32m [repeated 20x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 0
+[36m(_worker pid=1274)[0m cisc-diya:1274:1274 [0] NCCL INFO ENV/Plugin: Closing env plugin ncclEnvDefault
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Bootstrap: Using enp1s0f0np0:10.10.10.2<0>
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO cudaDriverVersion 13020
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO NCCL version 2.29.7+cuda13.2
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO NCCL git version stable b81d6a5a3
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Comm config Blocking set to 1[32m [repeated 3x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO NET/Plugin: Loaded net plugin NCCL RDMA Plugin v11 (v11)
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO NET/Plugin: Loaded collnet plugin SHARP (v11)
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Successfully loaded external network plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Plugin Path : /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO P2P plugin v11 IBext_v11
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Initialized NET plugin IBext_v11[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Assigned NET plugin IBext_v11 to comm[32m [repeated 3x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO GIN/Plugin: Could not find: libnccl-gin.so
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO Successfully loaded external gin plugin /opt/hpcx/nccl_rdma_sharp_plugin/lib/libnccl-net.so
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO NCCL_IB_DISABLE set by environment to 0.
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Assigned GIN plugin GIN_IB_GDAKI to comm[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Assigned RMA plugin GIN_IB_PROXY to comm[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Using network IBext_v11[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x16cd9d40 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x8d140436d234061f - Init START[32m [repeated 3x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO RAS client listening socket at 127.0.0.1<28028>
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Bootstrap timings total 0.002233 (create 0.000013, send 0.000059, recv 0.000949, ring 0.000165, delay 0.000000)[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is empty, ignoring. (GPU affinity =  ; CPU affinity = 0-19).[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO comm 0x16cd9d40 rank 0 nRanks 2 nNodes 2 localRanks 1 localRank 0 MNNVL 0[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1 [2] 1/-1/-1->0->-1 [3] 1/-1/-1->0->-1 [4] 1/-1/-1->0->-1 [5] 1/-1/-1->0->-1 [6] 1/-1/-1->0->-1 [7] 1/-1/-1->0->-1 [8] -1/-1/-1->0->1 [9] -1/-1/-1->0->1 [10] -1/-1/-1->0->1 [11] -1/-1/-1->0->1 [12] -1/-1/-1->0->1 [13] -1/-1/-1->0->1 [14] -1/-1/-1->0->1 [15] -1/-1/-1->0->1[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO P2P Chunksize set to 262144[32m [repeated 3x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Check P2P Type isAllDirectP2p 1 directMode 0 isAllCudaP2p 1[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:2442 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 9[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:2441 [0] NCCL INFO [Proxy Service] Device 0 CPU core 19[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO TUNER/Plugin: Could not find: libnccl-tuner.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO 16 coll channels, 16 collnet channels, 0 nvls channels, 16 p2p channels, 2 p2p channels per peer[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Symmetric VA size=124GB[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Symmetric memory is not supported. cuMemEnable 1, globalGinSupport 0, globalNicFused 0 cuMemGdrSupport 0[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO ncclCommInitRankConfig comm 0x16cd9d40 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x8d140436d234061f - Init COMPLETE[32m [repeated 3x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.01 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.00, graphs 0.00, connections 0.01, rest 0.00)[32m [repeated 2x across cluster][0m
+[36m(_worker pid=1280)[0m INFO Channel 05/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 0
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO ENV/Plugin: Closing env plugin ncclEnvDefault
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO comm 0x14d5e710 rank 0 nranks 2 cudaDev 0 busId f01000 - Destroy COMPLETE[32m [repeated 2x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Unloading plugin libnccl-net.so
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 15/0 : 1[0] -> 0[0] [receive] via NET/IBext_v11/1[32m [repeated 10x across cluster][0m
+[36m(_worker pid=1280)[0m cisc-diya:1280:1280 [0] NCCL INFO Channel 15/0 : 0[0] -> 1[0] [send] via NET/IBext_v11/1[32m [repeated 16x across cluster][0m
+[36m(_worker pid=578, ip=10.10.10.2)[0m cisc-hoedus:578:578 [0] NCCL INFO ENV/Plugin: Closing env plugin ncclEnvDefault

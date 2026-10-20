@@ -56,7 +56,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -219,7 +218,6 @@ __marimo__/
 
 .claude/
 
-results-*/server_*.log
 results-preflight
 
 # Raw campaign telemetry never goes into git: it is ~14 MB per measurement
@@ -230,8 +228,6 @@ results-preflight
 *.raw.jsonl
 *.power.jsonl
 *.vllm_metrics.jsonl
-*_raw.log
-server_*.log
 .canary_passed
 .index.lock
 
