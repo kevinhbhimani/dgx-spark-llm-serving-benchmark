@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Shared ConnectX and container settings for the two node DGX Spark benchmark.
 # Source from other scripts: source scripts/connectx_env.sh
-# Diya = 10.10.10.1, Hoedus = 10.10.10.2. The names Diya and Hoedus resolve to
-# these ConnectX addresses on both nodes via /etc/hosts, including self
-# references, so prefer the names everywhere.
+# cisc-diya = 10.10.10.1, cisc-hoedus = 10.10.10.2. These rendezvous names
+# resolve to the primary ConnectX addresses on both nodes via /etc/hosts.
 #
 # Defaults describe the campaign cluster: two QSFP cables, four ConnectX-7
 # interfaces per node (one subnet each, see docs/cluster-setup.md), RDMA (RoCEv2)
@@ -19,8 +18,8 @@ unset _CONNECTX_HERE
 
 export CX_IFACE="${CX_IFACE:-enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1}"
 
-export DIYA_HOST="${DIYA_HOST:-Diya}"
-export HOEDUS_HOST="${HOEDUS_HOST:-Hoedus}"
+export DIYA_HOST="${DIYA_HOST:-cisc-diya}"
+export HOEDUS_HOST="${HOEDUS_HOST:-cisc-hoedus}"
 export DIYA_IP="${DIYA_IP:-10.10.10.1}"
 export HOEDUS_IP="${HOEDUS_IP:-10.10.10.2}"
 

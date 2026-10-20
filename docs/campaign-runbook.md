@@ -8,8 +8,8 @@ unless a step names a different node or directory.
 
 ## Roles and campaign inputs
 
-- Diya is the Ray head and the benchmark client.
-- Hoedus is the Ray worker.
+- Diya (`cisc-diya`) is the Ray head and the benchmark client.
+- Hoedus (`cisc-hoedus`) is the Ray worker.
 - `scripts/connectx_env.sh` defines the node addresses, ConnectX interfaces,
   pinned vLLM image, and Ray version.
 - `configs/models.yaml` defines model revisions, serving configurations, and
@@ -25,6 +25,21 @@ unless a step names a different node or directory.
 - `scripts/ray-runtime-constraints.txt` pins the Ray dependency versions used
   on both nodes. `scripts/start_ray.sh` checks its Ray pin against
   `RAY_VERSION` before starting a container.
+
+## Where to run commands
+
+| Task | Run command on | Nodes involved |
+| --- | --- | --- |
+| Firmware, Netplan, host entries, and local ConnectX interface checks | Both nodes | Each command checks the local node |
+| Software checks, client environment, and `PLAN_ONLY=1` | Diya only | Local checkout and Python environment; no cluster work |
+| `scripts/verify_connectx.sh` | Diya only | Checks Diya's route and probes the Hoedus peer on each ConnectX interface |
+| `scripts/start_ray.sh head` / `worker` | Diya / Hoedus, respectively | Starts Ray on both nodes |
+| Ray status, RDMA microbenchmarks, canary, and full campaign | Diya only | Ray uses Hoedus for distributed benchmarks and dual-node serving |
+| `scripts/hardware_smoke.sh` | Diya only | Single-node diagnostic using Diya's GPU |
+| `scripts/predownload.sh` | Diya only | Downloads to Diya's local Hugging Face cache |
+| `scripts/purge_model_cache.sh` | Diya only | Purges both caches while Ray is active; otherwise purges only Diya |
+| `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each node |
+| Perftest suite | Diya client and Hoedus host | Both nodes use separate client and server commands |
 
 Keep the image digest, Ray version, constraints file, model matrix, and
 experiment configuration identical across the two checkouts. Commit changes
@@ -166,10 +181,13 @@ OUT_DIR=results-rdma-v4-paper CANARY_FIRST=1 STOP_AFTER_CANARY=1 \
 This command runs the campaign's hardware preflight and canary, then exits
 before measurements. The preflight checks the committed source tree, locked
 client environment, campaign definition, active Ray cluster, absence of a
-stale vLLM server, and matching two-node runtime. It runs the all-reduce gate
-and records the send/recv microbenchmark while both GPUs are idle. The
-all-reduce gate requires at least 16 GB/s at 1 GiB. The send/recv result is
-recorded as a non-fatal measurement.
+stale vLLM server, and matching two-node runtime. It runs a fresh all-reduce
+gate on every invocation and records the send/recv microbenchmark while both
+GPUs are idle. The all-reduce gate requires verified RDMA transport on both
+ranks, at least 16 GB/s at 1 GiB, and no more than 100 microseconds for the
+8-byte collective. A TCP fallback or slow link stops the campaign before the
+canary and measurements. The send/recv result is recorded as a non-fatal
+measurement.
 
 The canary fetches one model at a time, mirrors models used by `tp2` or `pp2`,
 launches every model/configuration pair once, checks the streaming response and
@@ -184,7 +202,12 @@ client environment, image, Ray version, two-node runtime, and network policy.
 
 ## Start and resume the full suite
 
-Start a persistent terminal on Diya:
+The default matrix requires about 265 hours of measurement before model
+downloads, launches, and extensions. Run it in `tmux` on Diya so it continues
+if the SSH connection closes. A host reboot stops the session and campaign
+process.
+
+Start the campaign session on Diya:
 
 ```bash
 tmux new-session -s rdma-v4
@@ -208,8 +231,8 @@ cluster remains active. The campaign writes logs, per-launch policies,
 `index.csv`, plots, statistics, transport audit, and `campaign_manifest.json`
 under `OUT_DIR`.
 
-Detach from tmux with `Ctrl-b`, then `d`. Follow the campaign log from another
-Diya shell:
+Detach from the session with `Ctrl-b`, then `d`. Reattach from Diya with
+`tmux attach -t rdma-v4`. Follow the campaign log from another Diya shell:
 
 ```bash
 tail -f results-rdma-v4-paper/run_job_*.log

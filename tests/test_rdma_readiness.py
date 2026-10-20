@@ -77,10 +77,16 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.calls = self.root / "calls"
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
                         DGX_SPARK_ENV_LOADED="1", CX_IFACE="cx0,cx1",
-                        NCCL_IB_DISABLE="0", DIYA_HOST="Diya", HOEDUS_HOST="Hoedus",
+                        NCCL_IB_DISABLE="0",
                         DIYA_IP="10.10.10.1", HOEDUS_IP="10.10.10.2", HEAD_IP="10.10.10.1",
                         CALL_LOG=str(self.calls))
-        self.command("getent", 'case "$2" in Diya) echo "10.10.10.1 STREAM";; Hoedus) echo "10.10.10.2 STREAM";; esac')
+        self.command("getent", '''case "$2" in
+          cisc-diya)
+            echo "10.10.10.1 STREAM"
+            if [[ "${MOCK_LOCAL_LOOPBACK:-0}" == "1" ]]; then echo "127.0.0.1 STREAM"; fi
+            if [[ "${MOCK_LOCAL_SECONDARY_ALIAS:-0}" == "1" ]]; then echo "10.10.11.1 STREAM"; fi;;
+          cisc-hoedus) echo "10.10.10.2 STREAM";;
+        esac''')
         self.command("ip", '''case "$*" in
           '-4 -o addr show cx0') echo '1: cx0 inet 10.10.10.1/24';;
           '-4 -o addr show cx1') echo '2: cx1 inet 10.10.11.1/24';;
@@ -108,6 +114,17 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls.read_text().splitlines(), [
             "ping -I cx0 -W 2 -c 3 10.10.10.2", "ping -I cx1 -W 2 -c 3 10.10.11.2"])
+
+    def test_verify_ignores_local_loopback_but_rejects_secondary_aliases(self):
+        result = self.run_script("verify_connectx.sh", MOCK_LOCAL_LOOPBACK="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cisc-diya -> 10.10.10.1", result.stdout)
+        self.calls.unlink()
+
+        result = self.run_script("verify_connectx.sh", MOCK_LOCAL_SECONDARY_ALIAS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("non-loopback: '10.10.10.1\n10.10.11.1'", result.stderr)
+        self.assertFalse(self.calls.exists())
 
     def test_verify_rejects_wrong_route_and_missing_rdma_rail(self):
         result = self.run_script("verify_connectx.sh", MOCK_ROUTE_IFACE="wlan0")
