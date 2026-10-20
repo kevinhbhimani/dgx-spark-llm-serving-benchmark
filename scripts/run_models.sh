@@ -765,7 +765,7 @@ run_one() {
   local tokenizer="${tok:-$name}"
   local tokenizer_revision="$tokrev"
   local actual_maxlen="${maxlen:-8704}"
-  local actual_gpu_util="${gpu_util:-0.90}"
+  local actual_gpu_util="${gpu_util:-0.80}"
   local fingerprint deployment="" schedule=""
   local status=0
   LAST_SERVER_LOG=""
