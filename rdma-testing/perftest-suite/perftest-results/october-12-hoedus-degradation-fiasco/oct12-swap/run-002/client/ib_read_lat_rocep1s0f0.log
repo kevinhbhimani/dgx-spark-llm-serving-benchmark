@@ -1,0 +1,29 @@
+# test   : ib_read_lat
+# device : rocep1s0f0
+# port   : 18517
+# host   : ib_read_lat -d rocep1s0f0 -i 1 -F -p 18517 -c RC -n 15000 --report_gbits
+# client : ib_read_lat -d rocep1s0f0 -i 1 -F -p 18517 -c RC -n 15000 --report_gbits 10.10.10.2
+# ---
+---------------------------------------------------------------------------------------
+                    RDMA_Read Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 2048[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Outstand reads  : 16
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0161 PSN 0xd0fa92 OUT 0x10 RKey 0x184300 VAddr 0x00b78db64ad000
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:10:10:10:01
+ remote address: LID 0000 QPN 0x0165 PSN 0x44b336 OUT 0x10 RKey 0x184400 VAddr 0x00c8c50532d000
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:10:10:10:02
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 2       15000          2.56           5.34         2.64     	       2.65        	0.02   		2.82    		3.28   
+---------------------------------------------------------------------------------------
