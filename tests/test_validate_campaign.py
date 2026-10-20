@@ -128,7 +128,7 @@ class CampaignFixture:
             "connectx_iface": "enp1s0f0np0",
             "dtype": "auto",
             "generation_config": "vllm",
-            "gpu_util": "0.8",
+            "gpu_util": "0.9",
             "head_ip": "192.0.2.10",
             "hf_hub_offline": "1",
             "image": IMAGE,
@@ -413,6 +413,7 @@ class PlanTests(unittest.TestCase):
             models.write_text(
                 yaml.safe_dump(
                     {
+                        "gpu_util_default": 0.8,
                         "models": [
                             {
                                 "name": "org/model",
@@ -420,7 +421,6 @@ class PlanTests(unittest.TestCase):
                                 "revision": REVISION,
                                 "configs": ["single", "tp2"],
                                 "max_model_len": 32,
-                                "gpu_util": {"single": 0.8, "tp2": 0.8},
                             }
                         ]
                     }

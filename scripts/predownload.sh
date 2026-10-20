@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-download model weights into the shared Hugging Face cache so that a later
+# Download model weights into the head node's Hugging Face cache so a later
 # `vllm serve` does not spend its readiness budget pulling weights.
 #
 # Why: scripts/run_models.sh gives each server READY_TIMEOUT seconds (default
@@ -14,7 +14,7 @@
 #   scripts/predownload.sh all         # every model in models.yaml, across all configs
 #
 # Downloads run inside the same VLLM_IMAGE and into the same HF_CACHE mount that
-# launch_server.sh uses, so the serving path sees an identical, warm cache. Each
+# launch_server.sh uses, so the serving path sees the same local files. Each
 # unique repo is fetched once (a model shared across configs, or reused by an
 # on-the-fly-quant entry like llama3.3-70b-fp8, is not downloaded twice). Gated
 # repos (meta-llama) use HF_TOKEN from .env. Redundant PyTorch/Metal/GGUF copies
@@ -37,7 +37,8 @@
 #      MODEL_LABELS (optional space-separated label allowlist),
 #      DOWNLOAD_DNS (Docker DNS for downloads, defaults to CONTAINER_DNS;
 #                    empty uses Docker's host-derived resolver),
-#      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS).
+#      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS),
+#      PREDOWNLOAD_MIN_FREE_GB (free-space reserve, default 10 GiB).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_IMAGE, HF_CACHE, HF_TOKEN, and .env
@@ -129,8 +130,8 @@ mkdir -p "$HF_CACHE"
 
 # Reserve exactly what the pinned snapshots still need. The Hub's per-file
 # sizes for each pinned revision, minus blobs already complete in this cache,
-# are compared with free space plus an OS buffer (20 GiB or 5% of the disk,
-# whichever is larger; PREDOWNLOAD_MIN_FREE_GB overrides). A Hub query failure
+# are compared with free space plus a 10 GiB OS buffer
+# (PREDOWNLOAD_MIN_FREE_GB overrides). A Hub query failure
 # exits before the first download. Skipped in CHECK_ONLY mode.
 check_disk_space() {
   local spec repo revision kind size_report needed_bytes
@@ -148,22 +149,20 @@ check_disk_space() {
   [[ "$needed_bytes" =~ ^[0-9]+$ ]] || {
     echo "[predownload] FAILED: unparseable size report" >&2; return 1; }
 
-  local available_kb total_kb need_kb buffer_kb pct_buffer_kb
+  local available_kb need_kb buffer_kb min_free_gb
   available_kb=$(df --output=avail "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
-  total_kb=$(df --output=size "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
-  if [[ -z "$available_kb" || -z "$total_kb" || "$available_kb" -le 0 ]]; then
+  if [[ -z "$available_kb" || "$available_kb" -le 0 ]]; then
     echo "[predownload] cannot determine free space on $HF_CACHE" >&2
     return 1
   fi
   need_kb=$((needed_bytes / 1024))
-  pct_buffer_kb=$((total_kb * 5 / 100))
-  buffer_kb=$((20 * 1024 * 1024))
-  if [[ "$pct_buffer_kb" -gt "$buffer_kb" ]]; then
-    buffer_kb=$pct_buffer_kb
+  min_free_gb="${PREDOWNLOAD_MIN_FREE_GB:-10}"
+  if [[ ! "$min_free_gb" =~ ^[0-9]{1,6}$ ]]; then
+    echo "[predownload] PREDOWNLOAD_MIN_FREE_GB must be a non-negative integer" >&2
+    return 2
   fi
-  if [[ -n "${PREDOWNLOAD_MIN_FREE_GB:-}" ]]; then
-    buffer_kb=$((PREDOWNLOAD_MIN_FREE_GB * 1024 * 1024))
-  fi
+  min_free_gb=$((10#$min_free_gb))
+  buffer_kb=$((min_free_gb * 1024 * 1024))
   echo "[predownload] $HF_CACHE: $((available_kb / 1024 / 1024)) GiB free, need $((need_kb / 1024 / 1024)) GiB + $((buffer_kb / 1024 / 1024)) GiB OS buffer"
   if [[ "$available_kb" -lt $((need_kb + buffer_kb)) ]]; then
     echo "[predownload] FAILED: need $(((need_kb + buffer_kb) / 1024 / 1024)) GiB, have $((available_kb / 1024 / 1024)) GiB." >&2
@@ -175,7 +174,7 @@ if [[ "$CHECK_ONLY" != "1" ]]; then
   check_disk_space || exit 1
 fi
 
-run_env=()
+run_env=( -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" )
 dns_args=()
 if [[ -n "$DOWNLOAD_DNS" ]]; then dns_args=( --dns "$DOWNLOAD_DNS" ); fi
 
@@ -199,8 +198,10 @@ args = sys.argv[1:]
 for i in range(0, len(args), 3):
     repo, revision, kind = args[i:i + 3]
     try:
-        path = Path(snapshot_download(repo, revision=revision or None,
-                                      local_files_only=True))
+        path = Path(snapshot_download(
+            repo, revision=revision or None, local_files_only=True,
+            ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"],
+        ))
         broken = [str(p.relative_to(path)) for p in path.rglob("*")
                   if p.is_symlink() and not p.exists()]
         repo_root = path.parents[1]

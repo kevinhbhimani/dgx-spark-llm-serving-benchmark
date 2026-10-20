@@ -204,6 +204,10 @@ def validate_models_yaml(
         raise CampaignValidationError(
             f"models YAML {path} must define a non-empty 'models' list"
         )
+    run_gpu_utilization = _validate_gpu_util(
+        document.get("gpu_util_default", 0.90),
+        "models YAML gpu_util_default",
+    )
 
     models: list[ModelSpec] = []
     seen_labels: set[str] = set()
@@ -211,6 +215,11 @@ def validate_models_yaml(
         context = f"model entry {index}"
         if not isinstance(entry, dict):
             raise CampaignValidationError(f"{context} must be a mapping")
+        if "gpu_util" in entry:
+            raise CampaignValidationError(
+                f"{context} sets per-model gpu_util; configure the shared "
+                "run-wide models YAML gpu_util_default instead"
+            )
 
         name = _nonempty_string(entry.get("name"), f"{context} name")
         label = _nonempty_string(entry.get("label"), f"{context} label")
@@ -255,35 +264,7 @@ def validate_models_yaml(
             entry.get("max_model_len"), f"{context} max_model_len"
         )
 
-        raw_gpu_util = entry.get("gpu_util", 0.80)
-        if isinstance(raw_gpu_util, dict):
-            for config, config_value in raw_gpu_util.items():
-                if config not in ALLOWED_CONFIGS:
-                    raise CampaignValidationError(
-                        f"{context} gpu_util has unsupported config key "
-                        f"{config!r}"
-                    )
-                _validate_gpu_util(
-                    config_value, f"{context} gpu_util[{config}]"
-                )
-            effective_gpu_utils = [
-                _validate_gpu_util(
-                    raw_gpu_util.get(config, 0.80),
-                    f"{context} effective gpu_util[{config}]",
-                )
-                for config in configs
-            ]
-        else:
-            scalar_gpu_util = _validate_gpu_util(
-                raw_gpu_util, f"{context} gpu_util"
-            )
-            effective_gpu_utils = [scalar_gpu_util for _ in configs]
-        if len(set(effective_gpu_utils)) != 1:
-            raise CampaignValidationError(
-                f"{context} must use one gpu_util across all serving configs; "
-                "different KV budgets confound the TP/PP comparison"
-            )
-        gpu_utilization = effective_gpu_utils[0]
+        gpu_utilization = run_gpu_utilization
 
         raw_tokenizer = entry.get("tokenizer")
         tokenizer = (

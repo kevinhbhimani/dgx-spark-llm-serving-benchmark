@@ -85,10 +85,13 @@ python3.12 -m venv .venv
 PYTHONNOUSERSITE=1 .venv/bin/python scripts/check_environment.py
 ```
 
-Put `HF_TOKEN` (with the Llama 3.1 license accepted) in a repo-local `.env`.
-The campaign keeps one model at a time in each node's cache (largest
-~163 GB), so ~200 GB free per node is enough; otherwise set `HF_CACHE` in
-`.env` to a larger drive.
+Put `HF_TOKEN` (with the Llama 3.1 license accepted) in Diya's repo-local
+`.env`; set its permissions to `600`. The campaign downloads one model at a
+time to Diya and mirrors dual-node weights to Hoedus over Ray-managed TCP.
+Each node has a separate Hugging Face cache. `HF_HUB_DISABLE_SHARED_BLOBS=1`
+keeps new downloads in repository-local cache blobs. The largest snapshot is
+about 163 GB, so keep about 200 GB free in each cache. Set `HF_CACHE` in each
+node's `.env` to use a larger drive.
 
 ## 7. Ray cluster
 
@@ -103,8 +106,9 @@ scripts/start_ray.sh worker        # Hoedus
 docker exec vllm-spark ray status  # Diya: two nodes Active
 ```
 
-`start_ray.sh` installs Ray `RAY_VERSION` (2.56.1) into both containers, so
-both nodes need PyPI access at start.
+`start_ray.sh` installs Ray `RAY_VERSION` (2.56.1) into both containers with
+the exact dependency constraints in `scripts/ray-runtime-constraints.txt`. Both
+nodes need PyPI access at start. Update that file when changing `RAY_VERSION`.
 
 ## 8. RDMA gates (Diya)
 
@@ -136,6 +140,10 @@ canary cannot catch a failure that appears only under load (see
 [RDMA readiness](rdma-readiness.md)).
 
 ## 10. Plan, canary pass, campaign (Diya, inside tmux)
+
+See the step-by-step [full campaign runbook](campaign-runbook.md) for software
+checks, the one-model-at-a-time cache flow, canary preflight, and resume
+commands.
 
 ```bash
 PLAN_ONLY=1 scripts/run_job.sh           # hardware-free: matrix, windows, hours

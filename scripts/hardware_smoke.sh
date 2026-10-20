@@ -76,8 +76,9 @@ entry = next((m for m in models if m.get("label") == label), None)
 if entry is None or "single" not in entry.get("configs", []):
     raise SystemExit(f"[smoke] {label} is not a single-node entry of configs/models.yaml")
 entry = {k: v for k, v in entry.items() if k != "meta"}
-entry.update(configs=["single"], gpu_util=float(gpu_util))
-yaml.safe_dump({"models": [entry]}, open(models_out, "w"), sort_keys=False)
+entry.update(configs=["single"])
+yaml.safe_dump({"gpu_util_default": float(gpu_util), "models": [entry]},
+               open(models_out, "w"), sort_keys=False)
 
 text = open("configs/experiment.yaml").read()
 for key, value in (("warmup_s", "15.0"), ("measure_s", "30.0"),
