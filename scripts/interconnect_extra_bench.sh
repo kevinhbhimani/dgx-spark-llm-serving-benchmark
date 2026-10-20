@@ -26,6 +26,26 @@ acquire_campaign_lock || exit 1
 
 OUT_DIR="${OUT_DIR:-results}"
 PORT="${INTERCONNECT_PORT:-29518}"
+if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$PORT < 1 || 10#$PORT > 65535 )); then
+  echo "[microbench] INTERCONNECT_PORT must be in [1, 65535]" >&2
+  exit 2
+fi
+if [[ -z "${CLUSTER_RUNTIME_FINGERPRINT:-}" ]]; then
+  cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" python3 - \
+    "$HEAD_IP" "$HOEDUS_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+    < "$HERE/cluster_runtime_fingerprint.py")"
+  CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$cluster_runtime_json" \
+    | sha256sum | awk '{print $1}')"
+fi
+SOURCE_FINGERPRINT="$(sha256sum "$HERE/ray_interconnect_bench.py" \
+  "$HERE/interconnect_extra_bench.sh" | sha256sum | awk '{print $1}')"
+ARTIFACT_FINGERPRINT="$(printf '%s\n' "$CLUSTER_RUNTIME_FINGERPRINT" \
+  "$SOURCE_FINGERPRINT" "$PORT" "$CX_IFACE" "$NCCL_IB_DISABLE" \
+  | sha256sum | awk '{print $1}')"
+if [[ "${1:-}" == "--fingerprint-only" ]]; then
+  printf '%s\n' "$ARTIFACT_FINGERPRINT"
+  exit 0
+fi
 
 if docker exec "$VLLM_CONTAINER" pgrep -f "vllm serve" >/dev/null 2>&1; then
   echo "[microbench] a vLLM server is running in $VLLM_CONTAINER; stop it" \
@@ -34,10 +54,11 @@ if docker exec "$VLLM_CONTAINER" pgrep -f "vllm serve" >/dev/null 2>&1; then
 fi
 
 mkdir -p "$OUT_DIR"
-OUT="$OUT_DIR/interconnect_extra_$(date +%Y%m%d-%H%M%S).csv"
+OUT="$OUT_DIR/interconnect_extra_${ARTIFACT_FINGERPRINT}_$(date +%Y%m%d-%H%M%S).csv"
 TMP="$OUT.tmp.$$"
-RAW="$OUT.raw.$$"
-trap 'rm -f "$TMP" "$RAW"' EXIT
+RAW="${OUT%.csv}_raw.log"
+DIAG="${OUT%.csv}_nccl.log"
+trap 'rm -f "$TMP"' EXIT
 # The driver env below is for ray.init on the head. The transport column is
 # not read from this environment: each Ray worker enables NCCL_DEBUG=INFO for
 # its own process and classifies the transport from NCCL's own "via NET/IB" /
@@ -47,7 +68,7 @@ docker exec -i \
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" \
   "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" "$PORT" \
-  < "$HERE/ray_interconnect_bench.py" | tee "$RAW"
+  < "$HERE/ray_interconnect_bench.py" 2> >(tee "$DIAG" >&2) | tee "$RAW"
 
 # Ray writes cluster status and log-deduplication notices to stdout, the same
 # stream the benchmark prints its CSV on, so the two interleave. Keep the whole
@@ -58,16 +79,20 @@ grep -E '^(collective|allreduce|sendrecv),' "$RAW" > "$TMP" || true
 for want in allreduce sendrecv; do
   if ! grep -q "^${want}," "$TMP"; then
     echo "[microbench] no $want rows in the output; keeping the raw stream at" \
-         "${OUT%.csv}_raw.log for triage" >&2
-    mv "$RAW" "${OUT%.csv}_raw.log"
+         "$RAW for triage" >&2
     exit 1
   fi
 done
+expected_transport=roce
+if [[ "$NCCL_IB_DISABLE" == "1" ]]; then expected_transport=tcp; fi
+validator_python="${PYTHON:-$HERE/../.venv/bin/python}"
+if [[ -z "${PYTHON:-}" && ! -x "$validator_python" ]]; then validator_python=python3; fi
+"$validator_python" "$HERE/validate_microbench.py" interconnect "$TMP" \
+  --expected-transport "$expected_transport"
 
 # Only a complete run becomes an artifact; a failed docker/Ray/NCCL run leaves
 # no partial CSV behind.
 mv "$TMP" "$OUT"
-mv "$RAW" "${OUT%.csv}_raw.log"
 trap - EXIT
 echo "[microbench] wrote $OUT"
 echo "[microbench] rows carry a 'collective' (allreduce|sendrecv) and"

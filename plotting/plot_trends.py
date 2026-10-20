@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-model trend figures for the PMBS26 paper, from a multi-model index.
+"""Cross-model trend figures from a multi-model index.
 
 Companion to plot_results.py (which draws the per-model figure sets and the
 peak-bar model comparison). This module draws the figures whose subject is a
@@ -10,9 +10,10 @@ peak-bar model comparison). This module draws the figures whose subject is a
                        relative to TP=2, and energy at a baseline-selected
                        matched concurrency.
   dense_vs_moe         matched-pair load sweeps for same-family, same-precision
-                       dense vs MoE checkpoints (Qwen3-32B vs Qwen3-30B-A3B).
+                       dense vs MoE checkpoints (dense_moe_pairs in models.yaml,
+                       e.g. Qwen3.6-27B vs Qwen3.6-35B-A3B).
   precision_ladder     the same weights served at bf16 / fp8 / NVFP4
-                       (Llama-3.3-70B ladder): throughput and per-token energy.
+                       (each ladder_base group): throughput and energy.
   efficiency_frontier  peak throughput vs tokens-per-watt at that peak, one
                        point per (model, config), classed open/NVIDIA x
                        dense/MoE.
@@ -30,19 +31,22 @@ Usage:
     python plot_trends.py --index results/index.csv --out figs
     python plot_trends.py --allow-incomplete   # mid-campaign diagnostics
 
-Model metadata (dense/MoE, precision, NVIDIA-optimized, parameter counts) is
-keyed by model_label in MODEL_META, with a conservative pattern fallback for
-labels the table does not know.
+Model metadata (dense/MoE, precision, NVIDIA-optimized, parameter counts) comes
+from the ``meta`` block of each configs/models.yaml entry (``--models``), merged
+over the built-in MODEL_META table that describes the baseline campaigns'
+models. Labels neither source knows fall back to label patterns.
 """
 from __future__ import annotations
 import argparse
 import math
 import os
+from pathlib import Path
 import re
 import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import yaml
 from matplotlib.lines import Line2D
 from matplotlib.patheffects import withStroke
 from matplotlib.ticker import FuncFormatter, NullFormatter
@@ -94,8 +98,8 @@ MODEL_META = {
     "nemotron3-super-120b-a12b-nvfp4": dict(
         pretty="Nemotron3-Super-120B-A12B", arch="moe", quant="nvfp4",
         nvidia=True, params_b=120.0, active_b=12.0),
-    # RDMA campaign (results-rdma/): BF16/NVFP4 pairs of the same weights,
-    # parameter counts from rdma-testing/docs/nvfp4-bf16-models.md.
+    # October RDMA pilot (baselines/rdma-pilot-2026-10): BF16/NVFP4 pairs of
+    # the same weights.
     "nemotron-super-49b-bf16": dict(
         pretty="Nemotron-Super-49B", arch="dense", quant="bf16", nvidia=True,
         params_b=49.9, active_b=49.9, ladder_base="nemotron-super-49b"),
@@ -121,9 +125,44 @@ MODEL_META = {
 }
 
 # Same-family, same-precision dense/MoE pairs at comparable total parameter
-# count. Only pairs listed here are drawn: automatic pairing across families
-# or precisions would compare confounded checkpoints.
+# count. Only listed pairs are drawn: automatic pairing across families or
+# precisions would compare confounded checkpoints. The current matrix adds its
+# pairs from models.yaml (dense_moe_pairs).
 DENSE_MOE_PAIRS = [("qwen3-32b", "qwen3-30b-a3b")]
+
+DEFAULT_MODELS_YAML = Path(__file__).resolve().parents[1] / "configs" / "models.yaml"
+META_KEYS = {"pretty": str, "arch": str, "quant": str, "nvidia": bool,
+             "params_b": (int, float), "active_b": (int, float)}
+
+
+def load_models_meta(path) -> tuple[dict, list]:
+    """Per-label ``meta`` blocks and ``dense_moe_pairs`` from a models.yaml."""
+    with open(path) as handle:
+        document = yaml.safe_load(handle) or {}
+    table = {}
+    for entry in document.get("models") or []:
+        meta = entry.get("meta")
+        if meta is None:
+            continue
+        label = entry.get("label")
+        problems = [key for key, kind in META_KEYS.items()
+                    if not isinstance(meta.get(key), kind)]
+        if meta.get("arch") not in ("dense", "moe"):
+            problems.append("arch")
+        if meta.get("quant") not in PRECISION_STYLE:
+            problems.append("quant")
+        if problems:
+            sys.exit(f"{path}: meta for {label!r} has invalid "
+                     f"{', '.join(sorted(set(problems)))}")
+        table[label] = dict(meta)
+    pairs = []
+    for pair in document.get("dense_moe_pairs") or []:
+        if (not isinstance(pair, list) or len(pair) != 2
+                or any(label not in table for label in pair)):
+            sys.exit(f"{path}: dense_moe_pairs entry {pair!r} must name two "
+                     "labels that carry meta blocks")
+        pairs.append(tuple(pair))
+    return table, pairs
 
 
 def meta_for(label: str) -> dict:
@@ -200,6 +239,9 @@ PRECISION_STYLE = {
     "bf16":  dict(color="#0072B2", label="BF16"),
     "fp8":   dict(color="#E69F00", label="FP8"),
     "nvfp4": dict(color="#009E73", label="NVFP4"),
+    # Wine (Tol): adjacent-pair CVD dE >= 10.7, tritan 27.6, contrast >= 3:1 on
+    # white; checked with the dataviz palette validator.
+    "mxfp4": dict(color="#882255", label="MXFP4"),
 }
 # Within precision/class figures configs are told apart by linestyle + marker
 # (colors there belong to precision or class), reusing each config's
@@ -1112,7 +1154,16 @@ def main() -> None:
         "--allow-incomplete", action="store_true",
         help="diagnostic only: plot mid-campaign indexes with missing "
              "loads/repeats (figures are not paper-ready)")
+    ap.add_argument(
+        "--models", default=str(DEFAULT_MODELS_YAML),
+        help="models.yaml whose meta blocks and dense_moe_pairs describe the "
+             "index's models (default: configs/models.yaml)")
     args = ap.parse_args()
+
+    if os.path.exists(args.models):
+        meta, pairs = load_models_meta(args.models)
+        MODEL_META.update(meta)
+        DENSE_MOE_PAIRS.extend(p for p in pairs if p not in DENSE_MOE_PAIRS)
 
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
     set_rc(args.dpi, args.serif)

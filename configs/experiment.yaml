@@ -37,15 +37,34 @@ max_inflight: 512
 # (~550s at c=128 on dense 70B) regardless of this value, and the cooldown
 # extends until the last measurement request finishes.
 warmup_s: 120.0
-# 25 minutes of measurement plus the 120s/180s minimum warmup/cooldown is
-# 30 minutes per point. The active 23 model/config combinations x 8 loads x 3
-# repeats therefore require at least 276 sequential point-hours (11.5
-# wall-clock days) and 468 GB10-hours because 16 of the 23 combinations use
-# two nodes, before model loads and automatic extensions. At c=1 on the
-# slowest models this yields only ~30-50 completions, so those p99 points are
-# flagged by the plots' MIN_P99_SAMPLES rule rather than reported as reliable.
-measure_s: 1500.0
-cooldown_s: 180.0
+# Replicate design (steady-exact-v4). Every point is measured in 3 independent
+# replicates, each on its own server launch (scripts/run_job.sh), so the
+# reported spread includes launch-to-launch variance, which is exactly what a
+# single-vs-tp2-vs-pp2 margin has to beat. Three shorter windows replace one
+# long window:
+#   - measure_s 600 is the minimum window (the MLPerf Inference minimum
+#     duration). Between-launch variance, not within-window sampling, dominated
+#     the old variance study (CV 0.2-6.5%), so 3 x 600s is the better use of
+#     time than 1 x 1500s.
+#   - min_window_requests keeps slow low-load points honest: the window keeps
+#     extending in 60s steps until 20 requests have started in it, capped at
+#     3600s. Old c=1 points on dense 32B-70B saw only 20-35 requests in 1500s
+#     (dense 49B BF16 on tp2: 25), and the pilot has no single/pp2 curve for
+#     that model at all; a fixed 600s window would leave many below the floor.
+#   - cooldown_s 30: the drain rule already holds load until every measurement
+#     request finishes, so a longer minimum adds wall time without changing
+#     what is measured.
+# Minimum per point: 3 x (120 + 600 + 30) = 2250s, versus 1 x 1800s before
+# (+25%). With the automatic extensions seen in the baselines (~4 min mean per
+# window), expect ~49 min per point versus ~34 min. For the 53-curve matrix
+# (424 points, 1272 windows, 159 launches) that is ~265 h minimum and ~346 h
+# expected, plus launches and downloads; 912 of the windows use two GB10s.
+# measure_s: 300 brings it to ~240 h at the price of noisier p99 at mid load.
+measure_s: 600.0
+min_window_requests: 20
+window_extension_step_s: 60.0
+max_measure_s: 3600.0
+cooldown_s: 30.0
 # Must comfortably exceed the worst-case e2e (queueing + full stream) at the
 # highest concurrency in the sweep, or slow-but-successful requests are
 # recorded as timeout failures.

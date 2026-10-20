@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import hashlib
 import json
@@ -128,7 +130,7 @@ class CampaignFixture:
             "connectx_iface": "enp1s0f0np0",
             "dtype": "auto",
             "generation_config": "vllm",
-            "gpu_util": "0.8",
+            "gpu_util": "0.9",
             "head_ip": "192.0.2.10",
             "hf_hub_offline": "1",
             "image": IMAGE,
@@ -240,8 +242,16 @@ class CampaignFixture:
             "power_scope": "gpu_devices",
         }
 
-    def add_point(self, *, failed=0, run_tag="model-a-run", repeat_id=1,
-                  repeat_count=1, gpu_blocks=10):
+    def add_point(
+        self: CampaignFixture,
+        *,
+        failed: int = 0,
+        run_tag: str = "model-a-run",
+        repeat_id: int = 1,
+        repeat_count: int = 1,
+        gpu_blocks: int = 10,
+        gpu_memory_utilization: float = 0.9,
+    ) -> None:
         cfg = ExperimentConfig.from_yaml(str(self.experiment))
         cfg.model = "org/model"
         cfg.model_label = "model-a"
@@ -253,7 +263,7 @@ class CampaignFixture:
         cfg.expected_concurrencies = "1"
         cfg.repeat_id = repeat_id
         cfg.repeat_count = repeat_count
-        log_name = f"server_model-a_{self.config}_fixture.log"
+        log_name = f"server_model-a_{self.config}_r{repeat_id}_fixture.log"
         cfg.server_log = str(self.results / log_name)
 
         serving_policy, serving_policy_artifact = self._write_serving_policy(cfg)
@@ -265,7 +275,7 @@ class CampaignFixture:
             "total_kv_tokens": gpu_blocks * 16,
             "total_kv_tokens_source": "server-log",
             "kv_cache_dtype": "auto",
-            "gpu_memory_utilization": 0.8,
+            "gpu_memory_utilization": gpu_memory_utilization,
             "enable_prefix_caching": False,
             "hybrid_cache": False,
             "worker_weight_gb": None,
@@ -336,6 +346,7 @@ class CampaignFixture:
         fingerprint_config = dict(summary["config"])
         fingerprint_config.pop("repeat_id", None)
         fingerprint_config.pop("repeat_count", None)
+        fingerprint_config.pop("server_log", None)
         fingerprint_config.pop("deployment_fingerprint", None)
         summary["experiment_fingerprint"] = _sha256_json(
             {
@@ -412,6 +423,7 @@ class PlanTests(unittest.TestCase):
             models.write_text(
                 yaml.safe_dump(
                     {
+                        "gpu_util_default": 0.8,
                         "models": [
                             {
                                 "name": "org/model",
@@ -419,7 +431,6 @@ class PlanTests(unittest.TestCase):
                                 "revision": REVISION,
                                 "configs": ["single", "tp2"],
                                 "max_model_len": 32,
-                                "gpu_util": {"single": 0.8, "tp2": 0.8},
                             }
                         ]
                     }
@@ -520,6 +531,21 @@ class AllreduceCsvTests(unittest.TestCase):
 
 
 class VerifyTests(unittest.TestCase):
+    def test_live_gpu_memory_fraction_over_budget_is_rejected(
+        self: VerifyTests,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point(gpu_memory_utilization=0.8)
+
+            with self.assertRaisesRegex(
+                validator.CampaignValidationError,
+                "live gpu_memory_utilization=0.8, expected 0.9",
+            ):
+                validator.verify_campaign(
+                    fixture.models, fixture.experiment, fixture.results, [1], 1
+                )
+
     def test_verify_checks_artifacts_and_atomically_writes_hash_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             fixture = CampaignFixture(Path(tmp))
@@ -803,6 +829,34 @@ class VerifyTests(unittest.TestCase):
                 fixture.models, fixture.experiment, fixture.results, [1], 1
             )
             self.assertEqual(report["verified_count"], 1)
+
+    def test_manifest_seals_microbenchmark_nccl_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp), config="tp2")
+            fixture.add_point()
+            fixture.add_allreduce(valid=True)
+            (allreduce_csv,) = fixture.results.glob("allreduce_ray_*.csv")
+            evidence = [
+                allreduce_csv.with_name(f"{allreduce_csv.stem}_nccl.log"),
+                fixture.results / "interconnect_extra_id_fixture_raw.log",
+                fixture.results / "interconnect_extra_id_fixture_nccl.log",
+            ]
+            for path in evidence:
+                path.write_text("NCCL INFO Channel 00/0 : 0 -> 1 via NET/IB/0\n")
+            manifest = fixture.results / "campaign-manifest.json"
+            validator.verify_campaign(
+                fixture.models, fixture.experiment, fixture.results, [1], 1,
+                manifest,
+            )
+            sealed = json.loads(manifest.read_text())["artifacts"]
+            self.assertEqual(
+                [record["path"] for record in sealed["allreduce_log"]],
+                [evidence[0].name],
+            )
+            self.assertEqual(
+                {record["path"] for record in sealed["interconnect_log"]},
+                {evidence[1].name, evidence[2].name},
+            )
 
 
 if __name__ == "__main__":

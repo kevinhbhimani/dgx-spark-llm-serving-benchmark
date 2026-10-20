@@ -507,6 +507,115 @@ class SteadyBoundaryTests(unittest.TestCase):
         self.assertAlmostEqual(state["nominal_stop"] - state["window_start"],
                                cfg.measure_s, delta=0.005)
         self.assertGreater(state["load_stop"], state["nominal_stop"])
+        self.assertEqual(state["window_extensions"], 0)
+
+
+class MinimumSampleWindowTests(unittest.TestCase):
+    """The v4 window extends in whole steps until enough requests started."""
+
+    @staticmethod
+    def _run_closed(cfg, request_s):
+        from types import SimpleNamespace
+        from bench.runner import _closed_loop
+
+        class WL:
+            @staticmethod
+            def sample():
+                return SimpleNamespace(input_len=1, output_len=1, prompt=[1])
+
+        async def fake_send(session, cfg, spec, t_start=None):
+            await asyncio.sleep(request_s)
+            first = t_start + request_s / 2
+            return RequestRecord(cfg.config_label, spec.input_len, spec.output_len,
+                                 t_start=t_start, t_first_token=first,
+                                 t_end=t_start + request_s, output_tokens=1,
+                                 token_times=[first], usage_output_tokens=1,
+                                 finish_reason="length", stream_done=True,
+                                 success=True)
+
+        async def run():
+            records = []
+            start = __import__("time").perf_counter()
+            with mock.patch("bench.runner.send_request", side_effect=fake_send):
+                state = await _closed_loop(cfg, WL(), None, start, records)
+            return state, records
+
+        return asyncio.run(run())
+
+    @staticmethod
+    def _started(records, start, end):
+        return sum(1 for r in records if start <= r.t_start < end)
+
+    def test_window_extends_in_whole_steps_until_the_floor_is_met(self):
+        cfg = ExperimentConfig(mode="closed", concurrency=1, warmup_s=0.0,
+                               measure_s=0.05, cooldown_s=0.0,
+                               min_window_requests=6,
+                               window_extension_step_s=0.04, max_measure_s=2.0)
+        state, records = self._run_closed(cfg, 0.03)
+        ws, we = state["window_start"], state["window_end"]
+        steps = state["window_extensions"]
+
+        self.assertGreaterEqual(steps, 1)
+        self.assertAlmostEqual(
+            we - ws, cfg.measure_s + steps * cfg.window_extension_step_s, places=9)
+        self.assertGreaterEqual(self._started(records, ws, we), 6)
+        self.assertEqual(state["window_requests_started"],
+                         self._started(records, ws, we))
+        # Minimal: one step fewer would still have been short of the floor.
+        self.assertLess(
+            self._started(records, ws, we - cfg.window_extension_step_s), 6)
+        self.assertAlmostEqual(state["nominal_stop"], we + cfg.cooldown_s,
+                               places=9)
+
+    def test_long_request_cannot_skip_the_extension_decision(self):
+        # A c=1 request outlives several steps and the nominal stop. The worker
+        # must still extend the window instead of stopping with one sample.
+        cfg = ExperimentConfig(mode="closed", concurrency=1, warmup_s=0.0,
+                               measure_s=0.05, cooldown_s=0.0,
+                               min_window_requests=3,
+                               window_extension_step_s=0.03, max_measure_s=5.0)
+        state, records = self._run_closed(cfg, 0.12)
+        ws, we = state["window_start"], state["window_end"]
+
+        self.assertTrue(state["window_final"])
+        self.assertEqual(self._started(records, ws, we), 3)
+        self.assertGreaterEqual(state["load_stop"], we)
+
+    def test_extension_stops_at_the_cap_and_leaves_the_gate_to_reject(self):
+        cfg = ExperimentConfig(mode="closed", concurrency=1, warmup_s=0.0,
+                               measure_s=0.05, cooldown_s=0.0,
+                               min_window_requests=1000,
+                               window_extension_step_s=0.05, max_measure_s=0.15)
+        state, records = self._run_closed(cfg, 0.02)
+
+        self.assertTrue(state["window_final"])
+        self.assertEqual(state["window_extensions"], 2)
+        self.assertAlmostEqual(state["window_end"] - state["window_start"],
+                               0.15, places=9)
+
+    def test_open_loop_rejects_the_sample_floor(self):
+        from bench.runner import run_phase
+
+        cfg = ExperimentConfig(mode="open", qps=1.0, measure_s=0.1,
+                               min_window_requests=5, max_measure_s=1.0)
+        with self.assertRaisesRegex(ValueError, "closed-loop"):
+            asyncio.run(run_phase(cfg, None))
+
+    def test_config_validation(self):
+        ExperimentConfig(measure_s=60.0, min_window_requests=5,
+                         max_measure_s=120.0).validate()
+        for kwargs, message in (
+            ({"min_window_requests": -1}, "non-negative"),
+            ({"min_window_requests": True}, "non-negative"),
+            ({"measure_s": 60.0, "min_window_requests": 5,
+              "max_measure_s": 30.0}, "max_measure_s"),
+            ({"mode": "open", "min_window_requests": 5,
+              "max_measure_s": 120.0}, "closed-loop"),
+            ({"window_extension_step_s": 0.0}, "window_extension_step_s"),
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(ValueError, message):
+                    ExperimentConfig(**kwargs).validate()
 
 
 class PromptUniquenessTests(unittest.TestCase):

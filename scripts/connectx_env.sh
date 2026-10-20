@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 # Shared ConnectX and container settings for the two node DGX Spark benchmark.
 # Source from other scripts: source scripts/connectx_env.sh
-# Diya = 10.10.10.1, Hoedus = 10.10.10.2 on ConnectX interface enp1s0f0np0.
-# The names Diya and Hoedus resolve to these ConnectX addresses on both nodes
-# via /etc/hosts, including self references, so prefer the names everywhere.
+# cisc-diya = 10.10.10.1, cisc-hoedus = 10.10.10.2. These rendezvous names
+# resolve to the primary ConnectX addresses on both nodes via /etc/hosts.
 #
-# CX_IFACE accepts a comma-separated list for multi-cable setups, e.g.:
-#   export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
-# NCCL_SOCKET_IFNAME and GLOO_SOCKET_IFNAME inherit the full list. NCCL stripes
-# across all listed interfaces. DIYA_IP / HOEDUS_IP / HEAD_IP stay on one subnet
-# for the Ray rendezvous.
+# Defaults describe the campaign cluster: two QSFP cables, four ConnectX-7
+# interfaces per node (one subnet each, see docs/cluster-setup.md), RDMA (RoCEv2)
+# for every NCCL collective and point-to-point transfer, and NCCL logging of
+# the transport each channel actually used. NCCL_SOCKET_IFNAME and
+# GLOO_SOCKET_IFNAME inherit the full CX_IFACE list; DIYA_IP / HOEDUS_IP /
+# HEAD_IP stay on the first subnet for the Ray rendezvous. Override CX_IFACE
+# for a single cable and NCCL_IB_DISABLE=1 for the TCP-socket ablation.
 
 _CONNECTX_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_CONNECTX_HERE/load_env.sh"
 unset _CONNECTX_HERE
 
-export CX_IFACE="${CX_IFACE:-enp1s0f0np0}"
+export CX_IFACE="${CX_IFACE:-enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1}"
 
-export DIYA_HOST="${DIYA_HOST:-Diya}"
-export HOEDUS_HOST="${HOEDUS_HOST:-Hoedus}"
+export DIYA_HOST="${DIYA_HOST:-cisc-diya}"
+export HOEDUS_HOST="${HOEDUS_HOST:-cisc-hoedus}"
 export DIYA_IP="${DIYA_IP:-10.10.10.1}"
 export HOEDUS_IP="${HOEDUS_IP:-10.10.10.2}"
 
@@ -37,7 +38,12 @@ export VLLM_HOST_IP="${VLLM_HOST_IP:-$HEAD_IP}"
 # to fall back to TCP sockets, for example to diagnose a RoCE fault.
 # GLOO and the Ray rendezvous use TCP sockets in both modes.
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
-export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+# NCCL_DEBUG=INFO with NCCL_DEBUG_SUBSYS=INIT,NET logs one "via NET/IB" or
+# "via NET/Socket" line per channel, at communicator setup only, so it never
+# touches a measurement window. run_models.sh fails a dual launch whose log
+# shows the wrong transport; audit_nccl_transport.py reports every launch.
+export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,NET}"
 # NCCL RDMA device allowlist. Empty discovers every device. Set for the
 # dual-cable layout when NCCL selects fewer than all four devices:
 # NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
@@ -48,22 +54,28 @@ export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-}"
 # RoCEv2 GID index used by the built-in IB transport. Empty defers to NCCL.
 export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 
-# Container settings. The digest is the validated 26.04-py3 image; a mutable
-# monthly tag alone is not sufficient provenance for a paper rerun.
-export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27}"
+# Container settings. A mutable monthly tag alone is not sufficient provenance
+# for a paper rerun, so the image is pinned by digest. This is NGC 26.09-py3
+# (vLLM 0.29.0, CUDA 13.4.1, NCCL 2.31.2, HPC-X 2.51), required by the newer
+# checkpoints in configs/models.yaml. The baselines/ campaigns used 26.04-py3
+# (vLLM 0.19.0): nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27
+export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+# Keep Hugging Face downloads in repo-local blobs. The cache-wide Xet blob
+# store creates an extra symlink level that complicates mirroring and cleanup.
+export HF_HUB_DISABLE_SHARED_BLOBS=1
 # Use Docker's host-derived resolver by default. An explicit public resolver can
 # be unreachable on managed networks even while the host resolver works, which
 # would make the pinned Ray install fail before the cluster starts. Override
 # this only when the local Docker resolver is known to be broken.
 export CONTAINER_DNS="${CONTAINER_DNS-}"
 
-# nvcr.io/nvidia/vllm tags do not consistently bundle Ray (26.04-py3 does not,
-# though earlier tags did), so start_ray.sh installs it explicitly. Pinned to
-# the version NVIDIA's own 26.01-py3 image shipped, a combination already
-# validated against this vLLM build. Re-check when bumping VLLM_IMAGE.
-export RAY_VERSION="${RAY_VERSION:-2.53.0}"
+# The image digest pins the platform stack. start_ray.sh installs the pinned
+# Ray runtime using scripts/ray-runtime-constraints.txt, which also fixes its
+# Python dependency versions to the latest full runtime recorded in this repo.
+# Update the image, Ray version, and constraints together.
+export RAY_VERSION="${RAY_VERSION:-2.56.1}"
 
 # Safety helpers shared by every launcher/orchestrator. Paper measurements must
 # originate on the configured head because local GPU power is part of each row.
@@ -72,8 +84,9 @@ export RAY_VERSION="${RAY_VERSION:-2.53.0}"
 # interface in the list.
 connectx_local_ipv4() {
   local iface
-  IFS=',' read -ra _cx_ifaces <<< "$CX_IFACE"
-  for iface in "${_cx_ifaces[@]}"; do
+  local -a ifaces
+  IFS=',' read -ra ifaces <<< "$CX_IFACE"
+  for iface in "${ifaces[@]}"; do
     local addr
     addr=$(ip -4 -o addr show "$iface" 2>/dev/null \
       | awk 'NR == 1 {split($4, a, "/"); print a[1]}')
@@ -88,12 +101,13 @@ connectx_local_ipv4() {
 require_local_connectx_ip() {
   local expected="$1" role="${2:-requested role}"
   local iface found=0
-  IFS=',' read -ra _cx_ifaces <<< "$CX_IFACE"
-  for iface in "${_cx_ifaces[@]}"; do
+  local -a ifaces
+  IFS=',' read -ra ifaces <<< "$CX_IFACE"
+  for iface in "${ifaces[@]}"; do
     local actual
     actual=$(ip -4 -o addr show "$iface" 2>/dev/null \
-      | awk 'NR == 1 {split($4, a, "/"); print a[1]}')
-    if [[ -n "$actual" && "$actual" == "$expected" ]]; then
+      | awk '{split($4, a, "/"); print a[1]}')
+    if [[ -n "$actual" ]] && grep -Fxq -- "$expected" <<< "$actual"; then
       found=1
       break
     fi
@@ -102,6 +116,38 @@ require_local_connectx_ip() {
     echo "[cluster] expected IP $expected for $role not found on any interface in CX_IFACE ($CX_IFACE)" >&2
     return 1
   fi
+}
+
+# Link reachability through TCP does not prove that verbs are available. Check
+# each requested rail before a launcher removes/recreates the serving container.
+require_connectx_rdma() {
+  case "$NCCL_IB_DISABLE" in
+    1) return 0 ;;
+    0) ;;
+    *) echo "[cluster] NCCL_IB_DISABLE must be 0 (RDMA) or 1 (TCP)" >&2; return 1 ;;
+  esac
+  local iface links
+  local -a ifaces
+  command -v rdma >/dev/null || {
+    echo "[cluster] rdma command missing; install iproute2 RDMA tooling" >&2
+    return 1
+  }
+  links="$(rdma link show)" || return 1
+  IFS=',' read -ra ifaces <<< "$CX_IFACE"
+  for iface in "${ifaces[@]}"; do
+    if ! awk -v iface="$iface" '
+      {active=0; linked=0; physical=0;
+       for(i=1;i<NF;i++) {
+         if($i=="state" && $(i+1)=="ACTIVE") active=1;
+         if($i=="physical_state" && $(i+1)=="LINK_UP") physical=1;
+         if($i=="netdev" && $(i+1)==iface) linked=1;
+       }
+       if(active && physical && linked) found=1}
+      END {exit !found}' <<< "$links"; then
+      echo "[cluster] no ACTIVE/LINK_UP RDMA port mapped to $iface" >&2
+      return 1
+    fi
+  done
 }
 
 # One fixed serving container and one head GPU means campaigns targeting
