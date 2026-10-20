@@ -11,10 +11,12 @@
 #   REVISION        pinned Hugging Face commit for model files.
 #   TOKENIZER_REVISION pinned commit for tokenizer files (defaults to REVISION).
 #   TRUST_REMOTE_CODE  non-empty adds --trust-remote-code (models with custom code).
-#   GPU_UTIL        override --gpu-memory-utilization (default 0.90 for every
-#                   config). One uniform value so single vs tp2/pp2 comparisons
-#                   hold the KV budget policy constant. Lower it if a model
-#                   exceeds available unified memory.
+#   GPU_UTIL        override --gpu-memory-utilization. The campaign passes the
+#                   run-wide 0.90 value on every launch, targeting 115.2 GB of
+#                   a nominal 128 GB per node. The preflight checks the same
+#                   fraction of each node's MemTotal. vLLM applies this limit
+#                   per instance, so reserve each node and run one serving
+#                   instance per node at a time.
 #   MAX_NUM_SEQS    optional positive scheduler sequence limit. A model-specific
 #                   value applies consistently to single, tp2, and pp2.
 #   PREFIX_CACHING  1 re-enables vLLM prefix caching. Default off: the synthetic

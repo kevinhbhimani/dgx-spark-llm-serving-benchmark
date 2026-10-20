@@ -48,8 +48,11 @@
 # 26.04 (vLLM 0.19.0) to 26.09 (vLLM 0.29.0). Run the canary pass before the
 # campaign; it launches every entry under every config it lists.
 
-# One run-wide KV-cache budget, shared by every model and serving config.
-# Change this once for a campaign; per-model gpu_util values are rejected.
+# One run-wide memory budget shared by every model and serving config.
+# At 0.90, the campaign targets 115.2 GB of a nominal 128 GB per node.
+# The launcher checks this fraction of each node's detected MemTotal and passes
+# it to vLLM. vLLM applies --gpu-memory-utilization per instance, so reserve
+# each node and run one serving instance per node at a time.
 gpu_util_default: 0.90
 
 models:

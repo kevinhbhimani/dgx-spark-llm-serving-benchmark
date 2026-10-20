@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import hashlib
 import json
@@ -240,8 +242,16 @@ class CampaignFixture:
             "power_scope": "gpu_devices",
         }
 
-    def add_point(self, *, failed=0, run_tag="model-a-run", repeat_id=1,
-                  repeat_count=1, gpu_blocks=10):
+    def add_point(
+        self: CampaignFixture,
+        *,
+        failed: int = 0,
+        run_tag: str = "model-a-run",
+        repeat_id: int = 1,
+        repeat_count: int = 1,
+        gpu_blocks: int = 10,
+        gpu_memory_utilization: float = 0.9,
+    ) -> None:
         cfg = ExperimentConfig.from_yaml(str(self.experiment))
         cfg.model = "org/model"
         cfg.model_label = "model-a"
@@ -265,7 +275,7 @@ class CampaignFixture:
             "total_kv_tokens": gpu_blocks * 16,
             "total_kv_tokens_source": "server-log",
             "kv_cache_dtype": "auto",
-            "gpu_memory_utilization": 0.8,
+            "gpu_memory_utilization": gpu_memory_utilization,
             "enable_prefix_caching": False,
             "hybrid_cache": False,
             "worker_weight_gb": None,
@@ -521,6 +531,21 @@ class AllreduceCsvTests(unittest.TestCase):
 
 
 class VerifyTests(unittest.TestCase):
+    def test_live_gpu_memory_fraction_over_budget_is_rejected(
+        self: VerifyTests,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point(gpu_memory_utilization=0.8)
+
+            with self.assertRaisesRegex(
+                validator.CampaignValidationError,
+                "live gpu_memory_utilization=0.8, expected 0.9",
+            ):
+                validator.verify_campaign(
+                    fixture.models, fixture.experiment, fixture.results, [1], 1
+                )
+
     def test_verify_checks_artifacts_and_atomically_writes_hash_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             fixture = CampaignFixture(Path(tmp))

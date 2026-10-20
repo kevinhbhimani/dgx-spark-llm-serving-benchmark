@@ -15,11 +15,12 @@
 # Without a running Ray cluster only the head cache is purged, through a
 # throwaway container.
 #
-# Env: MODEL_LABELS (required), MODELS_YAML, PYTHON,
+# Env: MODEL_LABELS (optional; selects pinned model snapshots), MODELS_YAML, PYTHON,
 #      PURGE_WORKER (1 also purges the worker; default 1 when Ray is up),
 #      PURGE_COMPILE_CACHE (1 also clears vLLM's torch.compile cache, default 0),
-#      PURGE_CACHE_GARBAGE (1 also prunes detached revisions, incomplete files,
-#                           and unreferenced shared blobs, default 0),
+#      PURGE_CACHE_GARBAGE (prunes detached revisions, incomplete files, and
+#                           unreferenced shared blobs; default 1, set to 0 to
+#                           pass --no-prune-cache-garbage),
 #      DRY_RUN=1 (report what would be deleted).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,16 +31,16 @@ PYTHON="${PYTHON:-python3}"
 MODEL_LABELS="${MODEL_LABELS:-}"
 DRY_RUN="${DRY_RUN:-0}"
 PURGE_COMPILE_CACHE="${PURGE_COMPILE_CACHE:-0}"
-PURGE_CACHE_GARBAGE="${PURGE_CACHE_GARBAGE:-0}"
+PURGE_CACHE_GARBAGE="${PURGE_CACHE_GARBAGE:-1}"
 
-if [[ -z "${MODEL_LABELS// /}" && "$PURGE_CACHE_GARBAGE" != "1" ]]; then
-  echo "[purge] set MODEL_LABELS or PURGE_CACHE_GARBAGE=1" >&2
-  exit 2
-fi
 for flag_name in DRY_RUN PURGE_COMPILE_CACHE PURGE_CACHE_GARBAGE; do
   [[ "${!flag_name}" == "0" || "${!flag_name}" == "1" ]] || {
     echo "[purge] $flag_name must be 0 or 1" >&2; exit 2; }
 done
+if [[ -z "${MODEL_LABELS// /}" && "$PURGE_CACHE_GARBAGE" != "1" ]]; then
+  echo "[purge] set MODEL_LABELS when PURGE_CACHE_GARBAGE=0" >&2
+  exit 2
+fi
 
 # Command substitution (not process substitution) so an unknown label fails
 # the script instead of reading as "nothing to purge".
@@ -84,7 +85,7 @@ PURGE_WORKER="${PURGE_WORKER:-$ray_up}"
 args=()
 [[ "$DRY_RUN" == "1" ]] && args+=(--dry-run)
 [[ "$PURGE_COMPILE_CACHE" == "1" ]] && args+=(--compile-cache)
-[[ "$PURGE_CACHE_GARBAGE" == "1" ]] && args+=(--prune-cache-garbage)
+[[ "$PURGE_CACHE_GARBAGE" == "0" ]] && args+=(--no-prune-cache-garbage)
 if [[ "$PURGE_WORKER" == "1" ]]; then
   if [[ "$ray_up" != "1" ]]; then
     echo "[purge] PURGE_WORKER=1 needs the Ray cluster; start it or set PURGE_WORKER=0" >&2

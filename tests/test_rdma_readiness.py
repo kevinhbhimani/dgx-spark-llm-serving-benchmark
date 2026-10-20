@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import importlib.util
 import io
 import os
@@ -136,18 +138,76 @@ class ConnectXPreflightTests(unittest.TestCase):
             self.assertIn("MAX_NUM_SEQS must be a positive integer", result.stderr)
         self.assertFalse(self.calls.exists())
 
-    def test_scheduler_limit_reaches_all_serving_modes(self):
+    def test_campaign_matrix_emits_run_wide_memory_fraction(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "models_for_config.py"),
+                str(ROOT / "configs" / "models.yaml"),
+                "single",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fractions = {line.split("|")[4] for line in result.stdout.splitlines()}
+        self.assertEqual(fractions, {"0.9"})
+
+    def test_gpu_memory_fraction_and_scheduler_limit_reach_all_serving_modes(
+        self: ConnectXPreflightTests,
+    ) -> None:
         self.command("docker", '''case "$*" in
           *'ray status'*) echo Active;;
           *) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
         for config in ("single", "tp2", "pp2"):
             result = self.run_script("launch_server.sh", config, MAX_NUM_SEQS="4",
-                                     SINGLE_CONTAINER="ray", GPU_UTIL="0.0000001",
+                                     SINGLE_CONTAINER="ray", GPU_UTIL="0.90",
                                      HF_CACHE=str(self.root / "empty-cache"))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             args = self.calls.read_text().splitlines()
-            index = args.index("--max-num-seqs")
-            self.assertEqual(args[index + 1], "4")
+            gpu_memory_index = args.index("--gpu-memory-utilization")
+            self.assertEqual(args[gpu_memory_index + 1], "0.90")
+            max_num_seqs_index = args.index("--max-num-seqs")
+            self.assertEqual(args[max_num_seqs_index + 1], "4")
+
+    def test_purge_wrapper_passes_explicit_cache_pruning_opt_out(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        self.command("docker", '''case "$*" in
+          *'ray status'*) echo Active;;
+          *) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
+        result = self.run_script(
+            "purge_model_cache.sh",
+            MODEL_LABELS="llama3.1-8b",
+            MODELS_YAML=str(ROOT / "configs" / "models.yaml"),
+            PURGE_CACHE_GARBAGE="0",
+            PURGE_WORKER="0",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = self.calls.read_text().splitlines()
+        self.assertIn("--no-prune-cache-garbage", arguments)
+
+    def test_purge_wrapper_prunes_cache_garbage_by_default(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        self.command("docker", '''case "$*" in
+          *'ray status'*) echo Active;;
+          *) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
+        result = self.run_script(
+            "purge_model_cache.sh",
+            MODELS_YAML=str(ROOT / "configs" / "models.yaml"),
+            PURGE_CACHE_GARBAGE="",
+            PURGE_WORKER="0",
+            DRY_RUN="1",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = self.calls.read_text().splitlines()
+        self.assertIn("--dry-run", arguments)
+        self.assertNotIn("--no-prune-cache-garbage", arguments)
 
     def test_socket_tuning_is_forwarded_to_ray_container(self):
         self.command("docker", '''case "$*" in
