@@ -13,10 +13,10 @@ unless a step names a different node or directory.
 - `scripts/connectx_env.sh` defines the node addresses, ConnectX interfaces,
   pinned vLLM image, and Ray version.
 - `configs/models.yaml` defines model revisions, serving configurations, and
-  the run-wide `gpu_util_default`. The shipped value is `0.90` for every
-  model and serving configuration. The campaign passes `0.90` to each
+  the run-wide `gpu_util_default`. The shipped value is `0.80` for every
+  model and serving configuration. The campaign passes `0.80` to each
   `vllm serve` launch as `--gpu-memory-utilization`. On a nominal 128 GB node,
-  this targets 115.2 GB. The launcher checks that 90% of each node's detected
+  this targets 102.4 GB. The launcher checks that 80% of each node's detected
   `MemTotal` is free before serving starts. vLLM applies this setting per
   instance, so reserve each node and run one serving instance per node at a
   time. Per-model `gpu_util` entries are rejected.

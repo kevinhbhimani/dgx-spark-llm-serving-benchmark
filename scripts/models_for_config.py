@@ -28,7 +28,7 @@ def main() -> int:
     with open(path) as f:
         doc = yaml.safe_load(f) or {}
     models = doc.get("models", [])
-    gpu_util_default = doc.get("gpu_util_default", 0.90)
+    gpu_util_default = doc.get("gpu_util_default", 0.80)
     if not isinstance(models, list):
         sys.stderr.write(f"{path}: 'models' must be a list\n")
         return 2

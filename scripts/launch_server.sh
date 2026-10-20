@@ -12,7 +12,7 @@
 #   TOKENIZER_REVISION pinned commit for tokenizer files (defaults to REVISION).
 #   TRUST_REMOTE_CODE  non-empty adds --trust-remote-code (models with custom code).
 #   GPU_UTIL        override --gpu-memory-utilization. The campaign passes the
-#                   run-wide 0.90 value on every launch, targeting 115.2 GB of
+#                   run-wide 0.80 value on every launch, targeting 102.4 GB of
 #                   a nominal 128 GB per node. The preflight checks the same
 #                   fraction of each node's MemTotal. vLLM applies this limit
 #                   per instance, so reserve each node and run one serving
@@ -68,7 +68,7 @@ if [[ -n "$MAX_NUM_SEQS" && ! "$MAX_NUM_SEQS" =~ ^[1-9][0-9]*$ ]]; then
   echo "[launch] MAX_NUM_SEQS must be a positive integer" >&2
   exit 2
 fi
-GPU_UTIL="${GPU_UTIL:-0.90}"
+GPU_UTIL="${GPU_UTIL:-0.80}"
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
