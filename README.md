@@ -113,6 +113,10 @@ scripts/run_models.sh single
 MODEL_LABELS=llama3.1-8b scripts/purge_model_cache.sh
 ```
 
+The purge wrapper also prunes detached revisions, incomplete downloads, and
+unreferenced shared blobs by default. Set `PURGE_CACHE_GARBAGE=0` to skip that
+pruning while removing the selected model snapshots.
+
 The full config requires cryptographic launch provenance. Use
 `run_models.sh`, which computes it from the actual pinned launch policy;
 `run_all.sh` alone is intended for an already identified server and cannot
@@ -163,7 +167,7 @@ scripts/
   predownload.sh              fetch pinned snapshots into the head cache
   hf_snapshot_size.py         exact bytes a pinned snapshot still needs
   mirror_worker_cache.sh      copy pinned snapshots to the worker over Ray
-  purge_model_cache.sh        delete finished models from both caches
+  purge_model_cache.sh        delete finished models and prune cache garbage by default
   variance_report.py          replicate statistics and pairwise Welch intervals
   audit_nccl_transport.py     which NCCL transport each dual launch used
   compare_campaigns.py        compare a campaign with a baseline index
@@ -672,9 +676,16 @@ with `scripts/run_models.sh`. Each entry names a Hugging Face model, a short
 `quant`, `tokenizer`, `tokenizer_revision`, and `trust_remote_code`. The
 shipped paper matrix pins every active model to an
 immutable commit. `gpu_util_default` in `configs/models.yaml` sets the run-wide
-GPU memory cap, defaulting to `0.90`. Every model and serving config in the
-campaign receives this same value. Per-model `gpu_util` settings are rejected;
-change `gpu_util_default` once when a campaign needs a different cap.
+machine memory target, defaulting to `0.90`. Every model and serving config in
+the campaign receives this value. The launcher passes it to `vllm serve` as
+`--gpu-memory-utilization`. A 0.90 setting targets 115.2 GB on a nominal 128 GB
+node. The launch preflight requires 90% of each node's detected `MemTotal` to
+be free before serving starts. The vLLM setting is a per-instance limit, as
+documented in the [vLLM CacheConfig reference](https://docs.vllm.ai/en/v0.29.0/api/vllm/config/cache/).
+The campaign uses one serving instance per node at a time, so reserve each node
+for campaign workloads. This setting does not limit aggregate use by unrelated
+concurrent processes. Per-model `gpu_util` settings are rejected; change
+`gpu_util_default` once when a campaign needs a different target.
 The tokenizer id and revision are passed to both vLLM and the client so exact
 token-ID prompts match the served tokenizer. A model whose weights plus KV
 cache do not fit on one GB10 must omit `single` and use the dual-node configs,
@@ -1507,10 +1518,10 @@ non-paper diagnostic run.
   Set `PREDOWNLOAD_MIN_FREE_GB` to adjust the buffer or point `HF_CACHE` at a
   larger drive.
 - The cache has shared blobs left from earlier runs: start Ray on both nodes,
-  review `PURGE_CACHE_GARBAGE=1 DRY_RUN=1 scripts/purge_model_cache.sh`, then
-  rerun `PURGE_CACHE_GARBAGE=1 DRY_RUN=0 scripts/purge_model_cache.sh` to remove
-  detached revisions, incomplete downloads, and unreferenced shared blobs. This
-  also removes other detached revisions in the selected Hugging Face cache.
+  review `DRY_RUN=1 scripts/purge_model_cache.sh`, then run
+  `scripts/purge_model_cache.sh` to remove detached revisions, incomplete
+  downloads, and unreferenced shared blobs. Pruning is enabled by default. Set
+  `PURGE_CACHE_GARBAGE=0` to skip pruning while deleting selected snapshots.
 
 ## Development Checks
 

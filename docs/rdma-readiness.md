@@ -35,6 +35,13 @@ refers to a recoverable commit.
 Configure both machines using [cluster-setup.md](cluster-setup.md), then run the
 following on the head unless a comment says otherwise. Reserve both GPUs for
 the campaign and stop unrelated workloads through their normal service controls.
+The campaign sets `gpu_util_default: 0.90` for every model and serving config.
+`run_models.sh` passes that value through `launch_server.sh` to `vllm serve` as
+`--gpu-memory-utilization`. This targets 115.2 GB on a nominal 128 GB node, and
+the launcher requires 90% of each node's detected `MemTotal` to be free before
+serving starts. vLLM applies the setting per instance. The campaign uses one
+serving instance per node at a time; unrelated concurrent processes are outside
+this limit. See the [vLLM CacheConfig reference](https://docs.vllm.ai/en/v0.29.0/api/vllm/config/cache/).
 
 ```bash
 scripts/verify_connectx.sh

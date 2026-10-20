@@ -12,11 +12,14 @@ blobs with no remaining references. With --compile-cache, the vLLM
 torch.compile cache is cleared too. Nothing is deleted on a node that is still
 running a vLLM server or a Ray serving worker.
 
-Usage: purge_model_cache.py [--worker IP] [--compile-cache] [--dry-run] REPO [...]
+Usage: purge_model_cache.py [--worker IP] [--compile-cache] [--dry-run]
+                            [--prune-cache-garbage | --no-prune-cache-garbage]
+                            REPO [...]
 """
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import re
 import shutil
@@ -103,7 +106,7 @@ def prune_cache_garbage(dry_run: bool) -> tuple[str, int]:
 
 
 def purge_node(
-    repos: list[str], compile_cache: bool, dry_run: bool, prune_garbage: bool
+    repos: list[str], compile_cache: bool, dry_run: bool, prune_garbage: bool = True
 ) -> PurgeReport:
     """Delete the given repos on this node. Returns a JSON-safe report."""
     busy = busy_processes()
@@ -116,12 +119,16 @@ def purge_node(
         }
     os.makedirs(HUB, exist_ok=True)
     hub_real = os.path.realpath(HUB)
-    cache_info = scan_cache_dir(cache_dir=HUB)
-    cached_repos = {
-        cached_repo.repo_id: cached_repo
-        for cached_repo in cache_info.repos
-        if cached_repo.repo_type == "model"
-    }
+    cache_info = scan_cache_dir(cache_dir=HUB) if repos else None
+    cached_repos = (
+        {
+            cached_repo.repo_id: cached_repo
+            for cached_repo in cache_info.repos
+            if cached_repo.repo_type == "model"
+        }
+        if cache_info is not None
+        else {}
+    )
     report: PurgeReport = {
         "repos": [],
         "freed_bytes": 0,
@@ -147,11 +154,34 @@ def purge_node(
         size = cached_repo.size_on_disk
         report["repos"].append({"repo": repo, "bytes": size,
                                 "status": "would delete" if dry_run else "deleted"})
-    if revision_hashes:
+    if revision_hashes and cache_info is not None:
         delete_strategy = cache_info.delete_revisions(*revision_hashes)
         report["freed_bytes"] = int(delete_strategy.expected_freed_size)
         if not dry_run:
             delete_strategy.execute()
+    if not dry_run:
+        locks_root = os.path.join(HUB, ".locks")
+        locks_root_real = os.path.join(hub_real, ".locks")
+        if (
+            os.path.isdir(locks_root)
+            and not os.path.islink(locks_root)
+            and os.path.realpath(locks_root) == locks_root_real
+        ):
+            for repo in repos:
+                lock_directory = os.path.join(locks_root, repo_dir(repo))
+                if (
+                    os.path.islink(lock_directory)
+                    or os.path.realpath(lock_directory)
+                    != os.path.join(locks_root_real, repo_dir(repo))
+                ):
+                    continue
+                try:
+                    os.rmdir(lock_directory)
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    if exc.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                        raise
     if compile_cache and os.path.isdir(COMPILE_CACHE) \
             and not os.path.islink(COMPILE_CACHE):
         size = tree_bytes(COMPILE_CACHE)
@@ -194,11 +224,16 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--worker", default="", help="Ray worker node IP to purge too")
     parser.add_argument("--compile-cache", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--prune-cache-garbage", action="store_true")
+    parser.add_argument(
+        "--prune-cache-garbage",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="prune detached revisions, incomplete files, and unreferenced blobs (default: enabled)",
+    )
     parser.add_argument("repos", nargs="*")
     args = parser.parse_args(argv)
     if not args.repos and not args.prune_cache_garbage:
-        parser.error("provide at least one repo or --prune-cache-garbage")
+        parser.error("provide at least one repo when --no-prune-cache-garbage is set")
     try:
         for repo in args.repos:
             repo_dir(repo)

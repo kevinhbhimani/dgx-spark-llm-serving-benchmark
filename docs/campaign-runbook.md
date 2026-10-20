@@ -13,8 +13,13 @@ unless a step names a different node or directory.
 - `scripts/connectx_env.sh` defines the node addresses, ConnectX interfaces,
   pinned vLLM image, and Ray version.
 - `configs/models.yaml` defines model revisions, serving configurations, and
-  the run-wide `gpu_util_default`. The shipped value is `0.90`. Per-model
-  `gpu_util` entries are rejected.
+  the run-wide `gpu_util_default`. The shipped value is `0.90` for every
+  model and serving configuration. The campaign passes `0.90` to each
+  `vllm serve` launch as `--gpu-memory-utilization`. On a nominal 128 GB node,
+  this targets 115.2 GB. The launcher checks that 90% of each node's detected
+  `MemTotal` is free before serving starts. vLLM applies this setting per
+  instance, so reserve each node and run one serving instance per node at a
+  time. Per-model `gpu_util` entries are rejected.
 - `configs/experiment.yaml` defines workload lengths, measurement windows,
   required metrics, and output defaults.
 - `scripts/ray-runtime-constraints.txt` pins the Ray dependency versions used
@@ -54,29 +59,31 @@ setting. See the Hugging Face
 [environment-variable reference](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables)
 and [cache guide](https://huggingface.co/docs/huggingface_hub/guides/manage-cache).
 
-Existing caches can still contain shared blobs from earlier downloads. The
-mirror accepts those nested links. To inspect detached revisions, incomplete
-downloads, and unreferenced blobs before a run, start Ray on both nodes and run
-this on Diya:
+Existing caches can contain detached revisions, incomplete downloads, and
+unreferenced blobs from earlier downloads. The purge wrapper removes this cache
+garbage by default. Start Ray on both nodes and preview the removals on Diya:
 
 ```bash
-PURGE_CACHE_GARBAGE=1 DRY_RUN=1 scripts/purge_model_cache.sh
+DRY_RUN=1 scripts/purge_model_cache.sh
 ```
 
 After reviewing the dry-run output, remove the reported cache garbage from both
 nodes with this command on Diya:
 
 ```bash
-PURGE_CACHE_GARBAGE=1 DRY_RUN=0 scripts/purge_model_cache.sh
+scripts/purge_model_cache.sh
 ```
 
-The command can remove detached revisions and incomplete downloads in addition
-to unreferenced shared blobs.
+The command can remove detached revisions, incomplete downloads, and
+unreferenced shared blobs. Set `PURGE_CACHE_GARBAGE=0` to skip this pruning
+while deleting the snapshots selected by `MODEL_LABELS`. The Python command
+accepts `--no-prune-cache-garbage` for the same opt-out.
 
 Do not run `scripts/predownload.sh all` before the full campaign. That command
 fetches every selected snapshot to Diya's cache. `scripts/run_job.sh` fetches
 one model at a time, mirrors it when a dual-node configuration needs it, and
-purges it after its final measurement.
+purges it after its final measurement. The purge also prunes cache garbage by
+default. Set `PURGE_CACHE_GARBAGE=0` to disable that pruning.
 
 ## Set up the benchmark client on Diya
 
