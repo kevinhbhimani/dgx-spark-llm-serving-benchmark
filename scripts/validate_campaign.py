@@ -205,7 +205,7 @@ def validate_models_yaml(
             f"models YAML {path} must define a non-empty 'models' list"
         )
     run_gpu_utilization = _validate_gpu_util(
-        document.get("gpu_util_default", 0.90),
+        document.get("gpu_util_default", 0.80),
         "models YAML gpu_util_default",
     )
 

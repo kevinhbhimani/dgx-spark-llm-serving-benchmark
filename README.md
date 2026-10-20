@@ -370,7 +370,7 @@ export DTYPE=auto
 export MAXLEN=8704
 # Optional direct-launch overrides (campaigns use gpu_util_default in
 # configs/models.yaml for one shared value across every model and config):
-# export GPU_UTIL=0.90        # launch_server.sh default
+# export GPU_UTIL=0.80        # launch_server.sh default
 # export PREFIX_CACHING=1     # prefix caching is OFF by default: cache hits on
 #                             # repeated synthetic prompts skipped up to a third
 #                             # of prefill work in some models but not others
@@ -676,10 +676,10 @@ with `scripts/run_models.sh`. Each entry names a Hugging Face model, a short
 `quant`, `tokenizer`, `tokenizer_revision`, and `trust_remote_code`. The
 shipped paper matrix pins every active model to an
 immutable commit. `gpu_util_default` in `configs/models.yaml` sets the run-wide
-machine memory target, defaulting to `0.90`. Every model and serving config in
+machine memory target, defaulting to `0.80`. Every model and serving config in
 the campaign receives this value. The launcher passes it to `vllm serve` as
-`--gpu-memory-utilization`. A 0.90 setting targets 115.2 GB on a nominal 128 GB
-node. The launch preflight requires 90% of each node's detected `MemTotal` to
+`--gpu-memory-utilization`. A 0.80 setting targets 102.4 GB on a nominal 128 GB
+node. The launch preflight requires 80% of each node's detected `MemTotal` to
 be free before serving starts. The vLLM setting is a per-instance limit, as
 documented in the [vLLM CacheConfig reference](https://docs.vllm.ai/en/v0.29.0/api/vllm/config/cache/).
 The campaign uses one serving instance per node at a time, so reserve each node
@@ -1474,7 +1474,7 @@ non-paper diagnostic run.
   cache without applying anonymous-memory pressure. A remaining
   shortage may be unrelated clean cache (retry with `DROP_CACHES=1`), another
   process on that node (check `ps aux --sort=-rss`), or a `gpu_util` too high
-  for its baseline usage (`util x 119.6 GiB` must fit in `MemFree`).
+  for its baseline usage (`util x MemTotal` must fit in `MemFree`).
 - `tp2`/`pp2` launch fails with `ray.exceptions.OutOfMemoryError: Task was
   killed due to the node running low on memory` naming one node's IP: Ray's
   node memory monitor killed a worker, almost always stale page cache on
@@ -1484,7 +1484,7 @@ non-paper diagnostic run.
 - Same `ray.exceptions.OutOfMemoryError`, but it happens later, right after
   `Available KV cache memory: ...` logs during model load rather than at Ray
   startup: the model exceeds available unified memory. `gpu_util_default` is
-  `0.90`; lower the shared value in `configs/models.yaml` for the entire run.
+  `0.80`; lower the shared value in `configs/models.yaml` for the entire run.
 - Dual-node performance looks like Wi-Fi or management-network traffic: rerun
   `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
   counters during a `tp2` run.
