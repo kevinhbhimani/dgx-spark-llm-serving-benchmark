@@ -34,7 +34,8 @@
 #
 # Every revision below was pinned on 2026-10-15. Weight sizes are the exact
 # download sizes of the pinned snapshot (excluding original/ and metal/
-# duplicates). "single" appears only where weights + KV fit one GB10 at 0.90.
+# duplicates). "single" appears only where weights + KV fit one GB10 at the
+# configured gpu_util_default.
 #
 # KV-cache precision is NOT uniform along the precision ladders, and the paper
 # must say so: NVIDIA ModelOpt checkpoints (all *-NVFP4, nvidia/*-FP8) ship an
@@ -49,11 +50,11 @@
 # campaign; it launches every entry under every config it lists.
 
 # One run-wide memory budget shared by every model and serving config.
-# At 0.90, the campaign targets 115.2 GB of a nominal 128 GB per node.
+# At 0.80, the campaign targets 102.4 GB of a nominal 128 GB per node.
 # The launcher checks this fraction of each node's detected MemTotal and passes
 # it to vLLM. vLLM applies --gpu-memory-utilization per instance, so reserve
 # each node and run one serving instance per node at a time.
-gpu_util_default: 0.90
+gpu_util_default: 0.80
 
 models:
   # ---- 1. Llama 3.1 8B precision ladder: dense, full attention ----------------
