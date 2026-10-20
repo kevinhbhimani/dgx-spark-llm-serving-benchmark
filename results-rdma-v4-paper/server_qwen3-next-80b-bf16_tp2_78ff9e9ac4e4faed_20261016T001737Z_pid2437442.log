@@ -1,915 +1,0 @@
-[launch] tp2  model=Qwen/Qwen3-Next-80B-A3B-Instruct  image=nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2  iface=enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1  head=10.10.10.1
-[launch] dual node tensor parallel TP=2 PP=1 over Ray in vllm-spark
-[launch] Ray cluster OK:
-======== Autoscaler status: 2026-10-16 00:17:34.424071 ========
-Node status
----------------------------------------------------------------
-Active:
- 1 node_a1541a46824a0c6e34ef2fdd4980e938c1669c366ac50f936fb7148a
- 1 node_979013fe5b7d4372f6e2b22c0af5cc8bbd654908fabde7c951aad404
-Pending:
- (no pending nodes)
-Recent failures:
- (no failures)
-
-Resources
----------------------------------------------------------------
-Total Usage:
- 0.0/40.0 CPU
- 0.0/2.0 GPU
- 0B/169.38GiB memory
- 0B/72.59GiB object_store_memory
-
-From request_resources:
- (none)
-Pending Demands:
- (no resource demands)
-2026-10-16 00:17:39,159	INFO worker.py:1833 -- Connecting to existing Ray cluster at address: 10.10.10.1:6379...
-2026-10-16 00:17:39,168	INFO worker.py:2015 -- Connected to Ray cluster. View the dashboard at [1m[32mhttp://127.0.0.1:8265 [39m[22m
-[launch] expected two Ray GPU nodes present: 10.10.10.1, 10.10.10.2
-[launch] preflight: pinned model snapshot on both Ray nodes
-2026-10-16 00:17:40,178	INFO worker.py:1833 -- Connecting to existing Ray cluster at address: 10.10.10.1:6379...
-2026-10-16 00:17:40,189	INFO worker.py:2015 -- Connected to Ray cluster. View the dashboard at [1m[32mhttp://127.0.0.1:8265 [39m[22m
-[launch]   node 10.10.10.1: pinned cache OK
-[launch]   node 10.10.10.2: pinned cache OK
-[launch] preflight: free memory on all Ray nodes vs GPU_UTIL=0.80
-2026-10-16 00:17:41,672	INFO worker.py:1833 -- Connecting to existing Ray cluster at address: 10.10.10.1:6379...
-2026-10-16 00:17:41,685	INFO worker.py:2015 -- Connected to Ray cluster. View the dashboard at [1m[32mhttp://127.0.0.1:8265 [39m[22m
-[launch]   node 10.10.10.1: free 115.8 (available 116.3) of 121.6 GiB, need 97.3 GiB: ok
-[launch]   node 10.10.10.2: free 117.2 (available 117.2) of 121.6 GiB, need 97.3 GiB: ok
-W1016 00:17:44.023000 14308 torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
-W1016 00:17:44.023000 14308 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
-W1016 00:17:44.023000 14308 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
-(APIServer pid=14308) INFO 10-16 00:17:49 [api_utils.py:347] 
-(APIServer pid=14308) INFO 10-16 00:17:49 [api_utils.py:347]        █     █     █▄   ▄█
-(APIServer pid=14308) INFO 10-16 00:17:49 [api_utils.py:347]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.29.0+5013de39.dev
-(APIServer pid=14308) INFO 10-16 00:17:49 [api_utils.py:347]   █▄█▀ █     █     █     █  model   Qwen/Qwen3-Next-80B-A3B-Instruct
-(APIServer pid=14308) INFO 10-16 00:17:49 [api_utils.py:347]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
-(APIServer pid=14308) INFO 10-16 00:17:49 [api_utils.py:347] 
-(APIServer pid=14308) INFO 10-16 00:17:49 [api_utils.py:286] non-default args: {'model_tag': 'Qwen/Qwen3-Next-80B-A3B-Instruct', 'host': '127.0.0.1', 'model': 'Qwen/Qwen3-Next-80B-A3B-Instruct', 'trust_remote_code': True, 'revision': '9c7f2fbe84465e40164a94cc16cd30b6999b0cc7', 'tokenizer_revision': '9c7f2fbe84465e40164a94cc16cd30b6999b0cc7', 'max_model_len': 8704, 'generation_config': 'vllm', 'distributed_executor_backend': 'ray', 'tensor_parallel_size': 2, 'gpu_memory_utilization': 0.8, 'enable_prefix_caching': False, 'language_model_only': True}
-(APIServer pid=14308) INFO 10-16 00:17:49 [arg_utils.py:866] HF_HUB_OFFLINE is True, replace model_id [Qwen/Qwen3-Next-80B-A3B-Instruct] to model_path [/root/.cache/huggingface/hub/models--Qwen--Qwen3-Next-80B-A3B-Instruct/snapshots/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7]
-(APIServer pid=14308) WARNING 10-16 00:17:49 [envs.py:2277] Unknown vLLM environment variable detected: VLLM_VERSION
-(APIServer pid=14308) WARNING 10-16 00:17:49 [envs.py:2277] Unknown vLLM environment variable detected: VLLM_FLASH_ATTN_SRC_DIR
-(APIServer pid=14308) INFO 10-16 00:17:49 [model.py:684] Resolved architecture: Qwen3NextForCausalLM
-(APIServer pid=14308) INFO 10-16 00:17:49 [model.py:2021] Using max model len 8704
-(APIServer pid=14308) INFO 10-16 00:17:49 [kernel.py:369] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
-W1016 00:17:52.164000 14388 torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
-W1016 00:17:52.164000 14388 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
-W1016 00:17:52.164000 14388 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
-(EngineCore pid=14388) INFO 10-16 00:17:55 [core.py:123] Initializing a V1 LLM engine (v0.29.0+5013de39.dev) with config: model='/root/.cache/huggingface/hub/models--Qwen--Qwen3-Next-80B-A3B-Instruct/snapshots/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7', speculative_config=None, tokenizer='/root/.cache/huggingface/hub/models--Qwen--Qwen3-Next-80B-A3B-Instruct/snapshots/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7', skip_tokenizer_init=False, tokenizer_mode=auto, revision=9c7f2fbe84465e40164a94cc16cd30b6999b0cc7, tokenizer_revision=9c7f2fbe84465e40164a94cc16cd30b6999b0cc7, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=8704, download_dir=None, load_format=auto, tensor_parallel_size=2, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, per_request_spec_decode_metrics='none', kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=/root/.cache/huggingface/hub/models--Qwen--Qwen3-Next-80B-A3B-Instruct/snapshots/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7, enable_prefix_caching=False, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'ir_enable_torch_wrap': True, 'splitting_ops': ['vllm::unified_attention_with_output', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::qwen4_exp_compute_ple_ngram_ids', 'vllm::qwen4_exp_ple_short_conv', 'vllm::qwen4_exp_qsa_with_output', 'vllm::linear_attention', 'vllm::qwen_gdn_attention_core', 'vllm::qwen_gdn_attention_core_fused_norm_packed', 'vllm::gdn_attention_core_xpu', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::deepseek_v4_attention', 'vllm::hpc_rope_norm_forward', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native']), enable_flashinfer_autotune=True, enable_cutedsl_warmup=True, enable_jit_warmup=True, enable_bf16x3_router_gemm=False, moe_backend='auto', linear_backend='auto')
-(EngineCore pid=14388) WARNING 10-16 00:17:55 [ray_utils.py:551] Tensor parallel size (2) exceeds available GPUs (1). This may result in Ray placement group allocation failures. Consider reducing tensor_parallel_size to 1 or less, or ensure your Ray cluster has 2 GPUs available.
-(EngineCore pid=14388) 2026-10-16 00:17:55,213	INFO worker.py:1833 -- Connecting to existing Ray cluster at address: 10.10.10.1:6379...
-(EngineCore pid=14388) 2026-10-16 00:17:55,222	INFO worker.py:2015 -- Connected to Ray cluster. View the dashboard at [1m[32mhttp://127.0.0.1:8265 [39m[22m
-(EngineCore pid=14388) INFO 10-16 00:17:55 [ray_utils.py:616] No current placement group found. Creating a new placement group.
-(EngineCore pid=14388) WARNING 10-16 00:17:55 [ray_utils.py:329] tensor_parallel_size=2 is bigger than a reserved number of GPUs (1 GPUs) in a node 979013fe5b7d4372f6e2b22c0af5cc8bbd654908fabde7c951aad404. Tensor parallel workers can be spread out to 2+ nodes which can degrade the performance unless you have fast interconnect across nodes, like Infiniband. To resolve this issue, make sure you have more than 2 GPUs available at each node.
-(EngineCore pid=14388) WARNING 10-16 00:17:55 [ray_utils.py:329] tensor_parallel_size=2 is bigger than a reserved number of GPUs (1 GPUs) in a node a1541a46824a0c6e34ef2fdd4980e938c1669c366ac50f936fb7148a. Tensor parallel workers can be spread out to 2+ nodes which can degrade the performance unless you have fast interconnect across nodes, like Infiniband. To resolve this issue, make sure you have more than 2 GPUs available at each node.
-(EngineCore pid=14388) [36m(pid=14508)[0m W1016 00:17:56.729000 14508 torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
-(EngineCore pid=14388) [36m(pid=14508)[0m W1016 00:17:56.729000 14508 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
-(EngineCore pid=14388) [36m(pid=14508)[0m W1016 00:17:56.729000 14508 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m WARNING 10-16 00:18:02 [worker_base.py:330] Missing `shared_worker_lock` argument from executor. This argument is needed for mm_processor_cache_type='shm'.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) INFO 10-16 00:18:02 [parallel_state.py:1775] world_size=2 rank=0 local_rank=0 distributed_init_method=tcp://10.10.10.1:42501 backend=nccl
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) INFO 10-16 00:18:02 [pynccl.py:113] vLLM is using nccl==2.31.2
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NCCL_SOCKET_IFNAME set to enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO cudaDriverVersion 13040
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NCCL version 2.31.2+cuda13.4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NCCL git version unknown unknown
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NCCL_NET_PLUGIN set by environment to 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NCCL_IB_HCA set to 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB: [0] rocep1s0f0:uverbs0:1/RoCE provider=Mlx5 speed=128000 context=0x49d306f0 pciPath=/sys/devices/pci0000:00/0000:00:00.0/0000:01:00.0 ar=0 oooRqSize=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB: [1] rocep1s0f1:uverbs1:1/RoCE provider=Mlx5 speed=128000 context=0x49d71e50 pciPath=/sys/devices/pci0000:00/0000:00:00.0/0000:01:00.0 ar=0 oooRqSize=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB: [2] roceP2p1s0f0:uverbs2:1/RoCE provider=Mlx5 speed=128000 context=0x49ef8e00 pciPath=/sys/devices/pci0002:00/0002:00:00.0/0002:01:00.0 ar=0 oooRqSize=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB: [3] roceP2p1s0f1:uverbs3:1/RoCE provider=Mlx5 speed=128000 context=0x49f3a560 pciPath=/sys/devices/pci0002:00/0002:00:00.0/0002:01:00.0 ar=0 oooRqSize=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : Made virtual device [0] name=rocep1s0f0 speed=128000 ndevs=1 rail=-1 plane=-1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : Made virtual device [1] name=rocep1s0f1 speed=128000 ndevs=1 rail=-1 plane=-1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : Made virtual device [2] name=roceP2p1s0f0 speed=128000 ndevs=1 rail=-1 plane=-1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : Made virtual device [3] name=roceP2p1s0f1 speed=128000 ndevs=1 rail=-1 plane=-1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : Using [0]rocep1s0f0:1/RoCE [1]rocep1s0f1:1/RoCE [2]roceP2p1s0f0:1/RoCE [3]roceP2p1s0f1:1/RoCE [RO]; OOB enp1s0f0np0:10.10.10.1<0>
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Initialized NET plugin IB
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Assigned NET plugin IB to comm
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO RMA/Plugin: Could not find: libnccl-rma.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO RMA/Plugin: Assigned plugin RMA_IB_PROXY to comm
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO GIN/Plugin: Could not find: libnccl-gin.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Using network IB
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Loaded NVML from libnvidia-ml.so.1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO [Rank 0] ncclCommInitRank comm 0x4513b9e0 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x2bbd98dc1be36a46 - Init START
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO RAS client listening socket at 127.0.0.1<28028>
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/GIN_IB_GDAKI : GPU Direct RDMA Disabled for HCA 0 'rocep1s0f0'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/GIN_IB_GDAKI : GPU Direct RDMA Disabled for HCA 1 'rocep1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/GIN_IB_GDAKI : GPU Direct RDMA Disabled for HCA 2 'roceP2p1s0f0'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/GIN_IB_GDAKI : GPU Direct RDMA Disabled for HCA 3 'roceP2p1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/RMA_IB_PROXY : GPU Direct RDMA Disabled for HCA 0 'rocep1s0f0'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/RMA_IB_PROXY : GPU Direct RDMA Disabled for HCA 1 'rocep1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/RMA_IB_PROXY : GPU Direct RDMA Disabled for HCA 2 'roceP2p1s0f0'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/RMA_IB_PROXY : GPU Direct RDMA Disabled for HCA 3 'roceP2p1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : GPU Direct RDMA Disabled for HCA 0 'rocep1s0f0'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : GPU Direct RDMA Disabled for HCA 1 'rocep1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : GPU Direct RDMA Disabled for HCA 2 'roceP2p1s0f0'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : GPU Direct RDMA Disabled for HCA 3 'roceP2p1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : Made virtual device [4] name=rocep1s0f0+rocep1s0f1 speed=256000 ndevs=2 rail=-1 plane=16385
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : Made virtual device [5] name=roceP2p1s0f0+roceP2p1s0f1 speed=256000 ndevs=2 rail=-1 plane=16385
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : GPU Direct RDMA Disabled for HCA 4 'rocep1s0f0+rocep1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO NET/IB : GPU Direct RDMA Disabled for HCA 5 'roceP2p1s0f0+roceP2p1s0f1'
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is empty, ignoring. (GPU affinity =  ; CPU affinity = 0-19).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Rank 0: 6 Net devices
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Rank 0: 0 CollNet devices
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Local Net device counts across ranks: min 6 max 6
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Local CollNet device counts across ranks: min 0 max 0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO comm 0x4513b9e0 rank 0 nRanks 2 nNodes 2 localRanks 1 localRank 0 MNNVL 0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 00/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 01/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 02/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 03/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 04/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 05/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 06/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 07/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 08/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 09/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 10/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 11/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 12/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 13/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 14/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 15/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 16/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 17/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 18/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 19/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 20/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 21/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 22/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 23/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 24/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 25/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 26/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 27/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 28/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 29/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 30/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 31/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 32/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 33/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 34/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 35/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 36/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 37/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 38/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 39/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 40/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 41/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 42/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 43/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 44/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 45/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 46/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 47/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 48/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 49/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 50/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 51/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 52/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 53/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 54/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 55/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 56/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO C
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0 [2] -1/-1/-1->1->0 [3] -1/-1/-1->1->0 [4] -1/-1/-1->1->0 [5] -1/-1/-1->1->0 [6] -1/-1/-1->1->0 [7] -1/-1/-1->1->0 [8] -1/-1/-1->1->0 [9] -1/-1/-1->1->0 [10] -1/-1/-1->1->0 [11] -1/-1/-1->1->0 [12] -1/-1/-1->1->0 [13] -1/-1/-1->1->0 [14] -1/-1/-1->1->0 [15] -1/-1/-1->1->0 [16] -1/-1/-1->1->0 [17] -1/-1/-1->1->0 [18] -1/-1/-1->1->0 [19] -1/-1/-1->1->0 [20] -1/-1/-1->1->0 [21] -1/-1/-1->1->0 [22] -1/-1/-1->1->0 [23] -1/-1/-1->1->0 [24] -1/-1/-1->1->0 [25] -1/-1/-1->1->0 [26] -1/-1/-1->1->0 [27] -1/-1/-1->1->0 [28] -1/-1/-1->1->0 [29] -1/-1/-1->1->0 [30] -1/-1/-1->1->0 [31] -1/-1/-1->1->0 [32] 0/-1/-1->1->-1 [33] 0/-1/-1->1->-1 [34] 0/-1/-1->1->-1 [35] 0/-1/-1->1->-1 [36] 0/-1/-1->1->-1 [37] 0/-1/-1->1->-1 [38] 0/-1/-1->1->-1 [39] 0/-1/-1->1->-1 [40] 0/-1/-1->1->-1 [41] 0/-1/-1->1->-1 [42] 0/-1/-1->1->-1 [43] 0/-1/-1->1->-1 [44] 0/-1/-1->1->-1 [45] 0/-1/-1->1->-1 [46] 0/-1/-1->1->-1 [47] 0/-1/-1->1->-1 [48] 0/-1/-1->1->-1 [49] 0/-1/-1->1->-1 [50] 0/-1/-1->1->-1 [51] 0/-1/-
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO P2P Chunksize set to 262144
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Tuning P2P operations with maxP2pPeers = 2
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Check P2P Type isAllDirectP2p 1 directMode 0 isAllCudaP2p 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO [Proxy Service] Device 0 CPU core 19
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO proxy listening socket at 10.10.10.2<36557>
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6349 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 16
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO TUNER/Plugin: Could not find: libnccl-tuner.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO 64 coll channels, 64 collnet channels, 0 nvls channels, 64 p2p channels, 2 p2p channels per peer
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO symmetricSupport 0, cuMemEnable 1, globalGinSupport 0, cuMemGdrSupport 0, contiguousRanksPerHost 1, crossNicSupport 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO ncclCommInitRank comm 0x441def80 rank 1 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x2bbd98dc1be36a46 - Init COMPLETE
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Init timings - ncclCommInitRank: rank 1 nranks 2 total 0.41 (kernels 0.34, alloc 0.03, bootstrap 0.00, allgathers 0.00, topo 0.01, graphs 0.00, connections 0.03, rest 0.00)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6350 [0] NCCL INFO [Proxy Progress] Device 0 CPU core 12
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 00/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 01/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 02/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 03/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 04/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 05/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 06/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 07/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 08/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 09/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 10/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 11/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 12/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 13/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 14/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 15/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 16/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 17/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 18/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 19/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 20/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 21/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 22/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 23/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 24/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 25/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 26/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 27/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 28/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 29/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 30/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 31/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 32/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 33/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 34/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 35/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 36/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 37/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 38/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 39/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 40/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 41/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 42/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 43/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 44/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 45/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 46/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 47/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 48/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 49/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 50/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 51/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 52/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 53/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 54/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 55/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 56/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 57/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 58/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 59/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 60/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 61/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 62/0 : 0[0] -> 1[0] [receive] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 63/0 : 0[0] -> 1[0] [receive] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 00/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 01/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 02/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 03/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 04/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 05/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 06/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 07/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 08/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 09/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 10/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 11/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 12/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 13/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 14/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 15/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 16/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 17/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 18/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 19/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 20/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 21/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 22/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 23/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 24/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 25/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 26/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 27/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 28/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 29/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 30/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 31/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 32/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 33/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 34/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 35/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 36/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 37/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 38/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 39/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 40/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 41/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 42/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 43/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 44/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 45/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 46/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 47/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 48/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 49/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 50/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 51/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 52/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 53/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 54/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 55/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 56/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 57/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 58/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 59/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 60/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 61/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 62/0 : 1[0] -> 0[0] [send] via NET/IB/4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Channel 63/0 : 1[0] -> 0[0] [send] via NET/IB/5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the send communicator (comm=0xe50970049000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the recv communicator (comm=0xe5097009b000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbRecvCommInit: Receive work requests will be posted on-demand
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the send communicator (comm=0xe509700f2000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the recv communicator (comm=0xe50970144000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbRecvCommInit: Receive work requests will be posted on-demand
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbSenderQpsCreate: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2511 pkey=0 pd=0xe50970048f80 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbSenderQpsCreate: QP created: port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2549 pkey=0 pd=0xe5097009a8c0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 0 Port 1 qp_num 2511 mtu 4 GID 3 (0/20A0A0AFFFF0000) ctsFifoRkey=0x16c582 ctsFifoLkey=0x16c582
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbConnectImpl: IbDev 0 Port 1 qp_num 2511 query_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 1 Port 1 qp_num 2549 mtu 4 GID 3 (0/20C0A0AFFFF0000) ctsFifoRkey=0x1b0806 ctsFifoLkey=0x1b0806
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbConnectImpl: IbDev 1 Port 1 qp_num 2549 query_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the send communicator (comm=0xe50970213000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the recv communicator (comm=0xe50970265000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbRecvCommInit: Receive work requests will be posted on-demand
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbRes
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m hannel 57/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 58/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 59/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 60/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 61/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 62/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 63/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO CC Off, workFifoBytes 1048576
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2576 pkey=0 pd=0xe35ffc048ee0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2614 pkey=0 pd=0xe35ffc09a290 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 0 Port 1 qp_num 2575 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 1 Port 1 qp_num 2613 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=2 devName=roceP2p1s0f0 ndevs=4 nmdevs=6 qp_num=2702 pkey=0 pd=0xe35ffc1e5990 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=3 devName=roceP2p1s0f1 ndevs=4 nmdevs=6 qp_num=2742 pkey=0 pd=0xe35ffc1e5d30 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 2 Port 1 qp_num 2701 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 3 Port 1 qp_num 2741 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2577 pkey=0 pd=0xe35ffc048ee0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2615 pkey=0 pd=0xe35ffc09a290 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=2 devName=roceP2p1s0f0 ndevs=4 nmdevs=6 qp_num=2704 pkey=0 pd=0xe35ffc1e5990 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=3 devName=roceP2p1s0f1 ndevs=4 nmdevs=6 qp_num=2744 pkey=0 pd=0xe35ffc1e5d30 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2579 pkey=0 pd=0xe35ffc048ee0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2617 pkey=0 pd=0xe35ffc09a290 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=2 devName=roceP2p1s0f0 ndevs=4 nmdevs=6 qp_num=2706 pkey=0 pd=0xe35ffc1e5990 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=3 devName=roceP2p1s0f1 ndevs=4 nmdevs=6 qp_num=2746 pkey=0 pd=0xe35ffc1e5d30 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2581 pkey=0 pd=0xe35ffc048ee0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2619 pkey=0 pd=0xe35ffc09a290 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=2 devName=roceP2p1s0f0 ndevs=4 nmdevs=6 qp_num=2708 pkey=0 pd=0xe35ffc1e5990 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=3 devName=roceP2p1s0f1 ndevs=4 nmdevs=6 qp_num=2748 pkey=0 pd=0xe35ffc1e5d30 ooo
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m iliencyInit: Resiliency is disabled on the send communicator (comm=0xe509702bc000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Rq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 1 Port 1 qp_num 2624 mtu 4 GID 3 (0/10C0A0AFFFF0000) ctsFifoRk
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m 97009a8c0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbConnectImpl: IbDev 2 Port 1 qp_num 2651 query_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_ma
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m ey=0x1be1de ctsFifoLkey=0x1be1de
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 2 Port 1 qp_num 2712 set_ec
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m e={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m sk=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m /IB: ncclIbResiliencyInit: Resiliency is disabled on the recv communicator (comm=0xe35ffe87c000)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQp
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m 5097009a8c0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m sCreateToRts: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2598 pkey=0 pd=0xe35ffc048ee0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diy
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m Set ECE: IbDev 1 Port 1 qp_num 2568 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: nc
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m 0A0AFFFF0000) ctsFifoRkey=0x17c886 ctsFifoLkey=0x17c886
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbReceiverQps
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m clIbConnectImpl: NCCL Dev 4 IbDev 0 Port 1 qp_num 2541 mtu 4 GID 3 (0/20A0A0AFFFF0000) ctsFifoRkey=0x16fab2 ctsFifoLkey=0x16fab2
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m CreateToRts: QP created: port=1 dev=3 devName=roceP2p1s0f1 ndevs=4 nmdevs=6 qp_num=2772 pkey=0 pd=0xe35ffc1e5d30 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 0 Port
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 1 Port 1 qp_num 2581 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m  1 qp_num 2608 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NE
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m ] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 1 Port 1 qp_num 2587 mtu 4 GID 3 (0/20C0A0AFFFF0000) ctsFifoRkey=0x1b3c3b ctsFifoLkey=0x1b3c3b
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] N
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m T/IB: ncclIbConnectImpl: IbDev 1 Port 1 qp_num 2656 query_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m CCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 0 Port 1 qp_num 2557 mtu 4 GID 3 (0/20A0A0AFFFF0000) ctsFifoRkey=0x172ae7 ctsFifoLkey=0x172ae7
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NC
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2621 pkey=0 pd=0xe35ffc048ee0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 0 Port 1 qp_num 2624 set_ece={supported=
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m CL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 0 Port 1 qp_num 2555 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set EC
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m 1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m E: IbDev 0 Port 1 qp_num 2561 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbSenderQpsCreate: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2569 pkey=0 pd=0xe50970048f80 oooRq=
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m ] NCCL INFO NET/IB: ncclIbConnectImpl: IbDev 1 Port 1 qp_num 2672 query_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m 0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6348 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 0 Port 1 qp_num 2567 set_ece={suppo
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker pid=6208) WARNING 10-16 00:18:04 [symm_mem.py:67] SymmMemCommunicator: Device capability 12.1 not supported, communicator is not available.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker pid=6208) WARNING 10-16 00:18:04 [flashinfer_all_reduce.py:383] FlashInfer All Reduce is disabled because it is not supported for world_size=2.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker pid=6208) WARNING 10-16 00:18:04 [custom_all_reduce.py:201] Custom collectives are disabled because this multi-node group does not have MNNVL-capable GPUs on every rank.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) INFO 10-16 00:18:04 [cuda_communicator.py:269] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'tp:0' out of potential backends: ['FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Local Net device counts across ranks: min 6 max 6
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Local CollNet device counts across ranks: min 0 max 0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 00/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 01/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 02/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 03/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 04/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 05/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 06/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 07/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 08/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 09/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 10/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 11/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 12/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 13/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 14/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 15/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 16/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 17/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 18/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 19/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 20/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 21/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 22/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 23/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 24/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 25/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 26/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 27/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 28/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 29/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 30/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 31/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 32/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 33/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 34/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 35/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 36/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 37/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 38/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 39/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 40/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 41/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 42/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 43/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 44/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 45/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 46/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 47/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 48/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 49/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 50/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 51/64 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m rted=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbSenderQpsCreate: QP created: port=1 d
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 52/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 53/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 54/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 55/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 56/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 57/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 58/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 59/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 60/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 61/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 62/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 63/64 : 0 1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO CC Off, workFifoBytes 1048576
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbConnectImpl: IbDev 1 Port 1 qp_num 2681 query_ece={supporte
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m ev=3 devName=roceP2p1s0f1 ndevs=4 nmdevs=6 qp_num=2741 pkey=0 pd=0xe509700486c0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m c
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m d=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=1 devName=roc
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 0 Port 1 qp_num 2591 mtu 4 GID 3 (0/20A0A0AFFFF0000) ctsFifoRkey=0x168745 ctsFifoLk
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m ep1s0f1 ndevs=4 nmdevs=6 qp_num=2688 pkey=0 pd=0xe35ffc09a290 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 2 Port 1 qp_num 2774 set_ece={supported=1, vendor_id=0x15b3, options=
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m ey=0x168745
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 2 Port 1 qp_num 2712 set_ece={supported=1, vendor_i
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m d=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m 0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbReceiverQp
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2635 pkey=0 pd=0xe5097009a8c0 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbRecvCommInit: Receive work requests will be poste
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m sCreateToRts: QP created: port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2699 pkey=0 pd=0xe35ffc09a290 oooRq=0(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:   0% Completed | 0/41 [00:00<?, ?it/s]
-(EngineCore pid=14388) [36m(pid=6208, ip=10.10.10.2)[0m W1016 00:17:56.807000 6208 torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
-(EngineCore pid=14388) [36m(pid=6208, ip=10.10.10.2)[0m W1016 00:17:56.807000 6208 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
-(EngineCore pid=14388) [36m(pid=6208, ip=10.10.10.2)[0m W1016 00:17:56.807000 6208 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
-
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbSenderQpsCreate: QP created: port=1 dev=3 devName=roceP
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m d on-demand
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m 2p1s0f1 ndevs=4 nmdevs=6 qp_num=2831 pkey=0 pd=0xe35ffc1e5d30 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m : ncclIbConnectImpl: NCCL Dev 4 IbDev 1 Port 1 qp_num 2647 mtu 4 GID 3 (0/20C0A0AFFFF0000) ctsFifoRkey=0x19c6c3 ctsFifoLkey=0x19c6c3
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m 0) ctsFifoRkey=0x197773 ctsFifoLkey=0x197773
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 2 Port 1 qp_num 2801 set_
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m A0AFFFF0000) ctsFifoRkey=0x174e0d ctsFifoLkey=0x174e0d
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 3 Port 1 qp_num 2778 set_ece={suppo
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=3 devName=roceP2p1s0f1 nd
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m rted=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 5
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m evs=4 nmdevs=6 qp_num=2848 pkey=0 pd=0xe35ffc1e5d30 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m  IbDev 2 Port 1 qp_num 2749 mtu 4 GID 3 (0/20B0A0AFFFF0000) ctsFifoRkey=0x179491 ctsFifoLkey=0x179491
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=0 devName=rocep1s0f0 ndevs=4 nmdevs=6 qp_num=2628 pkey=0 pd=0xe50970048f80 oooRq=
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m IB: ncclIbSenderQpsToRts: Set ECE: IbDev 2 Port 1 qp_num 2811 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 1 Port 1 qp_num 2734 mtu 4 GID 3 (0/10C0A0AFFFF0000) ctsFifoRkey=0x189a95 ctsFifoLkey=
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m 0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP cr
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m 0x189a95
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m eated: port=1 dev=2 devName=roceP2p1s0f0 ndevs=4 nmdevs=6 qp_num=2762 pkey=0 pd=0xe50970048320 oooRq=0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbSender
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) INFO 10-16 00:18:06 [cuda_communicator.py:269] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'ep:0' out of potential backends: ['FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) INFO 10-16 00:18:06 [parallel_state.py:2119] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank 0, EPLB rank N/A
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) INFO 10-16 00:18:06 [gpu_worker.py:429] Using V2 Model Runner
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:06 [model_runner.py:382] Loading model from scratch...
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:06 [qwen_gdn_linear_attn.py:167] Using Triton/FLA GDN prefill kernel (requested=auto, head_k_dim=128).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:06 [qwen_gdn_linear_attn.py:511] Falling back to the Triton GDN decode path: the fused CUDA kernel requires a BF16 GDN model with K=V=128, SiLU or sigmoid gating, non-interleaved GQA layout, BF16 convolution cache, BF16 or FP32 recurrent state, and a GPU with compute capability 8.0+
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:06 [qwen_gdn_linear_attn.py:519] GDN decode kernel: triton
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:06 [unquantized.py:319] Using FlashInfer CUTLASS Unquantized MoE backend out of potential backends: ['FlashInfer TRTLLM', 'FlashInfer CUTLASS', 'TRITON', 'BATCHED_TRITON'].
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:07 [cuda.py:492] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:07 [flash_attn.py:897] Using FlashAttention version 2
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:09 [weight_utils.py:863] Filesystem type for checkpoints: EXT4. Checkpoint size: 151.49 GiB. Available RAM: 34.24 GiB.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:09 [weight_utils.py:893] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre) and the checkpoint size (151.49 GiB) exceeds 90% of available RAM (34.24 GiB).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m WARNING 10-16 00:18:02 [worker_base.py:330] Missing `shared_worker_lock` argument from executor. This argument is needed for mm_processor_cache_type='shm'.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker pid=6208) INFO 10-16 00:18:02 [parallel_state.py:1775] world_size=2 rank=1 local_rank=0 distributed_init_method=tcp://10.10.10.1:42501 backend=nccl
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NCCL_SOCKET_IFNAME set to enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO cudaDriverVersion 13040
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NCCL version 2.31.2+cuda13.4
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NCCL git version unknown unknown
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NCCL_NET_PLUGIN set by environment to 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NCCL_IB_HCA set to 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NET/IB: [3] roceP2p1s0f1:uverbs3:1/RoCE provider=Mlx5 speed=128000 context=0x48fdd940 pciPath=/sys/devices/pci0002:00/0002:00:00.0/0002:01:00.0 ar=0 oooRqSize=0[32m [repeated 4x across cluster] (Ray deduplicates logs by default. Set RAY_DEDUP_LOGS=0 to disable log deduplication, or see https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#log-deduplication for more options.)[0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NET/IB : Made virtual device [5] name=roceP2p1s0f0+roceP2p1s0f1 speed=256000 ndevs=2 rail=-1 plane=16385[32m [repeated 6x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NET/IB : Using [0]rocep1s0f0:1/RoCE [1]rocep1s0f1:1/RoCE [2]roceP2p1s0f0:1/RoCE [3]roceP2p1s0f1:1/RoCE [RO]; OOB enp1s0f0np0:10.10.10.2<0>
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Initialized NET plugin IB[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Assigned NET plugin IB to comm[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO RMA/Plugin: Could not find: libnccl-rma.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO RMA/Plugin: Assigned plugin RMA_IB_PROXY to comm[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO GIN/Plugin: Could not find: libnccl-gin.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Using network IB[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Loaded NVML from libnvidia-ml.so.1
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO [Rank 1] ncclCommInitRank comm 0x4a357d10 rank 1 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x5590347296f32a35 - Init START[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO RAS client listening socket at 127.0.0.1<28028>
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NET/GIN_IB_GDAKI : GPU Direct RDMA Disabled for HCA 3 'roceP2p1s0f1'[32m [repeated 12x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NET/RMA_IB_PROXY : GPU Direct RDMA Disabled for HCA 3 'roceP2p1s0f1'[32m [repeated 12x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO NET/IB : GPU Direct RDMA Disabled for HCA 5 'roceP2p1s0f0+roceP2p1s0f1'[32m [repeated 18x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is empty, ignoring. (GPU affinity =  ; CPU affinity = 0-19).[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Rank 1: 6 Net devices[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Rank 1: 0 CollNet devices[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO comm 0x4a357d10 rank 1 nRanks 2 nNodes 2 localRanks 1 localRank 0 MNNVL 0[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1 [2] 1/-1/-1->0->-1 [3] 1/-1/-1->0->-1 [4] 1/-1/-1->0->-1 [5] 1/-1/-1->0->-1 [6] 1/-1/-1->0->-1 [7] 1/-1/-1->0->-1 [8] 1/-1/-1->0->-1 [9] 1/-1/-1->0->-1 [10] 1/-1/-1->0->-1 [11] 1/-1/-1->0->-1 [12] 1/-1/-1->0->-1 [13] 1/-1/-1->0->-1 [14] 1/-1/-1->0->-1 [15] 1/-1/-1->0->-1 [16] 1/-1/-1->0->-1 [17] 1/-1/-1->0->-1 [18] 1/-1/-1->0->-1 [19] 1/-1/-1->0->-1 [20] 1/-1/-1->0->-1 [21] 1/-1/-1->0->-1 [22] 1/-1/-1->0->-1 [23] 1/-1/-1->0->-1 [24] 1/-1/-1->0->-1 [25] 1/-1/-1->0->-1 [26] 1/-1/-1->0->-1 [27] 1/-1/-1->0->-1 [28] 1/-1/-1->0->-1 [29] 1/-1/-1->0->-1 [30] 1/-1/-1->0->-1 [31] 1/-1/-1->0->-1 [32] -1/-1/-1->0->1 [33] -1/-1/-1->0->1 [34] -1/-1/-1->0->1 [35] -1/-1/-1->0->1 [36] -1/-1/-1->0->1 [37] -1/-1/-1->0->1 [38] -1/-1/-1->0->1 [39] -1/-1/-1->0->1 [40] -1/-1/-1->0->1 [41] -1/-1/-1->0->1 [42] -1/-1/-1->0->1 [43] -1/-1/-1->0->1 [44] -1/-1/-1->0->1 [45] -1/-1/-1->0->1 [46] -1/-1/-1->0->1 [47] -1/-1/-1->0->1 [48] -1/-1/-1->0->1 [49] -1/-1/-1->0->1 [50] -1/-1/-1->0->1 [51] -1/-1/[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO P2P Chunksize set to 262144[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Tuning P2P operations with maxP2pPeers = 2[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Check P2P Type isAllDirectP2p 1 directMode 0 isAllCudaP2p 1[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO [Proxy Service] Device 0 CPU core 12[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14733 [0] NCCL INFO proxy listening socket at 10.10.10.1<59033>[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14734 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 3[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO TUNER/Plugin: Could not find: libnccl-tuner.so
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO 64 coll channels, 64 collnet channels, 0 nvls channels, 64 p2p channels, 2 p2p channels per peer[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO symmetricSupport 0, cuMemEnable 1, globalGinSupport 0, cuMemGdrSupport 0, contiguousRanksPerHost 1, crossNicSupport 1[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO ncclCommInitRank comm 0x4b2aad00 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId f01000 commId 0x5590347296f32a35 - Init COMPLETE[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Init timings - ncclCommInitRank: rank 0 nranks 2 total 0.03 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.00, graphs 0.00, connections 0.03, rest 0.00)[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14735 [0] NCCL INFO [Proxy Progress] Device 0 CPU core 12[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 63/0 : 1[0] -> 0[0] [receive] via NET/IB/5[32m [repeated 192x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14508 [0] NCCL INFO Channel 63/0 : 0[0] -> 1[0] [send] via NET/IB/5[32m [repeated 192x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the send communicator (comm=0xe50859573000)[32m [repeated 251x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbResiliencyInit: Resiliency is disabled on the recv communicator (comm=0xe50859dd3000)[32m [repeated 251x across cluster][0m(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:   2% Completed | 1/41 [00:06<04:37,  6.95s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:   5% Completed | 2/41 [00:20<06:52, 10.59s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:   7% Completed | 3/41 [00:32<07:16, 11.48s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  10% Completed | 4/41 [00:49<08:20, 13.52s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  12% Completed | 5/41 [01:00<07:42, 12.85s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  15% Completed | 6/41 [01:12<07:17, 12.49s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  17% Completed | 7/41 [01:25<07:11, 12.69s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  20% Completed | 8/41 [01:40<07:23, 13.43s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  22% Completed | 9/41 [01:56<07:28, 14.02s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  24% Completed | 10/41 [02:05<06:29, 12.56s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  27% Completed | 11/41 [02:19<06:28, 12.94s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  29% Completed | 12/41 [02:33<06:24, 13.26s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  32% Completed | 13/41 [02:44<05:55, 12.69s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  34% Completed | 14/41 [02:58<05:51, 13.00s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  37% Completed | 15/41 [03:09<05:20, 12.33s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  39% Completed | 16/41 [03:21<05:08, 12.34s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  41% Completed | 17/41 [03:36<05:12, 13.02s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  44% Completed | 18/41 [03:51<05:17, 13.80s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  46% Completed | 19/41 [04:03<04:51, 13.27s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  49% Completed | 20/41 [04:13<04:15, 12.18s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  51% Completed | 21/41 [04:27<04:14, 12.74s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  54% Completed | 22/41 [04:42<04:16, 13.51s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  56% Completed | 23/41 [04:53<03:48, 12.69s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  59% Completed | 24/41 [05:05<03:32, 12.50s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  61% Completed | 25/41 [05:21<03:34, 13.41s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  63% Completed | 26/41 [05:33<03:14, 12.96s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  66% Completed | 27/41 [05:48<03:11, 13.67s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  68% Completed | 28/41 [06:02<02:59, 13.82s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  71% Completed | 29/41 [06:13<02:36, 13.05s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  73% Completed | 30/41 [06:26<02:23, 13.04s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  76% Completed | 31/41 [06:42<02:17, 13.78s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  78% Completed | 32/41 [06:58<02:09, 14.39s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  80% Completed | 33/41 [07:08<01:44, 13.11s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  83% Completed | 34/41 [07:21<01:32, 13.14s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  85% Completed | 35/41 [07:37<01:24, 14.02s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  88% Completed | 36/41 [07:49<01:07, 13.54s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  90% Completed | 37/41 [08:05<00:56, 14.08s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  93% Completed | 38/41 [08:16<00:39, 13.20s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  95% Completed | 39/41 [08:29<00:26, 13.30s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards:  98% Completed | 40/41 [08:41<00:12, 12.76s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards: 100% Completed | 41/41 [08:41<00:00,  9.08s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Loading safetensors checkpoint shards: 100% Completed | 41/41 [08:41<00:00, 12.73s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) 
-
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbRecvCommInit: Receive work requests will be posted on-demand[32m [repeated 251x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbSenderQpsCreate: QP created: port=1 dev=1 devName=rocep1s0f1 ndevs=4 nmdevs=6 qp_num=2675 pkey=0 pd=0xe5097009a8c0 oooRq=0[32m [repeated 503x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbConnectImpl: NCCL Dev 4 IbDev 1 Port 1 qp_num 2675 mtu 4 GID 3 (0/20C0A0AFFFF0000) ctsFifoRkey=0x18e2d7 ctsFifoLkey=0x18e2d7[32m [repeated 497x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbConnectImpl: IbDev 1 Port 1 qp_num 2675 query_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}[32m [repeated 500x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbReceiverQpsCreateToRts: QP created: port=1 dev=3 devName=roceP2p1s0f1 ndevs=4 nmdevs=6 qp_num=2802 pkey=0 pd=0xe509700486c0 oooRq=0[32m [repeated 480x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6426 [0] NCCL INFO NET/IB: ncclIbSenderQpsToRts: Set ECE: IbDev 3 Port 1 qp_num 2799 set_ece={supported=1, vendor_id=0x15b3, options=0x30000002, comp_mask=0x0}[32m [repeated 483x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m cisc-diya:14508:14653 [0] NCCL 
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:20:25 [default_loader.py:430] Loading weights took 135.57 seconds
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) WARNING 10-16 00:18:04 [symm_mem.py:67] SymmMemCommunicator: Device capability 12.1 not supported, communicator is not available.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) WARNING 10-16 00:18:04 [flashinfer_all_reduce.py:383] FlashInfer All Reduce is disabled because it is not supported for world_size=2.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker pid=14508) WARNING 10-16 00:18:04 [custom_all_reduce.py:201] Custom collectives are disabled because this multi-node group does not have MNNVL-capable GPUs on every rank.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m cisc-hoedus:6208:6208 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 0
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker pid=6208) INFO 10-16 00:18:06 [parallel_state.py:2119] rank 1 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 1, EP rank 1, EPLB rank N/A
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker pid=6208) INFO 10-16 00:18:06 [gpu_worker.py:429] Using V2 Model Runner
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:18:06 [model_runner.py:382] Loading model from scratch...
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:06 [qwen_gdn_linear_attn.py:167] Using Triton/FLA GDN prefill kernel (requested=auto, head_k_dim=128).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:06 [qwen_gdn_linear_attn.py:511] Falling back to the Triton GDN decode path: the fused CUDA kernel requires a BF16 GDN model with K=V=128, SiLU or sigmoid gating, non-interleaved GQA layout, BF16 convolution cache, BF16 or FP32 recurrent state, and a GPU with compute capability 8.0+
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:06 [qwen_gdn_linear_attn.py:519] GDN decode kernel: triton
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:06 [unquantized.py:319] Using FlashInfer CUTLASS Unquantized MoE backend out of potential backends: ['FlashInfer TRTLLM', 'FlashInfer CUTLASS', 'TRITON', 'BATCHED_TRITON'].
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:07 [cuda.py:492] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:07 [flash_attn.py:897] Using FlashAttention version 2
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:09 [weight_utils.py:863] Filesystem type for checkpoints: EXT4. Checkpoint size: 151.49 GiB. Available RAM: 36.55 GiB.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:18:09 [weight_utils.py:893] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre) and the checkpoint size (151.49 GiB) exceeds 90% of available RAM (36.55 GiB).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:20:25 [unquantized.py:399] Using MoEPrepareAndFinalizeNoDPEPModular
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:20:25 [unquantized.py:400] Using FlashInferExperts MoE backend
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:20:28 [model_runner.py:404] Model loading took 74.3 GiB memory and 141.769330 seconds
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:20:28 [interface.py:918] Setting attention block size to 544 tokens to ensure that attention page size is >= mamba page size.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:20:28 [interface.py:942] Padding mamba page size by 1.49% to ensure that mamba page size and attention page size are exactly equal.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:26:51 [default_loader.py:430] Loading weights took 522.06 seconds
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:26:51 [unquantized.py:399] Using MoEPrepareAndFinalizeNoDPEPModular
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:26:51 [unquantized.py:400] Using FlashInferExperts MoE backend
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:26:54 [model_runner.py:404] Model loading took 74.3 GiB memory and 527.684394 seconds
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:26:54 [topk_topp_sampler.py:62] Using FlashInfer for top-p & top-k sampling.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:26:54 [interface.py:918] Setting attention block size to 544 tokens to ensure that attention page size is >= mamba page size.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:26:54 [interface.py:942] Padding mamba page size by 1.49% to ensure that mamba page size and attention page size are exactly equal.
-(EngineCore pid=14388) INFO 10-16 00:26:54 [utils.py:306] Using LBNHC KV cache layout.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) [rank0]:W1016 00:27:03.012000 14508 torch/_inductor/utils.py:1797] Not enough SMs to use max_autotune_gemm mode
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) /usr/local/lib/python3.12/dist-packages/triton/language/core.py:2625: UserWarning: tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508)   warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) [rank1]:W1016 00:27:03.320000 6208 torch/_inductor/utils.py:1797] Not enough SMs to use max_autotune_gemm mode
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:27:02 [backends.py:1094] Using cache directory: /root/.cache/vllm/torch_compile_cache/caa0cb44fb/rank_0_0/backbone for vLLM's torch.compile
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:27:02 [backends.py:1155] Dynamo bytecode transform time: 6.84 s
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:27:33 [backends.py:393] Compiling a graph for compile range (1, 2048) takes 30.85 s
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:27:02 [backends.py:1094] Using cache directory: /root/.cache/vllm/torch_compile_cache/caa0cb44fb/rank_1_0/backbone for vLLM's torch.compile
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:27:02 [backends.py:1155] Dynamo bytecode transform time: 7.15 s
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) WARNING 10-16 00:27:36 [decorators.py:724] unable to save AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/b6e397129eb2880dd14e028117afec639a727ecde5930040a5fd799a957d9335/rank_0_0/model: 'NoneType' object is not callable
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:27:36 [monitor.py:53] torch.compile took 40.99 s in total
-(EngineCore pid=14388) INFO 10-16 00:27:55 [shm_broadcast.py:801] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Capturing CUDA graphs (PIECEWISE):   0%|          | 0/51 [00:00<?, ?it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) /usr/local/lib/python3.12/dist-packages/triton/language/core.py:2625: UserWarning: tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208)   warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   2%|▏         | 1/51 [00:19<16:21, 19.63s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   4%|▍         | 2/51 [00:21<07:31,  9.21s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   6%|▌         | 3/51 [00:23<04:34,  5.71s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   8%|▊         | 4/51 [00:24<03:08,  4.02s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  10%|▉         | 5/51 [00:25<02:20,  3.05s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  12%|█▏        | 6/51 [00:27<01:48,  2.42s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  14%|█▎        | 7/51 [00:28<01:27,  1.99s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  16%|█▌        | 8/51 [00:29<01:12,  1.68s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  18%|█▊        | 9/51 [00:30<01:00,  1.45s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  20%|█▉        | 10/51 [00:30<00:51,  1.26s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  22%|██▏       | 11/51 [00:31<00:44,  1.10s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  24%|██▎       | 12/51 [00:32<00:37,  1.04it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  25%|██▌       | 13/51 [00:32<00:32,  1.18it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  27%|██▋       | 14/51 [00:33<00:27,  1.37it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  29%|██▉       | 15/51 [00:33<00:22,  1.60it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  31%|███▏      | 16/51 [00:34<00:18,  1.91it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:28:19 [monitor.py:81] Initial profiling/warmup run took 43.02 s
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:27:34 [backends.py:393] Compiling a graph for compile range (1, 2048) takes 31.59 s
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) WARNING 10-16 00:27:37 [decorators.py:724] unable to save AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/b6e397129eb2880dd14e028117afec639a727ecde5930040a5fd799a957d9335/rank_1_0/model: 'NoneType' object is not callable
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:27:37 [monitor.py:53] torch.compile took 42.04 s in total
-(EngineCore pid=14388) INFO 10-16 00:28:55 [shm_broadcast.py:801] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  33%|███▎      | 17/51 [01:04<05:26,  9.61s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  35%|███▌      | 18/51 [01:05<03:44,  6.79s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  37%|███▋      | 19/51 [01:05<02:33,  4.79s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  39%|███▉      | 20/51 [01:05<01:44,  3.39s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  41%|████      | 21/51 [01:05<01:12,  2.41s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  43%|████▎     | 22/51 [01:05<00:49,  1.72s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  45%|████▌     | 23/51 [01:05<00:34,  1.24s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  47%|████▋     | 24/51 [01:05<00:24,  1.11it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  49%|████▉     | 25/51 [01:05<00:17,  1.50it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  51%|█████     | 26/51 [01:05<00:12,  2.01it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  53%|█████▎    | 27/51 [01:06<00:09,  2.63it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  55%|█████▍    | 28/51 [01:06<00:06,  3.37it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  57%|█████▋    | 29/51 [01:06<00:05,  4.19it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  61%|██████    | 31/51 [01:06<00:03,  5.78it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  65%|██████▍   | 33/51 [01:06<00:02,  7.05it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  69%|██████▊   | 35/51 [01:06<00:01,  8.10it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  73%|███████▎  | 37/51 [01:07<00:01,  8.84it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  76%|███████▋  | 39/51 [01:07<00:01,  9.49it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  80%|████████  | 41/51 [01:07<00:01,  9.96it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  84%|████████▍ | 43/51 [01:07<00:00, 10.38it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  88%|████████▊ | 45/51 [01:07<00:00, 10.60it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  92%|█████████▏| 47/51 [01:07<00:00, 10.74it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  96%|█████████▌| 49/51 [01:08<00:00, 10.85it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [01:08<00:00,  6.65it/s]Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [01:08<00:00,  1.35s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Capturing CUDA graphs (FULL):   0%|          | 0/2 [00:00<?, ?it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  50%|█████     | 1/2 [00:00<00:00,  9.09it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL): 100%|██████████| 2/2 [00:00<00:00,  9.18it/s]Capturing CUDA graphs (FULL): 100%|██████████| 2/2 [00:00<00:00,  9.16it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:29:30 [model_runner.py:960] Graph capturing finished in 69 secs, took -0.86 GiB
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:28:19 [monitor.py:81] Initial profiling/warmup run took 41.98 s
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:29:30 [gpu_worker.py:625] Available KV cache memory: 20.49 GiB
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:29:30 [gpu_worker.py:640] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.8000 is equivalent to --gpu-memory-utilization=0.7977 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.8023. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
-(EngineCore pid=14388) INFO 10-16 00:29:30 [kv_cache_utils.py:2032] GPU KV cache size: 1,507,624 tokens, Maximum concurrency for 8,704 tokens per request: 173.21x
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) 2026-10-16 00:29:33,227 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) [AutoTuner]: Tuning trtllm::fused_moe::gemm1:   0%|          | 0/21 [00:00<?, ?profile/s]2026-10-16 00:29:33,307 - INFO - autotuner.py:1869 - flashinfer.jit: [Autotuner]: Skipped 2 unsupported tactic(s) for trtllm::fused_moe::gemm1 (enable debug logs to see details)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) 2026-10-16 00:29:33,350 - INFO - autotuner.py:1869 - flashinfer.jit: [Autotuner]: Skipped 2 unsupported tactic(s) for trtllm::fused_moe::gemm1 (enable debug logs to see details)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) [AutoTuner]: Tuning trtllm::fused_moe::gemm1:  19%|█▉        | 4/21 [00:00<00:01, 14.99profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) 2026-10-16 00:29:33,223 - INFO - autotuner.py:972 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) [AutoTuner]: Tuning trtllm::fused_moe::gemm1:  10%|▉         | 2/21 [00:00<00:00, 19.04profile/s]2026-10-16 00:29:33,411 - INFO - autotuner.py:1869 - flashinfer.jit: [Autotuner]: Skipped 2 unsupported tactic(s) for trtllm::fused_moe::gemm1 (enable debug logs to see details)[32m [repeated 3x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m 2026-10-16 00:29:38,733 - INFO - autotuner.py:1869 - flashinfer.jit: [Autotuner]: Skipped 2 unsupported tactic(s) for trtllm::fused_moe::gemm1 (enable debug logs to see details)[32m [repeated 28x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) [AutoTuner]: Tuning trtllm::fused_moe::gemm1:  81%|████████  | 17/21 [00:05<00:01,  2.13profile/s][32m [repeated 22x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) [AutoTuner]: Tuning trtllm::fused_moe::gemm1:  95%|█████████▌| 20/21 [00:07<00:00,  1.91profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) [AutoTuner]: Tuning trtllm::fused_moe::gemm1: 100%|██████████| 21/21 [00:07<00:00,  1.72profile/s][AutoTuner]: Tuning trtllm::fused_moe::gemm1: 100%|██████████| 21/21 [00:07<00:00,  2.68profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) [AutoTuner]: Tuning trtllm::fused_moe::gemm2:   0%|          | 0/21 [00:00<?, ?profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m 2026-10-16 00:29:41,081 - INFO - autotuner.py:1869 - flashinfer.jit: [Autotuner]: Skipped 2 unsupported tactic(s) for trtllm::fused_moe::gemm1 (enable debug logs to see details)[32m [repeated 9x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m [AutoTuner]: Tuning trtllm::fused_moe::gemm2:  67%|██████▋   | 14/21 [00:02<00:01,  3.90profile/s][32m [repeated 16x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) [AutoTuner]: Tuning trtllm::fused_moe::gemm1:  95%|█████████▌| 20/21 [00:07<00:00,  1.91profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m [AutoTuner]: Tuning trtllm::fused_moe::gemm2:  95%|█████████▌| 20/21 [00:05<00:00,  2.49profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) [AutoTuner]: Tuning trtllm::fused_moe::gemm1: 100%|██████████| 21/21 [00:07<00:00,  1.72profile/s][AutoTuner]: Tuning trtllm::fused_moe::gemm1: 100%|██████████| 21/21 [00:07<00:00,  2.68profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) [AutoTuner]: Tuning trtllm::fused_moe::gemm2:   0%|          | 0/21 [00:00<?, ?profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m [AutoTuner]: Tuning trtllm::fused_moe::gemm2: 100%|██████████| 21/21 [00:05<00:00,  2.05profile/s][AutoTuner]: Tuning trtllm::fused_moe::gemm2: 100%|██████████| 21/21 [00:05<00:00,  3.57profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) 2026-10-16 00:29:47,714 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) 2026-10-16 00:29:47,832 - INFO - autotuner.py:2652 - flashinfer.jit: [Autotuner]: Saved 42 configs to /root/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/121a/bcaa965f7349fad088ea89c1d82b516fd67ff95d28e1b8d45f876c0b348a95ea/autotune_configs.json (42 new, 0 from previous config)
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Capturing CUDA graphs (PIECEWISE):   0%|          | 0/51 [00:00<?, ?it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   2%|▏         | 1/51 [00:01<01:22,  1.66s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m [AutoTuner]: Tuning trtllm::fused_moe::gemm2:  90%|█████████ | 19/21 [00:04<00:00,  2.67profile/s][32m [repeated 11x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   4%|▍         | 2/51 [00:03<01:19,  1.62s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m [AutoTuner]: Tuning trtllm::fused_moe::gemm2:  95%|█████████▌| 20/21 [00:05<00:00,  2.49profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   6%|▌         | 3/51 [00:04<01:14,  1.56s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m [AutoTuner]: Tuning trtllm::fused_moe::gemm2: 100%|██████████| 21/21 [00:05<00:00,  2.05profile/s][AutoTuner]: Tuning trtllm::fused_moe::gemm2: 100%|██████████| 21/21 [00:05<00:00,  3.57profile/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) 2026-10-16 00:29:47,710 - INFO - autotuner.py:995 - flashinfer.jit: [Autotuner]: Autotuning process ends
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):   8%|▊         | 4/51 [00:06<01:10,  1.49s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  10%|▉         | 5/51 [00:07<01:05,  1.43s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  12%|█▏        | 6/51 [00:08<01:01,  1.36s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  14%|█▎        | 7/51 [00:09<00:56,  1.29s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  16%|█▌        | 8/51 [00:10<00:52,  1.22s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  18%|█▊        | 9/51 [00:11<00:48,  1.15s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  20%|█▉        | 10/51 [00:12<00:43,  1.07s/it]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  22%|██▏       | 11/51 [00:13<00:39,  1.02it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  24%|██▎       | 12/51 [00:14<00:34,  1.12it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  25%|██▌       | 13/51 [00:14<00:30,  1.24it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  27%|██▋       | 14/51 [00:15<00:26,  1.41it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  29%|██▉       | 15/51 [00:15<00:22,  1.62it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  31%|███▏      | 16/51 [00:16<00:18,  1.92it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  33%|███▎      | 17/51 [00:16<00:13,  2.49it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  35%|███▌      | 18/51 [00:16<00:10,  3.14it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  37%|███▋      | 19/51 [00:16<00:08,  3.86it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  39%|███▉      | 20/51 [00:16<00:06,  4.60it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  41%|████      | 21/51 [00:16<00:05,  5.36it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  43%|████▎     | 22/51 [00:16<00:04,  6.07it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  45%|████▌     | 23/51 [00:16<00:04,  6.64it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  47%|████▋     | 24/51 [00:16<00:03,  7.17it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  49%|████▉     | 25/51 [00:17<00:03,  7.69it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  51%|█████     | 26/51 [00:17<00:03,  8.16it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  53%|█████▎    | 27/51 [00:17<00:02,  8.57it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  55%|█████▍    | 28/51 [00:17<00:02,  8.86it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  57%|█████▋    | 29/51 [00:17<00:02,  9.14it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  61%|██████    | 31/51 [00:17<00:02,  9.61it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  65%|██████▍   | 33/51 [00:17<00:01,  9.94it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  69%|██████▊   | 35/51 [00:18<00:01, 10.37it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  73%|███████▎  | 37/51 [00:18<00:01, 10.61it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  76%|███████▋  | 39/51 [00:18<00:01, 10.89it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  80%|████████  | 41/51 [00:18<00:00, 10.96it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  84%|████████▍ | 43/51 [00:18<00:00, 10.91it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  88%|████████▊ | 45/51 [00:18<00:00, 11.00it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  92%|█████████▏| 47/51 [00:19<00:00, 11.02it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE):  96%|█████████▌| 49/51 [00:19<00:00, 10.92it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [00:19<00:00, 11.02it/s]Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51 [00:19<00:00,  2.61it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) Capturing CUDA graphs (FULL):   0%|          | 0/35 [00:00<?, ?it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):   3%|▎         | 1/35 [00:00<00:03,  8.93it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):   6%|▌         | 2/35 [00:00<00:03,  8.59it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):   9%|▊         | 3/35 [00:00<00:03,  9.00it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  11%|█▏        | 4/35 [00:00<00:03,  9.11it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  14%|█▍        | 5/35 [00:00<00:03,  9.34it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  17%|█▋        | 6/35 [00:00<00:03,  9.39it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  20%|██        | 7/35 [00:00<00:03,  8.33it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  26%|██▌       | 9/35 [00:00<00:02,  9.46it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  31%|███▏      | 11/35 [00:01<00:02, 10.23it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  37%|███▋      | 13/35 [00:01<00:02, 10.87it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  43%|████▎     | 15/35 [00:01<00:01, 11.53it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  49%|████▊     | 17/35 [00:01<00:01, 12.27it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  54%|█████▍    | 19/35 [00:01<00:01, 13.02it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  60%|██████    | 21/35 [00:01<00:01, 13.77it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  66%|██████▌   | 23/35 [00:01<00:00, 14.39it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  71%|███████▏  | 25/35 [00:02<00:00, 14.94it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  77%|███████▋  | 27/35 [00:02<00:00, 15.29it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  83%|████████▎ | 29/35 [00:02<00:00, 15.65it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  89%|████████▊ | 31/35 [00:02<00:00, 16.06it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL):  94%|█████████▍| 33/35 [00:02<00:00, 16.44it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m Capturing CUDA graphs (FULL): 100%|██████████| 35/35 [00:02<00:00, 16.69it/s]Capturing CUDA graphs (FULL): 100%|██████████| 35/35 [00:02<00:00, 12.90it/s]
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:29:32 [kernel_warmup.py:124] JIT kernel warmup starting.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:29:32 [kernel_warmup.py:134] JIT kernel warmup finished in 0.00s.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:29:32 [qwen_triton_warmup.py:270] Warming up Qwen Triton kernels for model_type=qwen3_next.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:29:33 [kernel_warmup.py:315] Using FlashInfer autotune cache file: /root/.cache/vllm/flashinfer_autotune_cache/0.6.18.post1/121a/bcaa965f7349fad088ea89c1d82b516fd67ff95d28e1b8d45f876c0b348a95ea/autotune_configs.json
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:29:33 [kernel_warmup.py:272] Running FlashInfer autotune with 2048 tokens.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:30:10 [gpu_worker.py:860] Free memory on device (109.67/121.63 GiB) on startup. Desired GPU memory utilization is (0.8, 97.3 GiB). Actual usage is 74.34 GiB for consumed memory (weights + non-torch), 0.29 GiB for peak activation, and 0.69 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=23443549901` (21.83 GiB) to fit into requested memory, or `--kv-cache-memory=36725178880` (34.2 GiB) to fully utilize gpu memory. Current kv cache memory in use is 22.67 GiB.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:30:10 [model_runner.py:960] Graph capturing finished in 23 secs, took 0.69 GiB[32m [repeated 2x across cluster][0m
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:29:30 [gpu_worker.py:625] Available KV cache memory: 22.67 GiB
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:29:32 [kernel_warmup.py:124] JIT kernel warmup starting.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:29:32 [kernel_warmup.py:134] JIT kernel warmup finished in 0.00s.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:29:32 [qwen_triton_warmup.py:270] Warming up Qwen Triton kernels for model_type=qwen3_next.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:29:33 [kernel_warmup.py:272] Running FlashInfer autotune with 2048 tokens.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:30:10 [gpu_worker.py:797] CUDA graph pool memory: 0.75 GiB (actual), 0.28 GiB (estimated), difference: 0.47 GiB (63.1%).
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:30:13 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
-(EngineCore pid=14388) INFO 10-16 00:30:13 [core.py:361] init engine (profile, create kv cache, warmup model) took 199.30 s (compilation: 42.04 s)
-(EngineCore pid=14388) INFO 10-16 00:30:16 [kernel.py:369] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'])
-(APIServer pid=14308) INFO 10-16 00:30:17 [entry.py:135] Supported tasks: ['generate']
-(APIServer pid=14308) INFO 10-16 00:30:18 [hf.py:547] Detected the chat template content format to be 'string'. You can set `--chat-template-content-format` to override this.
-(APIServer pid=14308) INFO 10-16 00:30:18 [entry.py:139] Starting vLLM server on http://127.0.0.1:8000
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:61] Available routes are:
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /openapi.json, Methods: GET, HEAD
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /docs, Methods: GET, HEAD
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /docs/oauth2-redirect, Methods: GET, HEAD
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /redoc, Methods: GET, HEAD
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /load, Methods: GET
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /version, Methods: GET
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /health, Methods: GET
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /metrics, Methods: GET
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /tokenize, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /detokenize, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/models, Methods: GET
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /ping, Methods: GET
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /ping, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /invocations, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/chat/completions, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/chat/completions/batch, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/responses, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/responses/{response_id}, Methods: GET
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/responses/{response_id}/cancel, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/completions, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/messages, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/messages/count_tokens, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /generative_scoring, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /scale_elastic_ep, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /is_scaling_elastic_ep, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/chat/completions/render, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/messages/render, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/completions/render, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/chat/completions/derender, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /v1/completions/derender, Methods: POST
-(APIServer pid=14308) INFO 10-16 00:30:18 [launcher.py:70] Route: /inference/v1/generate, Methods: POST
-(APIServer pid=14308) INFO:     Started server process [14308]
-(APIServer pid=14308) INFO:     Waiting for application startup.
-(APIServer pid=14308) INFO:     Application startup complete.
-(APIServer pid=14308) INFO:     127.0.0.1:45220 - "GET /v1/models HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:45224 - "POST /v1/completions HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:45240 - "GET /version HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:45242 - "GET /v1/models HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:45250 - "GET /metrics HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:43548 - "GET /version HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:43554 - "GET /v1/models HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:43568 - "GET /metrics HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:43582 - "GET /version HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:43596 - "GET /v1/models HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO:     127.0.0.1:43598 - "GET /metrics HTTP/1.1" 200 OK
-(APIServer pid=14308) INFO 10-16 00:30:26 [launcher.py:124] [shutdown] API server: shutdown triggered
-(APIServer pid=14308) INFO 10-16 00:30:26 [launcher.py:140] [shutdown] API server: stopping engine client mode=abort timeout=0s
-(APIServer pid=14308) INFO 10-16 00:30:26 [core_client.py:689] [shutdown] MPClient: start timeout=0s
-(APIServer pid=14308) INFO 10-16 00:30:26 [core_client.py:691] [shutdown] MPClient: stopping engine manager
-(APIServer pid=14308) INFO 10-16 00:30:26 [utils.py:620] [shutdown] Process manager: send sigterm to process EngineCore
-(APIServer pid=14308) WARNING 10-16 00:30:26 [utils.py:640] [shutdown] Process manager: force killing remaining processes count=1
-(APIServer pid=14308) WARNING 10-16 00:30:26 [utils.py:645] [shutdown] Process manager: force killing remaining process EngineCore pid 14388
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) WARNING 10-16 00:30:24 [jit_monitor.py:141] Triton kernel JIT compilation during inference: _gumbel_sample_kernel. This causes a latency spike; consider extending warmup to cover this shape/config.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:30:10 [gpu_worker.py:860] Free memory on device (112.17/121.63 GiB) on startup. Desired GPU memory utilization is (0.8, 97.3 GiB). Actual usage is 76.25 GiB for consumed memory (weights + non-torch), 0.56 GiB for peak activation, and 0.75 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=21042953114` (19.6 GiB) to fit into requested memory, or `--kv-cache-memory=37004870144` (34.46 GiB) to fully utilize gpu memory. Current kv cache memory in use is 20.49 GiB.
-(EngineCore pid=14388) [36m(RayWorkerProc pid=6208, ip=10.10.10.2)[0m (Worker_TP1 pid=6208) INFO 10-16 00:30:10 [model_runner.py:960] Graph capturing finished in 23 secs, took 0.75 GiB
-(EngineCore pid=14388) [36m(RayWorkerProc pid=14508)[0m (Worker_TP0 pid=14508) INFO 10-16 00:30:13 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
-(EngineCore pid=14388) INFO 10-16 00:30:26 [core.py:1350] [shutdown] EngineCore: trigger received signal=SIGTERM
-(EngineCore pid=14388) INFO 10-16 00:30:26 [core.py:1501] [shutdown] EngineCore: start mode=abort timeout=0s
-(EngineCore pid=14388) INFO 10-16 00:30:26 [core.py:1532] [shutdown] EngineCore: request processing complete; starting resource teardown
-(EngineCore pid=14388) INFO 10-16 00:30:26 [core.py:1363] [shutdown] EngineCore: exiting busy loop
-(APIServer pid=14308) INFO 10-16 00:30:26 [core_client.py:693] [shutdown] MPClient: engine manager stopped
-(APIServer pid=14308) INFO 10-16 00:30:26 [core_client.py:694] [shutdown] MPClient: cleaning up background resources
-(APIServer pid=14308) INFO 10-16 00:30:26 [core_client.py:696] [shutdown] MPClient: complete
-(APIServer pid=14308) INFO 10-16 00:30:26 [launcher.py:149] [shutdown] API server: engine client stopped
-(APIServer pid=14308) INFO 10-16 00:30:26 [launcher.py:152] [shutdown] API server: signalling HTTP server shutdown
-(APIServer pid=14308) INFO 10-16 00:30:26 [launcher.py:173] [shutdown] API server: shutting down FastAPI HTTP server
-(APIServer pid=14308) INFO:     Shutting down
-(APIServer pid=14308) INFO:     Waiting for application shutdown.
-(APIServer pid=14308) INFO:     Application shutdown complete.
-/usr/lib/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked shared_memory objects to clean up at shutdown
-  warnings.warn('resource_tracker: There appear to be %d '

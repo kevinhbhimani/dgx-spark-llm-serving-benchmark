@@ -13,10 +13,10 @@ workload definition. The client asks vLLM for delta token IDs and final usage,
 counts exact output tokens rather than HTTP/SSE chunks, and accepts a request as
 successful only when the stream ends cleanly with the requested token count.
 
-Before collecting publication results, follow the short
-[RDMA readiness runbook](docs/rdma-readiness.md) and the ordered
-[cluster setup](docs/cluster-setup.md). A passing software plan still requires
-the two-node transport and hardware gates.
+For the setup, preflight, and full-suite command sequence, follow the
+[campaign runbook](docs/campaign-runbook.md). It links to the detailed
+[cluster setup](docs/cluster-setup.md) and
+[RDMA readiness checks](docs/rdma-readiness.md).
 
 ## Quick Start
 
@@ -67,8 +67,8 @@ server launches and 1272 measurement windows (see
 export MODEL=Qwen/Qwen3-8B
 export REVISION=b968826d9c46dd6066d109eabc6255188de91218
 # export HF_TOKEN=...    # only needed for gated Hugging Face models
-# HF_HUB_OFFLINE=0 permits this first exploratory launch to fetch that exact
-# revision. Full sweeps use predownload + CHECK_ONLY instead.
+# HF_HUB_OFFLINE=0 permits this exploratory launch to fetch that exact revision.
+# run_job.sh fetches each pinned model on demand before serving it.
 HF_HUB_OFFLINE=0 scripts/launch_server.sh single
 ```
 
@@ -81,9 +81,10 @@ The launcher defaults to `--generation-config vllm`, so model-repository
 request settings. Override `GENERATION_CONFIG` only when that difference is
 intentional.
 
-Serving otherwise defaults to `HF_HUB_OFFLINE=1`. Before a full sweep, use the
-pinned predownload, local-only cache check, and canary workflow in
-Benchmarking Multiple Models rather than downloading during server startup.
+Serving otherwise defaults to `HF_HUB_OFFLINE=1`. `scripts/run_job.sh` fetches
+one pinned model at a time, mirrors dual-node weights, runs the model, and
+purges its cache before moving to the next model. `scripts/run_models.sh` can
+also reuse models fetched separately with `scripts/predownload.sh`.
 
 4. In another terminal, run a short smoke test:
 
@@ -172,6 +173,7 @@ plotting/
   plot_trends.py              cross-model trend figures (metadata from models.yaml)
   plot_interconnect.py        all-reduce and send/recv latency/bandwidth by transport
 docs/
+  campaign-runbook.md        end-to-end setup, preflight, and full campaign
   cluster-setup.md            two-node RDMA setup and pre-flight, in order
 tests/                        standard-library regression tests for release paths
 requirements.txt              Python client and plotting dependencies
@@ -206,7 +208,9 @@ Server-side requirements for the included scripts:
   0.19.0), which is too old for several checkpoints in the current matrix.
 - Ray `RAY_VERSION` (2.56.1, the release vLLM 0.29.0 is tested against),
   installed into both containers by `scripts/start_ray.sh`; the image does not
-  bundle Ray.
+  bundle Ray. `scripts/ray-runtime-constraints.txt` pins its dependencies to
+  the latest complete package snapshot recorded for both nodes. Update the
+  image, Ray version, and constraints together.
 - Hugging Face access for the selected model, usually through `HF_TOKEN`.
 - For dual-node runs: working name resolution or IP configuration for both
   nodes, a ConnectX interface, and matching access to the vLLM image on both
@@ -360,10 +364,9 @@ export MODEL_REVISION="$REVISION"
 export PORT=8000
 export DTYPE=auto
 export MAXLEN=8704
-# Optional serving overrides:
-# export GPU_UTIL=0.80        # default is 0.80 for every config: keep it
-#                             # identical across single/tp2/pp2 for one model,
-#                             # or the KV budget confounds the comparison
+# Optional direct-launch overrides (campaigns use gpu_util_default in
+# configs/models.yaml for one shared value across every model and config):
+# export GPU_UTIL=0.90        # launch_server.sh default
 # export PREFIX_CACHING=1     # prefix caching is OFF by default: cache hits on
 #                             # repeated synthetic prompts skipped up to a third
 #                             # of prefill work in some models but not others
@@ -403,8 +406,8 @@ export REPEATS="${REPEATS:-3}"
 # export POWER_BACKEND=nvidia_smi
 export MODELS_YAML=configs/models.yaml
 export READY_TIMEOUT=1800
-# Installed into the Ray containers by start_ray.sh. Re-check it against the
-# vLLM release inside VLLM_IMAGE whenever the image changes.
+# Installed into Ray containers by start_ray.sh. Keep it aligned with
+# scripts/ray-runtime-constraints.txt and VLLM_IMAGE.
 export RAY_VERSION=2.56.1
 # Work around a serialization failure in the pinned PyTorch build's
 # AOTAutograd disk cache while leaving graph compilation itself enabled.
@@ -570,10 +573,10 @@ DROP_CACHES=1 scripts/start_ray.sh head
 DROP_CACHES=1 scripts/start_ray.sh worker
 ```
 
-Before the first dual launch, fetch and validate the pinned snapshots on the
-head and mirror them to the worker's independent cache. The whole matrix is
-~1.07 TB, so select models with `MODEL_LABELS` (the campaign does this one
-model at a time and purges each afterwards):
+Direct `run_models.sh` launches need pinned snapshots in the head cache and,
+for dual-node models, in the worker cache. The full matrix is about 1.07 TB, so
+select models with `MODEL_LABELS` for manual launches. `run_job.sh` fetches and
+mirrors one model on demand, then purges it.
 
 ```bash
 export MODEL_LABELS="llama3.1-8b"
@@ -666,11 +669,12 @@ To characterize several models, list them in `configs/models.yaml` and drive the
 with `scripts/run_models.sh`. Each entry names a Hugging Face model, a short
 `label` used to tag results and plots, the serving configs to run it under
 (`single`, `tp2`, `pp2`), and `revision`, plus optional `max_model_len`,
-`gpu_util`, `quant`, `tokenizer`, `tokenizer_revision`, and
-`trust_remote_code`. The shipped paper matrix pins every active model to an
-immutable commit. `gpu_util` is either a scalar or a per-config mapping; a
-missing value uses the uniform launcher default `0.80`. Keep it identical
-across a model's configs so the KV budget does not confound single/tp2/pp2.
+`quant`, `tokenizer`, `tokenizer_revision`, and `trust_remote_code`. The
+shipped paper matrix pins every active model to an
+immutable commit. `gpu_util_default` in `configs/models.yaml` sets the run-wide
+GPU memory cap, defaulting to `0.90`. Every model and serving config in the
+campaign receives this same value. Per-model `gpu_util` settings are rejected;
+change `gpu_util_default` once when a campaign needs a different cap.
 The tokenizer id and revision are passed to both vLLM and the client so exact
 token-ID prompts match the served tokenizer. A model whose weights plus KV
 cache do not fit on one GB10 must omit `single` and use the dual-node configs,
@@ -714,7 +718,8 @@ DROP_CACHES=1 scripts/start_ray.sh worker      # on Hoedus
 # Each node has its OWN HF cache, and the worker can neither reach
 # huggingface.co nor be SSH'd into. Mirror the weights to it over the
 # cluster network first, or the launch dies with HFValidationError from
-# the remote Ray worker. Idempotent; repos already on the worker are skipped.
+# the remote Ray worker. The mirror streams from Diya to Hoedus over a
+# Ray-managed TCP connection. Idempotent; existing worker files are skipped.
 scripts/mirror_worker_cache.sh all             # on Diya, after predownload.sh
 CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed launch
 CANARY_ONLY=1 scripts/run_models.sh pp2
@@ -777,8 +782,8 @@ runtime identity, and records the Ray all-reduce gate and the send/recv
 microbenchmark while the GPUs are idle. It then works through
 `configs/models.yaml` one model at a time:
 
-1. **fetch** the pinned snapshot into the head cache (only if it is not
-   already complete), after an exact disk-space check;
+1. **fetch** the current model's pinned snapshot into the head cache through
+   `predownload.sh` in one-label mode, only if it is not already complete;
 2. **mirror** it to the worker cache if the model runs tp2/pp2;
 3. **measure** every config it lists in 3 replicates, rotating the config
    order between replicates (see below);
@@ -1412,9 +1417,10 @@ non-paper diagnostic run.
 - `run_models.sh` skips a model with a timeout or "launcher exited": that model
   failed to come up (often OOM). Check the newest matching
   `OUT_DIR/server_<label>_<config>_*.log` (logs are never overwritten);
-  lower its `gpu_util` in `configs/models.yaml`, add a `quant`, or move it to the
-  dual-node configs if it does not fit on one GB10. The orchestrator continues
-  to the next model rather than aborting the whole sweep.
+  lower the shared `gpu_util_default` in `configs/models.yaml`, add a `quant`,
+  or move it to the dual-node configs if it does not fit on one GB10. The
+  orchestrator continues to the next model rather than aborting the whole
+  sweep.
 - `weight_gb`/`kv_cache_gb` blank in the index: the model config or Hub metadata
   could not be fetched (offline or gated without `HF_TOKEN`). HTTP-derived
   launch fields such as `gpu_blocks` and `block_size` still populate. For a
@@ -1466,13 +1472,8 @@ non-paper diagnostic run.
   with `DROP_CACHES=1` (see step 2 above) before relaunching.
 - Same `ray.exceptions.OutOfMemoryError`, but it happens later, right after
   `Available KV cache memory: ...` logs during model load rather than at Ray
-  startup: this is a real overcommit, not stale cache. On Grace unified
-  memory, `--gpu-memory-utilization` reserves from the same pool the OS,
-  Docker, and Ray need, so `0.90` (fine on a discrete-GPU box) can leave too
-  little headroom for Ray's 95% node memory threshold once weights and KV
-  cache are both resident. `scripts/launch_server.sh` defaults `GPU_UTIL` to
-  `0.80` for `tp2`/`pp2` for this reason; lower it further with `GPU_UTIL=0.7
-  scripts/launch_server.sh tp2` if it recurs.
+  startup: the model exceeds available unified memory. `gpu_util_default` is
+  `0.90`; lower the shared value in `configs/models.yaml` for the entire run.
 - Dual-node performance looks like Wi-Fi or management-network traffic: rerun
   `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
   counters during a `tp2` run.
@@ -1502,8 +1503,14 @@ non-paper diagnostic run.
   (`docker exec vllm-spark pkill -f 'vllm serve'`) and rerun
   `MODEL_LABELS=... scripts/purge_model_cache.sh`.
 - `predownload` reports too little space: it reserves the exact remaining
-  bytes of the pinned snapshot plus an OS buffer. Purge finished models, or
-  point `HF_CACHE` at a larger drive.
+  bytes of the pinned snapshot plus a 10 GiB free-space buffer by default.
+  Set `PREDOWNLOAD_MIN_FREE_GB` to adjust the buffer or point `HF_CACHE` at a
+  larger drive.
+- The cache has shared blobs left from earlier runs: start Ray on both nodes,
+  review `PURGE_CACHE_GARBAGE=1 DRY_RUN=1 scripts/purge_model_cache.sh`, then
+  rerun `PURGE_CACHE_GARBAGE=1 DRY_RUN=0 scripts/purge_model_cache.sh` to remove
+  detached revisions, incomplete downloads, and unreferenced shared blobs. This
+  also removes other detached revisions in the selected Hugging Face cache.
 
 ## Development Checks
 

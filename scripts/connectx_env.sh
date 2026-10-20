@@ -63,18 +63,19 @@ export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+# Keep Hugging Face downloads in repo-local blobs. The cache-wide Xet blob
+# store creates an extra symlink level that complicates mirroring and cleanup.
+export HF_HUB_DISABLE_SHARED_BLOBS=1
 # Use Docker's host-derived resolver by default. An explicit public resolver can
 # be unreachable on managed networks even while the host resolver works, which
 # would make the pinned Ray install fail before the cluster starts. Override
 # this only when the local Docker resolver is known to be broken.
 export CONTAINER_DNS="${CONTAINER_DNS-}"
 
-# nvcr.io/nvidia/vllm 26.04 and 26.09 do not bundle Ray, so start_ray.sh
-# installs it into both containers. 2.56.1 is the release vLLM 0.29.0's CI pins
-# (requirements/test/cuda.txt: ray>=2.56.0,<2.57). Pipeline-parallel stage
-# transfers use vLLM's own NCCL communicator (VLLM_USE_RAY_WRAPPED_PP_COMM=1,
-# the default), so the cgraph/cupy extra is not needed. Re-check when bumping
-# VLLM_IMAGE.
+# The image digest pins the platform stack. start_ray.sh installs the pinned
+# Ray runtime using scripts/ray-runtime-constraints.txt, which also fixes its
+# Python dependency versions to the latest full runtime recorded in this repo.
+# Update the image, Ray version, and constraints together.
 export RAY_VERSION="${RAY_VERSION:-2.56.1}"
 
 # Safety helpers shared by every launcher/orchestrator. Paper measurements must

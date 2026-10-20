@@ -11,11 +11,10 @@
 #   REVISION        pinned Hugging Face commit for model files.
 #   TOKENIZER_REVISION pinned commit for tokenizer files (defaults to REVISION).
 #   TRUST_REMOTE_CODE  non-empty adds --trust-remote-code (models with custom code).
-#   GPU_UTIL        override --gpu-memory-utilization (default 0.80 for every
+#   GPU_UTIL        override --gpu-memory-utilization (default 0.90 for every
 #                   config). One uniform value so single vs tp2/pp2 comparisons
-#                   hold the KV budget policy constant; 0.80 is the highest that
-#                   clears the two-node preflight and Ray's node memory monitor
-#                   on Grace unified memory (see README troubleshooting).
+#                   hold the KV budget policy constant. Lower it if a model
+#                   exceeds available unified memory.
 #   MAX_NUM_SEQS    optional positive scheduler sequence limit. A model-specific
 #                   value applies consistently to single, tp2, and pp2.
 #   PREFIX_CACHING  1 re-enables vLLM prefix caching. Default off: the synthetic
@@ -67,7 +66,7 @@ if [[ -n "$MAX_NUM_SEQS" && ! "$MAX_NUM_SEQS" =~ ^[1-9][0-9]*$ ]]; then
   echo "[launch] MAX_NUM_SEQS must be a positive integer" >&2
   exit 2
 fi
-GPU_UTIL="${GPU_UTIL:-0.80}"
+GPU_UTIL="${GPU_UTIL:-0.90}"
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
@@ -173,6 +172,7 @@ PY
 _check_cluster_cache() {
   echo "[launch] preflight: pinned model snapshot on both Ray nodes"
   docker exec -i \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
     -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
     -e MODEL="$MODEL" -e REVISION="$REVISION" \
     -e TOKENIZER="$TOKENIZER" -e TOKENIZER_REVISION="$TOKENIZER_REVISION" \
@@ -186,8 +186,10 @@ ray.init(address="auto", log_to_driver=False)
 def validate(repo, revision, require_weights):
     from pathlib import Path
     from huggingface_hub import snapshot_download
-    path = Path(snapshot_download(repo, revision=revision or None,
-                                  local_files_only=True))
+    path = Path(snapshot_download(
+        repo, revision=revision or None, local_files_only=True,
+        ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"],
+    ))
     broken = [str(p.relative_to(path)) for p in path.rglob("*")
               if p.is_symlink() and not p.exists()]
     partial = list((path.parents[1] / "blobs").glob("*.incomplete"))
@@ -380,6 +382,7 @@ case "$CONFIG" in
     echo "[launch] single node TP=1 PP=1, standalone container"
     _check_local_memory
     run_env=( -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
+              -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS"
               -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
               -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
               -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
@@ -408,6 +411,7 @@ case "$CONFIG" in
     _check_cluster_cache
     _check_cluster_memory
     docker exec "${hf_offline_env[@]}" \
+      -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
       -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
       "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \

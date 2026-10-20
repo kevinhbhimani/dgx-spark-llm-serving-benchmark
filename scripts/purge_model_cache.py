@@ -6,11 +6,11 @@ as serving (the cache is written by containers, so the host user usually
 cannot delete it). The worker side runs as a Ray task pinned to the worker
 node, the same no-SSH path mirror_worker_cache.py uses.
 
-Only ``hub/models--<org>--<name>`` trees named by validated repo ids are
-removed, plus their ``hub/.locks`` entries. With --compile-cache, the vLLM
-torch.compile cache is cleared too; it lives in the container layer and grows
-by one entry per model and parallel layout. Nothing is deleted on a node that
-is still running a vLLM server or a Ray serving worker.
+Only model revisions named by validated repo ids are removed. Hugging Face's
+cache API keeps shared blobs that other cached revisions still use and removes
+blobs with no remaining references. With --compile-cache, the vLLM
+torch.compile cache is cleared too. Nothing is deleted on a node that is still
+running a vLLM server or a Ray serving worker.
 
 Usage: purge_model_cache.py [--worker IP] [--compile-cache] [--dry-run] REPO [...]
 """
@@ -20,7 +20,11 @@ import argparse
 import os
 import re
 import shutil
+import subprocess
 import sys
+from typing import TypedDict
+
+from huggingface_hub import scan_cache_dir
 
 HUB = "/root/.cache/huggingface/hub"
 COMPILE_CACHE = os.path.join(
@@ -29,6 +33,21 @@ COMPILE_CACHE = os.path.join(
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*")
 # Command-line fragments of processes that may hold model files open.
 BUSY_MARKERS = ("vllm serve", "RayWorkerWrapper", "EngineCore")
+
+
+class RepoPurgeResult(TypedDict):
+    repo: str
+    bytes: int
+    status: str
+
+
+class PurgeReport(TypedDict, total=False):
+    repos: list[RepoPurgeResult]
+    freed_bytes: int
+    dry_run: bool
+    compile_cache_bytes: int
+    cache_prune_output: str
+    error: str
 
 
 def repo_dir(repo: str) -> str:
@@ -67,13 +86,48 @@ def busy_processes() -> list[str]:
     return found
 
 
-def purge_node(repos: list[str], compile_cache: bool, dry_run: bool) -> dict:
+def prune_cache_garbage(dry_run: bool) -> tuple[str, int]:
+    space_before = os.statvfs(HUB)
+    free_before = space_before.f_bavail * space_before.f_frsize
+    command = ["hf", "cache", "prune", "--cache-dir", HUB]
+    command.append("--dry-run" if dry_run else "--yes")
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    output = (result.stdout + result.stderr).strip()
+    if result.returncode != 0:
+        raise RuntimeError(output or f"hf cache prune exited {result.returncode}")
+    if dry_run:
+        return output, 0
+    space_after = os.statvfs(HUB)
+    free_after = space_after.f_bavail * space_after.f_frsize
+    return output, max(0, free_after - free_before)
+
+
+def purge_node(
+    repos: list[str], compile_cache: bool, dry_run: bool, prune_garbage: bool
+) -> PurgeReport:
     """Delete the given repos on this node. Returns a JSON-safe report."""
     busy = busy_processes()
     if busy:
-        return {"error": "serving processes still running: " + "; ".join(busy[:3])}
+        return {
+            "error": "serving processes still running: " + "; ".join(busy[:3]),
+            "repos": [],
+            "freed_bytes": 0,
+            "dry_run": dry_run,
+        }
+    os.makedirs(HUB, exist_ok=True)
     hub_real = os.path.realpath(HUB)
-    report = {"repos": [], "freed_bytes": 0, "dry_run": dry_run}
+    cache_info = scan_cache_dir(cache_dir=HUB)
+    cached_repos = {
+        cached_repo.repo_id: cached_repo
+        for cached_repo in cache_info.repos
+        if cached_repo.repo_type == "model"
+    }
+    report: PurgeReport = {
+        "repos": [],
+        "freed_bytes": 0,
+        "dry_run": dry_run,
+    }
+    revision_hashes: list[str] = []
     for repo in repos:
         name = repo_dir(repo)
         target = os.path.join(HUB, name)
@@ -84,15 +138,20 @@ def purge_node(repos: list[str], compile_cache: bool, dry_run: bool) -> dict:
         if not os.path.isdir(target):
             report["repos"].append({"repo": repo, "bytes": 0, "status": "absent"})
             continue
-        size = tree_bytes(target)
-        if not dry_run:
-            shutil.rmtree(target)
-            lock = os.path.join(HUB, ".locks", name)
-            if os.path.isdir(lock) and not os.path.islink(lock):
-                shutil.rmtree(lock, ignore_errors=True)
+        cached_repo = cached_repos.get(repo)
+        if cached_repo is None:
+            return {"error": f"Hugging Face cache scan could not resolve {repo} safely"}
+        revision_hashes.extend(
+            revision.commit_hash for revision in cached_repo.revisions
+        )
+        size = cached_repo.size_on_disk
         report["repos"].append({"repo": repo, "bytes": size,
                                 "status": "would delete" if dry_run else "deleted"})
-        report["freed_bytes"] += size
+    if revision_hashes:
+        delete_strategy = cache_info.delete_revisions(*revision_hashes)
+        report["freed_bytes"] = int(delete_strategy.expected_freed_size)
+        if not dry_run:
+            delete_strategy.execute()
     if compile_cache and os.path.isdir(COMPILE_CACHE) \
             and not os.path.islink(COMPILE_CACHE):
         size = tree_bytes(COMPILE_CACHE)
@@ -105,10 +164,14 @@ def purge_node(repos: list[str], compile_cache: bool, dry_run: bool) -> dict:
                     os.unlink(path)
         report["compile_cache_bytes"] = size
         report["freed_bytes"] += size
+    if prune_garbage:
+        prune_output, pruned_bytes = prune_cache_garbage(dry_run)
+        report["cache_prune_output"] = prune_output
+        report["freed_bytes"] += pruned_bytes
     return report
 
 
-def show(node: str, report: dict) -> bool:
+def show(node: str, report: PurgeReport) -> bool:
     if report.get("error"):
         print(f"[purge] {node}: FAILED: {report['error']}", file=sys.stderr)
         return False
@@ -121,6 +184,8 @@ def show(node: str, report: dict) -> bool:
               f"({report['compile_cache_bytes'] / 1e9:.2f} GB)")
     print(f"[purge] {node}: {report['freed_bytes'] / 1e9:.1f} GB "
           f"{'reclaimable' if report['dry_run'] else 'freed'}")
+    if "cache_prune_output" in report and report["cache_prune_output"]:
+        print(f"[purge] {node}: {report['cache_prune_output']}")
     return True
 
 
@@ -129,8 +194,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--worker", default="", help="Ray worker node IP to purge too")
     parser.add_argument("--compile-cache", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("repos", nargs="+")
+    parser.add_argument("--prune-cache-garbage", action="store_true")
+    parser.add_argument("repos", nargs="*")
     args = parser.parse_args(argv)
+    if not args.repos and not args.prune_cache_garbage:
+        parser.error("provide at least one repo or --prune-cache-garbage")
     try:
         for repo in args.repos:
             repo_dir(repo)
@@ -157,9 +225,14 @@ def main(argv: list[str]) -> int:
             return 1
         task = ray.remote(num_cpus=0, resources={f"node:{args.worker}": 0.001})(purge_node)
         ok = show(f"worker {args.worker}",
-                  ray.get(task.remote(args.repos, args.compile_cache, args.dry_run),
+                  ray.get(task.remote(
+                      args.repos, args.compile_cache, args.dry_run,
+                      args.prune_cache_garbage,
+                  ),
                           timeout=1800)) and ok
-    ok = show("head", purge_node(args.repos, args.compile_cache, args.dry_run)) and ok
+    ok = show("head", purge_node(
+        args.repos, args.compile_cache, args.dry_run, args.prune_cache_garbage
+    )) and ok
     return 0 if ok else 1
 
 
