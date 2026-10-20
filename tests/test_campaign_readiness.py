@@ -139,8 +139,8 @@ class MicrobenchArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(validator.CampaignValidationError, "differs from expected"):
                 microbench.validate_interconnect_csv(path, "roce")
 
-    def _reuse(self, kind, *, matching=True, transport="roce"):
-        function = "allreduce_once" if kind == "allreduce" else "sendrecv_once"
+    def _exercise_gate(self, kind, *, matching=True, transport="roce"):
+        function = "allreduce_preflight" if kind == "allreduce" else "sendrecv_once"
         source = (ROOT / "scripts/run_job.sh").read_text()
         body = source.split(f"{function}() {{", 1)[1].split("\n}\n", 1)[0]
         with tempfile.TemporaryDirectory() as temporary:
@@ -175,13 +175,15 @@ class MicrobenchArtifactTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return result.stdout
 
-    def test_reuse_preserves_valid_small_transfer_rounding(self):
-        self.assertNotIn("RERUN", self._reuse("allreduce"))
-        self.assertNotIn("RERUN", self._reuse("interconnect"))
+    def test_allreduce_preflight_always_runs_with_matching_saved_artifact(self):
+        self.assertIn("RERUN", self._exercise_gate("allreduce"))
+
+    def test_interconnect_reuse_preserves_valid_small_transfer_rounding(self):
+        self.assertNotIn("RERUN", self._exercise_gate("interconnect"))
 
     def test_stale_or_wrong_transport_interconnect_artifact_is_not_reused(self):
-        self.assertIn("RERUN", self._reuse("interconnect", matching=False))
-        self.assertIn("RERUN", self._reuse("interconnect", transport="tcp"))
+        self.assertIn("RERUN", self._exercise_gate("interconnect", matching=False))
+        self.assertIn("RERUN", self._exercise_gate("interconnect", transport="tcp"))
 
 
 class ReplicateLaunchTests(unittest.TestCase):

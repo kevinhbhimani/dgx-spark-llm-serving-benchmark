@@ -325,29 +325,9 @@ cluster_runtime_ok() {
   log "cluster runtime fingerprint: $CLUSTER_RUNTIME_FINGERPRINT"
 }
 
-# Interconnect microbench: reuse only a complete artifact from this exact
-# cluster runtime and benchmark source.
-allreduce_once() {
-  local artifact_id artifact
-  artifact_id="$(scripts/ray_allreduce_bench.sh --fingerprint-only)" || return 1
-  for artifact in "$OUT_DIR"/allreduce_ray_"$artifact_id"_*.csv; do
-    [[ -e "$artifact" ]] || continue
-    if "$PYTHON" - "$artifact" <<'PY'
-import sys
-from scripts.validate_campaign import CampaignValidationError, validate_allreduce_csv
-
-try:
-    validate_allreduce_csv(sys.argv[1])
-except (CampaignValidationError, OSError) as exc:
-    print(f"[job] invalid allreduce artifact: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-    then
-      log "valid allreduce artifact for runtime/source $artifact_id: $artifact"
-      return 0
-    fi
-    log "ignoring malformed allreduce artifact: $artifact"
-  done
+# RDMA availability can change across boots while the software fingerprint
+# stays constant. Measure the live cluster on every campaign invocation.
+allreduce_preflight() {
   scripts/ray_allreduce_bench.sh
 }
 
@@ -513,7 +493,7 @@ prep "valid complete campaign definition" \
 prep "Ray cluster active on head+worker"      ray_ok
 prep "no stale vLLM server"                   no_stale_server
 prep "two-node runtime identity matches"      cluster_runtime_ok
-prep "allreduce interconnect microbench"      allreduce_once
+prep "current-cluster allreduce RDMA preflight" allreduce_preflight
 leg  "send/recv interconnect microbench"      sendrecv_once
 
 case "$CANARY_FIRST" in

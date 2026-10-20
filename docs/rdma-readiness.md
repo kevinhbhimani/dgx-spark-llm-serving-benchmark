@@ -4,9 +4,21 @@ A passing software plan validates the campaign definition. Publication readiness
 also requires a clean committed checkout, an idle two-node cluster, actual RDMA
 channel evidence, and successful hardware measurements.
 
+## Node scope
+
+| Task | Run command on | Nodes involved |
+| --- | --- | --- |
+| Software checks and `PLAN_ONLY=1` | Diya only | Local checkout and Python environment; no cluster work |
+| Firmware, Netplan, host entries, and local ConnectX checks | Both nodes | Each command checks the local node |
+| `scripts/verify_connectx.sh` | Diya only | Checks Diya's route and probes each Hoedus ConnectX peer |
+| `scripts/start_ray.sh head` / `worker` | Diya / Hoedus, respectively | Starts Ray on both nodes |
+| `ray status`, RDMA microbenchmarks, canary, and campaign | Diya only | Ray distributes the two-node work to Hoedus |
+| `scripts/hardware_smoke.sh` | Diya only | Single-node diagnostic using Diya's GPU |
+| `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each node |
+
 ## Software checks
 
-Run from the repository root with Python 3.12 or newer:
+Run on Diya from the repository root with Python 3.12 or newer:
 
 ```bash
 source .venv/bin/activate
@@ -32,9 +44,9 @@ refers to a recoverable commit.
 
 ## Hardware gates
 
-Configure both machines using [cluster-setup.md](cluster-setup.md), then run the
-following on the head unless a comment says otherwise. Reserve both GPUs for
-the campaign and stop unrelated workloads through their normal service controls.
+Configure both machines using [cluster-setup.md](cluster-setup.md). Run the
+commands below on the named node. Reserve both nodes for the campaign and stop
+unrelated workloads through their normal service controls.
 The campaign sets `gpu_util_default: 0.90` for every model and serving config.
 `run_models.sh` passes that value through `launch_server.sh` to `vllm serve` as
 `--gpu-memory-utilization`. This targets 115.2 GB on a nominal 128 GB node, and
@@ -43,20 +55,44 @@ serving starts. vLLM applies the setting per instance. The campaign uses one
 serving instance per node at a time; unrelated concurrent processes are outside
 this limit. See the [vLLM CacheConfig reference](https://docs.vllm.ai/en/v0.29.0/api/vllm/config/cache/).
 
+Run the local checks and start the Ray head on Diya:
+
 ```bash
 scripts/verify_connectx.sh
-scripts/hardware_smoke.sh                    # separate single-node diagnostic output
+scripts/hardware_smoke.sh                    # Diya-only diagnostic output
 SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
   SMOKE_CONCURRENCIES="1 128" OUT_DIR=results-smoke-lightning \
   scripts/hardware_smoke.sh                  # top load; see the 26.09 note below
-scripts/start_ray.sh head                    # head
-# On the worker: scripts/start_ray.sh worker
-docker exec vllm-spark ray status            # exactly the intended two GPU nodes
+scripts/start_ray.sh head
+```
+
+Start the Ray worker on Hoedus:
+
+```bash
+scripts/start_ray.sh worker
+```
+
+Return to Diya for the cluster checks and campaign commands:
+
+```bash
+docker exec vllm-spark ray status            # checks the two-node cluster
 OUT_DIR="$OUT_DIR" scripts/ray_allreduce_bench.sh
 OUT_DIR="$OUT_DIR" scripts/interconnect_extra_bench.sh
-STOP_AFTER_CANARY=1 scripts/run_job.sh        # every checkpoint/config once
+STOP_AFTER_CANARY=1 scripts/run_job.sh       # every checkpoint/config once
 scripts/run_job.sh                           # rerun this command to resume
 ```
+
+The RDMA microbenchmarks and campaign are launched on Diya and use Ray on both
+nodes. The hardware smoke tests run only on Diya. Stop Ray by running
+`scripts/start_ray.sh stop` once on Diya and once on Hoedus after collection.
+
+`scripts/verify_connectx.sh` checks name resolution, routing, interface pings,
+and active RDMA ports. It does not measure throughput. Run
+`scripts/ray_allreduce_bench.sh` from Diya after Ray is active on both nodes
+and both GPUs are idle to measure current transport and speed. It requires
+`NET/IB` on both ranks, at least 16 GB/s at 1 GiB, and at most 100 microseconds
+for the 8-byte collective. `scripts/run_job.sh` runs this fresh gate before
+the canary and measurements on every invocation.
 
 Each step must pass. Keep the NCCL logs alongside the microbenchmark CSVs and
 the per-launch logs/policies. `NCCL_IB_DISABLE=0` alone allows silent socket

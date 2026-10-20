@@ -437,8 +437,8 @@ before running the scripts if your node names, IPs, or interface differ:
 
 ```bash
 export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
-export DIYA_HOST=Diya
-export HOEDUS_HOST=Hoedus
+export DIYA_HOST=cisc-diya
+export HOEDUS_HOST=cisc-hoedus
 export DIYA_IP=10.10.10.1
 export HOEDUS_IP=10.10.10.2
 export HEAD_IP=$DIYA_IP
