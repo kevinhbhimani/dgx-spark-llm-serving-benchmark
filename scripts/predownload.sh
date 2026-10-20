@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-download model weights into the shared Hugging Face cache so that a later
+# Download model weights into the head node's Hugging Face cache so a later
 # `vllm serve` does not spend its readiness budget pulling weights.
 #
 # Why: scripts/run_models.sh gives each server READY_TIMEOUT seconds (default
@@ -14,11 +14,17 @@
 #   scripts/predownload.sh all         # every model in models.yaml, across all configs
 #
 # Downloads run inside the same VLLM_IMAGE and into the same HF_CACHE mount that
-# launch_server.sh uses, so the serving path sees an identical, warm cache. Each
+# launch_server.sh uses, so the serving path sees the same local files. Each
 # unique repo is fetched once (a model shared across configs, or reused by an
 # on-the-fly-quant entry like llama3.3-70b-fp8, is not downloaded twice). Gated
-# repos (meta-llama) use HF_TOKEN from .env. Redundant PyTorch/GGUF copies
-# (e.g. meta-llama's original/*.pth) are skipped; vLLM loads the safetensors.
+# repos (meta-llama) use HF_TOKEN from .env. Redundant PyTorch/Metal/GGUF copies
+# (meta-llama's original/*.pth, gpt-oss's original/ and metal/) are skipped;
+# vLLM loads the safetensors. The disk check sizes exactly those files with
+# scripts/hf_snapshot_size.py, net of blobs already in the cache.
+#
+# The campaign (scripts/run_job.sh) calls this one model at a time with
+# MODEL_LABELS and purges each model after measuring it, so the cache never
+# has to hold the whole matrix.
 #
 # Downloads are pinned to the revisions in models.yaml and are idempotent and
 # resumable. CHECK_ONLY=1 performs the same local-only completeness validation
@@ -31,7 +37,8 @@
 #      MODEL_LABELS (optional space-separated label allowlist),
 #      DOWNLOAD_DNS (Docker DNS for downloads, defaults to CONTAINER_DNS;
 #                    empty uses Docker's host-derived resolver),
-#      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS).
+#      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS),
+#      PREDOWNLOAD_MIN_FREE_GB (free-space reserve, default 10 GiB).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_IMAGE, HF_CACHE, HF_TOKEN, and .env
@@ -68,10 +75,16 @@ add_spec() {
   fi
 }
 for cfg in "${CONFIGS[@]}"; do
-  # exits 1 when no model requests a config; tolerate that under "all"
-  entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg" 2>/dev/null || true)"
+  # exits 1 when no model requests a config; tolerate that under "all", but
+  # not a malformed matrix (exit 2), which would otherwise fetch nothing.
+  rc=0
+  entries="$("$PYTHON" "$HERE/models_for_config.py" "$MODELS_YAML" "$cfg")" || rc=$?
+  if (( rc > 1 )); then
+    echo "[predownload] cannot read $MODELS_YAML for $cfg" >&2
+    exit 1
+  fi
   [[ -z "$entries" ]] && continue
-  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust; do
+  while IFS='|' read -r label name revision maxlen gpu_util quant tok tokrev trust _max_num_seqs; do
     [[ -z "$name" ]] && continue
     if [[ -n "$MODEL_LABELS" ]]; then
       selected=0
@@ -115,135 +128,53 @@ fi
 
 mkdir -p "$HF_CACHE"
 
-# Pre-fetch all HF model repo sizes before any downloading.
-# On success, exports HF_PREFETCHED_TOTAL_BYTES (total bytes across all unique repos).
-# Exits 1 if any repo's HF API query fails.
-prefetch_hf_sizes() {
-  local repo revision kind prefix_total=0
-  declare -A seen_repos=()
+# Reserve exactly what the pinned snapshots still need. The Hub's per-file
+# sizes for each pinned revision, minus blobs already complete in this cache,
+# are compared with free space plus a 10 GiB OS buffer
+# (PREDOWNLOAD_MIN_FREE_GB overrides). A Hub query failure
+# exits before the first download. Skipped in CHECK_ONLY mode.
+check_disk_space() {
+  local spec repo revision kind size_report needed_bytes
+  local -a size_specs=()
   for spec in "${SPECS[@]}"; do
     IFS='|' read -r repo revision kind <<<"$spec"
-    if [[ -n "${seen_repos[$repo]:-}" ]]; then
-      continue
-    fi
-    seen_repos[$repo]=1
-    local size_bytes
-    size_bytes=$("$PYTHON" -c '
-import json, sys, urllib.request, urllib.error
-repo = sys.argv[1]
-url = f"https://huggingface.co/api/models/{repo}"
-req = urllib.request.Request(url, headers={"User-Agent": "dgx-spark-benchmark/1.0"})
-try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode())
-    total = data.get("safetensors", {}).get("total")
-    if not isinstance(total, (int, float)) or total <= 0:
-        total = data.get("usedStorage")
-    if not isinstance(total, (int, float)) or total <= 0:
-        raise ValueError(f"no size metadata (safetensors.total={data.get("safetensors",{}).get("total")!r}, usedStorage={data.get("usedStorage")!r})")
-    print(int(total))
-except Exception as exc:
-    print(f"ERROR: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-' "$repo" 2>/dev/null) || {
-      echo "[predownload] FAILED: cannot query HF API for $repo" >&2
-      exit 1
-    }
-    prefix_total=$((prefix_total + size_bytes))
+    size_specs+=("$repo@$revision")
   done
-  export HF_PREFETCHED_TOTAL_BYTES=$prefix_total
-}
-
-# Pre-fetch all HF model sizes before any downloading.
-if [[ "$CHECK_ONLY" != "1" ]]; then
-  prefetch_hf_sizes || exit 1
-fi
-
-# Query huggingface.co/api/models for each unique repo's safetensors.total
-# size, sum them, and refuse to download if available disk space is less than
-# the total plus an OS safety buffer. The buffer is 20 GiB or 5% of total
-# disk, whichever is larger. PREDOWNLOAD_MIN_FREE_GB overrides the buffer.
-# Requires network access; skipped in CHECK_ONLY mode (which does not download).
-_check_disk_space() {
-  local repo revision kind total_bytes=0
-  declare -A seen_repos=()
-
-  # Use pre-fetched model sizes if available (from prefetch_hf_sizes),
-  # otherwise query the HF API per-repo as below.
-  if [[ -n "${HF_PREFETCHED_TOTAL_BYTES:-}" ]]; then
-    total_bytes=$HF_PREFETCHED_TOTAL_BYTES
-    # Compute unique repo count from SPECS for the summary message
-    seen_repos=()
-    for spec in "${SPECS[@]}"; do
-      IFS='|' read -r repo revision kind <<<"$spec"
-      if [[ -z "${seen_repos[$repo]:-}" ]]; then
-        seen_repos[$repo]=1
-      fi
-    done
-  else
-    for spec in "${SPECS[@]}"; do
-    IFS='|' read -r repo revision kind <<<"$spec"
-    if [[ -n "${seen_repos[$repo]:-}" ]]; then
-      continue
-    fi
-    seen_repos[$repo]=1
-    local size_bytes
-    size_bytes=$("$PYTHON" -c '
-import json, sys, urllib.request, urllib.error
-repo = sys.argv[1]
-url = f"https://huggingface.co/api/models/{repo}"
-req = urllib.request.Request(url, headers={"User-Agent": "dgx-spark-benchmark/1.0"})
-try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode())
-    total = data.get("safetensors", {}).get("total")
-    if not isinstance(total, (int, float)) or total <= 0:
-        total = data.get("usedStorage")
-    if not isinstance(total, (int, float)) or total <= 0:
-        raise ValueError(f"no size metadata (safetensors.total={data.get('safetensors',{}).get('total')!r}, usedStorage={data.get('usedStorage')!r})")
-    print(int(total))
-except Exception as exc:
-    print(f"ERROR: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-' "$repo" 2>/dev/null) || {
-      echo "[predownload] FAILED: cannot query HF API for $repo" >&2
-      return 1
-    }
-    total_bytes=$((total_bytes + size_bytes))
-  done
-
+  if ! size_report="$("$PYTHON" "$HERE/hf_snapshot_size.py" "$HF_CACHE" "${size_specs[@]}")"; then
+    echo "[predownload] FAILED: cannot size the pinned snapshots from the HF API" >&2
+    return 1
   fi
-  local available_kb total_kb need_kb buffer_kb pct_buffer_kb
+  printf '%s\n' "$size_report" | grep -v '^total_needed_bytes=' || true
+  needed_bytes="$(printf '%s\n' "$size_report" | sed -n 's/^total_needed_bytes=//p')"
+  [[ "$needed_bytes" =~ ^[0-9]+$ ]] || {
+    echo "[predownload] FAILED: unparseable size report" >&2; return 1; }
+
+  local available_kb need_kb buffer_kb min_free_gb
   available_kb=$(df --output=avail "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
-  total_kb=$(df --output=size "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
-  if [[ -z "$available_kb" || -z "$total_kb" || "$available_kb" -le 0 ]]; then
+  if [[ -z "$available_kb" || "$available_kb" -le 0 ]]; then
     echo "[predownload] cannot determine free space on $HF_CACHE" >&2
     return 1
   fi
-
-  need_kb=$((total_bytes / 1024))
-  pct_buffer_kb=$((total_kb * 5 / 100))
-  buffer_kb=$((20 * 1024 * 1024))
-  if [[ "$pct_buffer_kb" -gt "$buffer_kb" ]]; then
-    buffer_kb=$pct_buffer_kb
+  need_kb=$((needed_bytes / 1024))
+  min_free_gb="${PREDOWNLOAD_MIN_FREE_GB:-10}"
+  if [[ ! "$min_free_gb" =~ ^[0-9]{1,6}$ ]]; then
+    echo "[predownload] PREDOWNLOAD_MIN_FREE_GB must be a non-negative integer" >&2
+    return 2
   fi
-  if [[ -n "${PREDOWNLOAD_MIN_FREE_GB:-}" ]]; then
-    buffer_kb=$((PREDOWNLOAD_MIN_FREE_GB * 1024 * 1024))
-  fi
-
-  echo "[predownload] HF API: $(awk "BEGIN {printf \"%.1f\", $total_bytes / 1073741824}") GiB across ${#seen_repos[@]} repo(s)"
+  min_free_gb=$((10#$min_free_gb))
+  buffer_kb=$((min_free_gb * 1024 * 1024))
   echo "[predownload] $HF_CACHE: $((available_kb / 1024 / 1024)) GiB free, need $((need_kb / 1024 / 1024)) GiB + $((buffer_kb / 1024 / 1024)) GiB OS buffer"
   if [[ "$available_kb" -lt $((need_kb + buffer_kb)) ]]; then
     echo "[predownload] FAILED: need $(((need_kb + buffer_kb) / 1024 / 1024)) GiB, have $((available_kb / 1024 / 1024)) GiB." >&2
-    echo "[predownload] Set HF_CACHE to a path with more space, or override with PREDOWNLOAD_MIN_FREE_GB=0." >&2
+    echo "[predownload] Set HF_CACHE to a path with more space, purge finished models (scripts/purge_model_cache.sh), or override with PREDOWNLOAD_MIN_FREE_GB=0." >&2
     return 1
   fi
 }
 if [[ "$CHECK_ONLY" != "1" ]]; then
-  _check_disk_space || exit 1
+  check_disk_space || exit 1
 fi
 
-run_env=()
+run_env=( -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" )
 dns_args=()
 if [[ -n "$DOWNLOAD_DNS" ]]; then dns_args=( --dns "$DOWNLOAD_DNS" ); fi
 
@@ -267,8 +198,10 @@ args = sys.argv[1:]
 for i in range(0, len(args), 3):
     repo, revision, kind = args[i:i + 3]
     try:
-        path = Path(snapshot_download(repo, revision=revision or None,
-                                      local_files_only=True))
+        path = Path(snapshot_download(
+            repo, revision=revision or None, local_files_only=True,
+            ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"],
+        ))
         broken = [str(p.relative_to(path)) for p in path.rglob("*")
                   if p.is_symlink() and not p.exists()]
         repo_root = path.parents[1]
@@ -319,7 +252,7 @@ from huggingface_hub import snapshot_download
 repo, revision, workers = sys.argv[1:4]
 path = snapshot_download(repo, revision=revision or None,
                          max_workers=int(workers),
-                         ignore_patterns=["original/*", "*.pth", "*.gguf"])
+                         ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"])
 print("[predownload] cached", repo, revision or "main", "->", path)' \
        "$repo" "$revision" "$DOWNLOAD_WORKERS"; then
     echo "[predownload] done $repo@$revision"

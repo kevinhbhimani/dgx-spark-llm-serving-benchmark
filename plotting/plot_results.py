@@ -22,6 +22,7 @@ Dependencies:  pip install pandas matplotlib numpy
 """
 from __future__ import annotations
 import argparse
+import math
 import os
 import sys
 import numpy as np
@@ -111,7 +112,8 @@ def set_rc(dpi: int, serif: bool) -> None:
 
 # ---- data helpers ------------------------------------------------------------
 NUMERIC_COLS = [
-    "concurrency", "target_qps", "repeat_id", "repeat_count", "measure_s", "warmup_s",
+    "concurrency", "target_qps", "repeat_id", "repeat_count", "measure_s",
+    "configured_measure_s", "measure_extension_s", "warmup_s",
     "configured_warmup_s", "warmup_extension_s", "cooldown_s",
     "load_extension_s", "drain_s",
     "requests_started", "requests_completed", "requests_failed",
@@ -143,13 +145,35 @@ NUMERIC_COLS = [
 
 # Columns whose run-to-run spread across REPEATS is kept when repeats are
 # collapsed: the mean lands in the original column and min/max in
-# <col>__lo/<col>__hi, which draw_band() shades behind the mean line.
+# <col>__lo/<col>__hi, which draw_band() shades behind the mean line. With two
+# or more repeats, <col>__sd and <col>__ci95 (Student-t half-width of the mean)
+# are added for tables.
 BAND_COLS = [
     "tok_thru_tps", "tok_thru_completed_tps", "server_gen_tps",
     "req_thru_rps", "goodput_rps", "goodput_itl2_rps",
-    "ttft_p50", "ttft_p99", "itl_p50", "itl_p99", "e2e_p50",
+    "ttft_p50", "ttft_p99", "itl_p50", "itl_p99", "mean_itl_p50", "e2e_p50",
     "energy_per_token_j", "tokens_per_watt", "mean_power_w",
 ]
+
+# Two-sided 95% Student-t critical values by degrees of freedom (n - 1).
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
+       7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228}
+
+# Live capacity that vLLM settles on after memory profiling. It differs by a
+# few thousand KV blocks on every launch, so replicates that are separate
+# launches legitimately disagree; within one replicate it must not change.
+PER_LAUNCH_COLS = ["deployment_fingerprint", "gpu_blocks", "total_kv_tokens"]
+
+
+def window_col(df: pd.DataFrame) -> str:
+    """Column naming the configured measurement window.
+
+    steady-exact-v4 rows may extend measure_s under the minimum-sample rule,
+    so identity checks use the configured window. Older indexes have only
+    measure_s, which was then always the configured value.
+    """
+    return ("configured_measure_s" if "configured_measure_s" in df.columns
+            else "measure_s")
 
 
 def load_index(path: str) -> pd.DataFrame:
@@ -337,20 +361,22 @@ def collapse_repeats(df: pd.DataFrame, *,
                                  "--allow-incomplete for diagnostic plots")
                     print("  WARNING: " + message, file=sys.stderr)
 
-            # A release curve must describe one methodology and one actual
-            # deployment across *all* loads. Checking only duplicate rows at a
-            # single load lets a resumed sweep silently splice two servers into
-            # a plausible-looking line.
+            # A release curve must describe one methodology and one launch
+            # policy across *all* loads. Checking only duplicate rows at a
+            # single load lets a resumed sweep silently splice two configurations
+            # into a plausible-looking line. Live per-launch capacity is checked
+            # per replicate below instead, because replicates are separate
+            # server launches by design.
+            win_col = window_col(g)
             family_identity_cols = [
                 "methodology_version", "config_file_sha256",
                 "expected_concurrencies", "harness_source_sha256",
                 "client_environment_sha256",
-                "serving_fingerprint", "deployment_fingerprint", "model",
-                "measure_s", "configured_warmup_s", "cooldown_s",
+                "serving_fingerprint", "model",
+                win_col, "configured_warmup_s", "cooldown_s",
                 "power_nodes", "power_scope", "vllm_version",
                 "max_model_len", "kv_cache_dtype", "gpu_memory_utilization",
-                "block_size", "gpu_blocks", "total_kv_tokens",
-                "total_kv_tokens_source", "hybrid_cache",
+                "block_size", "total_kv_tokens_source", "hybrid_cache",
             ]
             mixed_family = [
                 c for c in family_identity_cols
@@ -364,6 +390,13 @@ def collapse_repeats(df: pd.DataFrame, *,
                     f"{', '.join(mixed_family)} differ. Plot separate indexes "
                     "or filter to one deployment."
                 )
+            if "repeat_id" in g.columns and "deployment_fingerprint" in g.columns:
+                for rep, rgrp in g.groupby("repeat_id", dropna=False):
+                    launches = rgrp["deployment_fingerprint"].dropna().nunique()
+                    if launches > 1:
+                        print(f"  note: {pfx}{cfg} replicate {rep} spans "
+                              f"{launches} server launches (resumed sweep)",
+                              file=sys.stderr)
 
             repeat_key = "__checked_repeat_id"
             has_repeat_ids = "repeat_id" in g.columns and g["repeat_id"].notna().any()
@@ -450,15 +483,16 @@ def collapse_repeats(df: pd.DataFrame, *,
             rows = []
             for load, grp in g.groupby(load_col, sort=False, dropna=False):
                 # Repeated rows may be averaged only if their methodology,
-                # resolved experiment, and measurement window are identical.
+                # resolved experiment, and configured window are identical.
                 # Otherwise a plausible-looking mean would describe no run
-                # that actually occurred.
+                # that actually occurred. The deployment fingerprint may differ:
+                # each replicate is its own launch.
                 identity_cols = [
                     "methodology_version", "config_file_sha256",
                     "harness_source_sha256", "client_environment_sha256",
-                    "serving_fingerprint", "deployment_fingerprint",
+                    "serving_fingerprint",
                     "experiment_fingerprint",
-                    "measure_s", "configured_warmup_s", "cooldown_s",
+                    win_col, "configured_warmup_s", "cooldown_s",
                     # Energy values with different node coverage or sensor
                     # scopes are not repeated measurements of the same
                     # quantity and must never be averaged together.
@@ -486,6 +520,14 @@ def collapse_repeats(df: pd.DataFrame, *,
                     if c in grp.columns and grp[c].notna().any():
                         row[f"{c}__lo"] = grp[c].min()
                         row[f"{c}__hi"] = grp[c].max()
+                        values = grp[c].dropna()
+                        if len(values) >= 2:
+                            sd = float(values.std(ddof=1))
+                            row[f"{c}__sd"] = sd
+                            row[f"{c}__ci95"] = (
+                                T95.get(len(values) - 1, 1.96) * sd
+                                / math.sqrt(len(values))
+                            )
                 row["n_repeats"] = grp[repeat_key].nunique()
                 if row["n_repeats"] > 1 and "repeat_id" in row.index:
                     row["repeat_id"] = np.nan
@@ -622,7 +664,8 @@ def report_quality(df: pd.DataFrame) -> None:
 def _report_series(msub, cfg, pfx, have_ms):
     g, lc, _ = group(msub, cfg)
     n_pts = len(g)
-    windows = sorted({float(v) for v in g["measure_s"]}) if have_ms else []
+    wcol = window_col(g)
+    windows = sorted({float(v) for v in g[wcol].dropna()}) if have_ms else []
     win_str = ("/".join(f"{w:g}" for w in windows) + "s") if windows else "?"
     peak = "?"
     if "tok_thru_tps" in g.columns and g["tok_thru_tps"].notna().any():
@@ -634,6 +677,12 @@ def _report_series(msub, cfg, pfx, have_ms):
     if have_ms and len(windows) > 1:
         print(f"           mixed measurement windows in this series; windowed "
               f"rates stay comparable but per-point sample sizes differ a lot")
+    if "measure_extension_s" in g.columns:
+        extended = g[g["measure_extension_s"].fillna(0) > 0]
+        if len(extended):
+            pts = ", ".join(f"{lc}={v:g}" for v in extended[lc])
+            print(f"           window extended by the minimum-sample rule at "
+                  f"{pts}")
     # A completed-in-window==0 point does not invalidate exact token-in-window
     # throughput, but it does expose why conventional completed-only accounting
     # would have been misleading. Call that diagnostic out explicitly.
@@ -1164,10 +1213,13 @@ def write_summary_table(df, out) -> None:
                     "low": low,
                     "dual": head_only_power(cfg, pd.DataFrame([r])),
                     "tps": r.get(tcol, float("nan")),
+                    "tps_ci": r.get(f"{tcol}__ci95", float("nan")),
                     "rps": r.get("req_thru_rps", float("nan")),
                     "ttft50": (r.get("ttft_p50", float("nan")) * 1e3),
                     "ttft99": (r.get("ttft_p99", float("nan")) * 1e3),
                     "itl50": (r.get("itl_p50", float("nan")) * 1e3),
+                    "itl50_ci": (r.get("itl_p50__ci95", float("nan")) * 1e3),
+                    "reps": r.get("n_repeats", 1),
                     "e2e50": r.get("e2e_p50", float("nan")),
                     "good": r.get("goodput_rps", float("nan")),
                     "ept": r.get("energy_per_token_j", float("nan")),
@@ -1187,6 +1239,15 @@ def write_summary_table(df, out) -> None:
     if energy_present:
         headers.append("GPU energy (J/tok)" if gpu_scope else "Energy (J/tok)")
         aligns.append("--:")
+    def with_ci(value, ci, spec, sep=" ± "):
+        text = _fmt(value, spec)
+        if pd.notna(ci):
+            text += sep + _fmt(ci, spec)
+        return text
+
+    any_ci = any(pd.notna(r["tps_ci"]) or pd.notna(r["itl50_ci"]) for r in rows)
+    max_reps = max((int(r["reps"]) for r in rows if pd.notna(r["reps"])),
+                   default=1)
     md = ["| " + " | ".join(headers) + " |",
           "|" + "|".join(aligns) + "|"]
     for r in rows:
@@ -1196,16 +1257,20 @@ def write_summary_table(df, out) -> None:
             cells.append(r["model"])
         cells += [
             r["cfg"], _fmt(r["load"], ".0f"), _fmt(r["win"], ".0f"),
-            f"{_fmt(r['n'], '.0f')}{dag}", _fmt(r["tps"], ".0f"),
+            f"{_fmt(r['n'], '.0f')}{dag}",
+            with_ci(r["tps"], r["tps_ci"], ".0f"),
             _fmt(r["rps"], ".2f"),
             f"{_fmt(r['ttft50'], '.0f')}/{_fmt(r['ttft99'], '.0f')}",
-            _fmt(r["itl50"], ".0f"), _fmt(r["e2e50"], ".1f"),
+            with_ci(r["itl50"], r["itl50_ci"], ".0f"), _fmt(r["e2e50"], ".1f"),
             _fmt(r["good"], ".2f"),
         ]
         if energy_present:
             cells.append(f"{_fmt(r['ept'], '.3f')}{'*' if r['dual'] else ''}")
         md.append("| " + " | ".join(cells) + " |")
     md.append("")
+    if any_ci:
+        md.append(f"Values are means over up to {max_reps} independent server "
+                  "launches; ± is the 95% Student-t half-width of the mean.")
     md.append(f"† fewer than {MIN_P99_SAMPLES} requests; p99 is small-sample "
               "noise.")
     if energy_present and any(r["dual"] for r in rows):
@@ -1234,6 +1299,7 @@ def write_summary_table(df, out) -> None:
         r"Goodput" + ehead + r" \\",
         r"\midrule",
     ]
+    tex_pm = r" $\pm$ "
     last_key = None
     for r in rows:
         key = (r["model"], r["cfg"])
@@ -1246,11 +1312,13 @@ def write_summary_table(df, out) -> None:
         if energy_present:
             star = r"\rlap{$^*$}" if r["dual"] else ""
             eic = f" & {_fmt(r['ept'], '.3f')}{star}"
+        tps_cell = with_ci(r["tps"], r["tps_ci"], ".0f", tex_pm)
+        itl_cell = with_ci(r["itl50"], r["itl50_ci"], ".0f", tex_pm)
         lines.append(
             f"{mcell}{r['cfg']} & {_fmt(r['load'], '.0f')} & {_fmt(r['win'], '.0f')} & "
-            f"{_fmt(r['n'], '.0f')}{dag} & {_fmt(r['tps'], '.0f')} & "
+            f"{_fmt(r['n'], '.0f')}{dag} & {tps_cell} & "
             f"{_fmt(r['rps'], '.2f')} & {_fmt(r['ttft50'], '.0f')} & "
-            f"{_fmt(r['ttft99'], '.0f')} & {_fmt(r['itl50'], '.0f')} & "
+            f"{_fmt(r['ttft99'], '.0f')} & {itl_cell} & "
             f"{_fmt(r['e2e50'], '.1f')} & "
             f"{_fmt(r['good'], '.2f')}{eic} \\\\")
     lines += [
@@ -1258,6 +1326,9 @@ def write_summary_table(df, out) -> None:
         r"\end{tabular}",
         rf"% $^\dagger$ fewer than {MIN_P99_SAMPLES} requests for p99.",
     ]
+    if any_ci:
+        lines.append(rf"% Means over up to {max_reps} independent launches; "
+                     r"$\pm$ is the 95% Student-t half-width.")
     if energy_present and any(r["dual"] for r in rows):
         lines.append(r"% $^*$ dual-node power sampled on head node only "
                      r"(per-token energy is a lower bound).")

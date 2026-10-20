@@ -1,104 +1,243 @@
-# Model matrix for the RDMA NVFP4/BF16 precision ladder campaign.
-# See rdma-testing/docs/nvfp4-bf16-models.md for the full analysis.
+# Model matrix for the RDMA campaign (methodology steady-exact-v4).
 #
-# Each entry is benchmarked under the serving configs it lists. run_models.sh
-# takes ONE serving config at a time (single, tp2, or pp2), selects the models
-# that request it, and for each one launches a server, waits for it to be ready,
-# runs the concurrency sweep tagged with the model label, then tears the server
-# down before the next model. Results land in index.csv tagged by model_label so
-# plot_results.py can compare across models.
+# scripts/run_job.sh walks this list IN ORDER, one model at a time:
+#   download the pinned snapshot -> mirror it to the worker -> measure every
+#   listed serving config with interleaved replicates -> delete the weights
+#   from both nodes' caches.
+# Peak cache use is therefore the largest single entry (~163 GB), not the
+# whole matrix (~1.07 TB). Order is cheapest first, so a broken pipeline shows
+# up on the 8B ladder within hours, and that ladder overlaps the PMBS26 TCP
+# baseline (baselines/pmbs26-tcp) for an early transport comparison.
 #
 # Per-model fields:
 #   name          Hugging Face model id served by vLLM (required).
 #   label         short slug used in run tags, index rows, and plots (required).
 #   configs       serving configs to benchmark: any of [single, tp2, pp2].
-#   max_model_len passed to vLLM --max-model-len and used to size the workload;
-#                 must be >= the largest input_len + output_len in the workload.
-#   gpu_util      optional --gpu-memory-utilization override (launcher default
-#                 0.80). Keep it IDENTICAL across a model's configs.
-#   quant         optional --quantization for on-the-fly quantization of an
-#                 unquantized checkpoint (e.g. fp8). Leave unset for checkpoints
-#                 that are already quantized (NVFP4/ModelOpt): vLLM auto-detects
-#                 the method from the model config.
+#   revision      exact 40-hex HF commit (required).
+#   max_model_len passed to vLLM --max-model-len; must be >= the largest
+#                 input_len + output_len in the workload (8192 + 512).
+#   gpu_util      not allowed; every model and serving config uses the single
+#                 run-wide gpu_util_default below.
+#   quant         optional --quantization for on-the-fly quantization. Leave
+#                 unset for pre-quantized checkpoints (ModelOpt FP8/NVFP4,
+#                 Qwen FP8, MXFP4): vLLM auto-detects the method.
 #   tokenizer     optional tokenizer id/path (defaults to name).
-#   trust_remote_code  set true for models that ship custom modeling code
-#                 (e.g. NVIDIA Nemotron); passes vLLM --trust-remote-code.
+#   trust_remote_code  true only for repos that ship custom modeling code.
+#   max_num_seqs  optional fixed server scheduler capacity, shared by all
+#                 configs. Client concurrency may exceed it and queue normally.
+#   meta          descriptive only, read by plotting/plot_trends.py: pretty
+#                 name, arch (dense|moe), attention (full|linear-hybrid|
+#                 sliding-window|mamba-hybrid), quant (bf16|fp8|nvfp4|mxfp4),
+#                 params_b / active_b (nominal, billions), ladder_base (shared
+#                 by checkpoints of the same weights), nvidia (NVIDIA-produced
+#                 checkpoint). It never reaches the launch policy.
 #
-# "single" serves on one GB10. A model whose weights + KV cache do not fit in one
-# node's budget must omit "single" and use tp2/pp2, which pool two nodes (~2x
-# memory) over the ConnectX link.
+# Every revision below was pinned on 2026-10-15. Weight sizes are the exact
+# download sizes of the pinned snapshot (excluding original/ and metal/
+# duplicates). "single" appears only where weights + KV fit one GB10 at 0.90.
 #
-# tp2/pp2 prerequisite: the worker node (Hoedus) serves from its LOCAL HF cache
-# and has no DNS to huggingface.co. Before a dual-node sweep, warm the head with
-# scripts/predownload.sh and mirror to the worker with
-# scripts/mirror_worker_cache.sh.
+# KV-cache precision is NOT uniform along the precision ladders, and the paper
+# must say so: NVIDIA ModelOpt checkpoints (all *-NVFP4, nvidia/*-FP8) ship an
+# FP8 KV cache (kv_cache_quant_algo=FP8) that vLLM applies automatically, while
+# BF16 checkpoints and Qwen's own FP8 checkpoints keep a BF16 KV cache. The
+# index records the served kv_cache_dtype per row.
 #
-# Total download: ~547 GB across 6 models (3 NVFP4/BF16 pairs).
-# The default workload's largest bucket is 8192 input + 512 output =>
-# max_model_len 8704.
+# vLLM version: several model cards validate on vLLM >= 0.20 (Gemma 4 26B),
+# 0.21 (Mistral Medium 3.5), nightly (Qwen3.6 NVFP4), and 0.27.1 (Nemotron 3.5
+# Lightning). The image in scripts/connectx_env.sh was therefore moved from NGC
+# 26.04 (vLLM 0.19.0) to 26.09 (vLLM 0.29.0). Run the canary pass before the
+# campaign; it launches every entry under every config it lists.
+
+# One run-wide memory budget shared by every model and serving config.
+# At 0.90, the campaign targets 115.2 GB of a nominal 128 GB per node.
+# The launcher checks this fraction of each node's detected MemTotal and passes
+# it to vLLM. vLLM applies --gpu-memory-utilization per instance, so reserve
+# each node and run one serving instance per node at a time.
+gpu_util_default: 0.90
 
 models:
-  # ---- RDMA NVFP4/BF16 precision ladder (see rdma-testing/docs/nvfp4-bf16-models.md) ----
-  # Each model appears as a pre-quantized NVFP4 checkpoint (auto-detected, no
-  # quant field) and as a BF16 base repo. NVFP4-only models without a BF16 repo
-  # are excluded to keep the total download under 600 GB. All models use custom
-  # architectures and require --trust-remote-code.
-  #
-  # KV cache: NVFP4 checkpoints carry kv_cache_quant_algo in hf_quant_config.json
-  # (FP8 for NVIDIA ModelOpt artifacts). vLLM auto-applies it. BF16 entries use
-  # unquantized BF16 KV cache. The existing Llama-3.1-8B ladder has the same split.
-  #
-  # Revisions pinned to HEAD of each repo as of 2026-10-08.
-
-  # Dense 49B. NVFP4 (31.1 GB) and BF16 (99.8 GB) both fit one node.
-  # Arch: DeciLMForCausalLM. NAS heterogeneous blocks produce uneven PP splits.
-  - name: nvidia/Llama-3_3-Nemotron-Super-49B-v1_5-NVFP4
-    label: nemotron-super-49b-nvfp4
-    revision: f0caaafd5152e07527c7a14e04aa67823107529f
+  # ---- 1. Llama 3.1 8B precision ladder: dense, full attention ----------------
+  # Same labels and revisions as the PMBS26 TCP baseline. FP8 and NVFP4 are
+  # NVIDIA ModelOpt checkpoints of the same base (FP8 KV cache); the base repo
+  # is gated, so the campaign HF_TOKEN must have accepted the Llama license.
+  - name: meta-llama/Llama-3.1-8B-Instruct            # 16.1 GB BF16
+    label: llama3.1-8b
+    revision: 0e9e39f249a16976918f6564b8830bc894c89659
     configs: [single, tp2, pp2]
     max_model_len: 8704
-    trust_remote_code: true
+    meta: {pretty: "Llama-3.1-8B", arch: dense, attention: full, quant: bf16, params_b: 8.0, active_b: 8.0, ladder_base: llama3.1-8b, nvidia: false}
 
-  - name: nvidia/Llama-3_3-Nemotron-Super-49B-v1_5
-    label: nemotron-super-49b-bf16
-    revision: 420ba7d28211abf116b8b103ab700d92619daf98
+  - name: nvidia/Llama-3.1-8B-Instruct-FP8            # 9.1 GB
+    label: llama3.1-8b-fp8
+    revision: 42d9515ebd69eea3a87351d079c671c3c5ff0a31
     configs: [single, tp2, pp2]
     max_model_len: 8704
-    trust_remote_code: true
+    meta: {pretty: "Llama-3.1-8B FP8", arch: dense, attention: full, quant: fp8, params_b: 8.0, active_b: 8.0, ladder_base: llama3.1-8b, nvidia: true}
 
-  # MoE 75B (9B active). NVFP4 (53.5 GB) fits one node; BF16 (156.6 GB) needs two.
-  # Arch: NemotronHPuzzleForCausalLM. Known issue: Nemotron-3-Nano NVFP4 crashes
-  # on GB10 during CUDA graph capture unless VLLM_USE_FLASHINFER_MOE_FP4=0;
-  # monitor this model for the same symptom.
-  - name: nvidia/NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-NVFP4
-    label: nemotron-puzzle-75b-nvfp4
-    revision: 1d370e47fbc56d1019a471c2339663cdbbb5236f
+  - name: nvidia/Llama-3.1-8B-Instruct-NVFP4          # 6.0 GB
+    label: llama3.1-8b-nvfp4
+    revision: bdb54e24298451af785c0ac63c1b485e9b7400a2
     configs: [single, tp2, pp2]
     max_model_len: 8704
-    trust_remote_code: true
+    meta: {pretty: "Llama-3.1-8B NVFP4", arch: dense, attention: full, quant: nvfp4, params_b: 8.0, active_b: 8.0, ladder_base: llama3.1-8b, nvidia: true}
 
-  - name: nvidia/NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-BF16
-    label: nemotron-puzzle-75b-bf16
-    revision: 8fe5546888e9bd03fdbf52d808adebdfca901b52
+  # ---- 2. Qwen3.6 27B precision ladder: dense, Gated DeltaNet linear hybrid --
+  # Arch Qwen3_5ForConditionalGeneration (multimodal checkpoint, served
+  # text-only by this workload). The FP8 checkpoint is Qwen's block-FP8 (BF16
+  # KV); the NVFP4 one is NVIDIA ModelOpt mixed precision (FP8 KV).
+  - name: Qwen/Qwen3.6-27B                            # 55.6 GB BF16
+    label: qwen3.6-27b
+    revision: 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3.6-27B", arch: dense, attention: linear-hybrid, quant: bf16, params_b: 27.8, active_b: 27.8, ladder_base: qwen3.6-27b, nvidia: false}
+
+  - name: Qwen/Qwen3.6-27B-FP8                        # 30.9 GB
+    label: qwen3.6-27b-fp8
+    revision: e89b16ebf1988b3d6befa7de50abc2d76f26eb09
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3.6-27B FP8", arch: dense, attention: linear-hybrid, quant: fp8, params_b: 27.8, active_b: 27.8, ladder_base: qwen3.6-27b, nvidia: false}
+
+  - name: nvidia/Qwen3.6-27B-NVFP4                    # 21.9 GB
+    label: qwen3.6-27b-nvfp4
+    revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3.6-27B NVFP4", arch: dense, attention: linear-hybrid, quant: nvfp4, params_b: 27.8, active_b: 27.8, ladder_base: qwen3.6-27b, nvidia: true}
+
+  # ---- 3. Qwen3.6 35B-A3B precision ladder: MoE (256 experts), linear hybrid -
+  # MoE counterpart of entry 2 from the same vendor and generation.
+  - name: Qwen/Qwen3.6-35B-A3B                        # 71.9 GB BF16
+    label: qwen3.6-35b-a3b
+    revision: 995ad96eacd98c81ed38be0c5b274b04031597b0
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3.6-35B-A3B", arch: moe, attention: linear-hybrid, quant: bf16, params_b: 36.0, active_b: 3.0, ladder_base: qwen3.6-35b-a3b, nvidia: false}
+
+  - name: Qwen/Qwen3.6-35B-A3B-FP8                    # 37.5 GB
+    label: qwen3.6-35b-a3b-fp8
+    revision: 95a723d08a9490559dae23d0cff1d9466213d989
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3.6-35B-A3B FP8", arch: moe, attention: linear-hybrid, quant: fp8, params_b: 36.0, active_b: 3.0, ladder_base: qwen3.6-35b-a3b, nvidia: false}
+
+  - name: nvidia/Qwen3.6-35B-A3B-NVFP4                # 23.5 GB
+    label: qwen3.6-35b-a3b-nvfp4
+    revision: 1355db6a052410cfd62085d94b58866fd0f2c3c5
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3.6-35B-A3B NVFP4", arch: moe, attention: linear-hybrid, quant: nvfp4, params_b: 36.0, active_b: 3.0, ladder_base: qwen3.6-35b-a3b, nvidia: true}
+
+  # ---- 4-5. Gemma 4 dense/MoE pair: sliding-window + global attention --------
+  # Both NVIDIA ModelOpt NVFP4 checkpoints of the instruction-tuned models
+  # (FP8 KV); arch Gemma4ForConditionalGeneration.
+  - name: nvidia/Gemma-4-31B-IT-NVFP4                 # 32.7 GB
+    label: gemma4-31b-it-nvfp4
+    revision: 4135a98a9b728a548947683219633b25682223ac
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Gemma-4-31B NVFP4", arch: dense, attention: sliding-window, quant: nvfp4, params_b: 31.0, active_b: 31.0, nvidia: true}
+
+  - name: nvidia/Gemma-4-26B-A4B-NVFP4                # 18.8 GB, base gemma-4-26B-A4B-it
+    label: gemma4-26b-a4b-nvfp4
+    revision: a19cfe00be84568a6867111c9a68c9c44fdcffe6
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Gemma-4-26B-A4B NVFP4", arch: moe, attention: sliding-window, quant: nvfp4, params_b: 25.0, active_b: 4.0, nvidia: true}
+
+  # ---- 6. Nemotron 3.5 Lightning: MoE, Mamba-2 hybrid -------------------------
+  # Native NemotronHForCausalLM (no custom code). The model card serves it on
+  # GB10 as W4A16 through Marlin and recommends DSpark speculative decoding;
+  # this campaign measures the plain model, like every other entry.
+  - name: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4   # 21.6 GB
+    label: nemotron3.5-lightning-30b-a3b-nvfp4
+    revision: bee7596271d1495f6992ae224aefde4410e816b8
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Nemotron-3.5-Lightning-30B-A3B", arch: moe, attention: mamba-hybrid, quant: nvfp4, params_b: 30.0, active_b: 3.0, nvidia: true}
+
+  # ---- 7. gpt-oss-120b: MoE, alternating sliding-window attention, MXFP4 -----
+  # Native MXFP4 checkpoint. The repo also carries original/ and metal/ copies
+  # (195.8 GB total); predownload.sh skips both.
+  - name: openai/gpt-oss-120b                         # 65.3 GB
+    label: gpt-oss-120b
+    revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "gpt-oss-120b", arch: moe, attention: sliding-window, quant: mxfp4, params_b: 117.0, active_b: 5.1, nvidia: false}
+
+  # ---- 8. Nemotron 3 Super 120B-A12B: LatentMoE, Mamba-2 hybrid ---------------
+  # FP8 (128.4 GB) needs two nodes; NVFP4 (80.4 GB) fits one. Both revisions
+  # predate the 2026-08-24 MTPv2 update; the NVFP4 pin is the one the PMBS26
+  # baseline used. Custom modeling code ships in the repo.
+  - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+    label: nemotron3-super-120b-a12b-fp8
+    revision: 7d7e5797b8a3c7abbab54033b6004e93e8b6bc91
     configs: [tp2, pp2]
     max_model_len: 8704
     trust_remote_code: true
+    meta: {pretty: "Nemotron3-Super-120B-A12B FP8", arch: moe, attention: mamba-hybrid, quant: fp8, params_b: 120.0, active_b: 12.0, ladder_base: nemotron3-super-120b-a12b, nvidia: true}
 
-  # MoE 80B (3B active). NVFP4 (46.3 GB) fits one node; BF16 (160.0 GB) needs two.
-  # Arch: Qwen3NextForCausalLM. Weight sizes are estimated; the BF16 repo
-  # publishes no safetensors index metadata.
-  - name: nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
+  - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+    label: nemotron3-super-120b-a12b-nvfp4
+    revision: 4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    # NGC vLLM 26.09 requires this scheduler limit on DGX Spark for this model:
+    # https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html
+    max_num_seqs: 4
+    trust_remote_code: true
+    meta: {pretty: "Nemotron3-Super-120B-A12B NVFP4", arch: moe, attention: mamba-hybrid, quant: nvfp4, params_b: 120.0, active_b: 12.0, ladder_base: nemotron3-super-120b-a12b, nvidia: true}
+
+  # ---- 9. Qwen3 235B-A22B Instruct-2507: MoE, full attention ------------------
+  # 139.2 GB: dual-node only. NVIDIA ModelOpt NVFP4 (FP8 KV).
+  - name: nvidia/Qwen3-235B-A22B-Instruct-2507-NVFP4
+    label: qwen3-235b-a22b-nvfp4
+    revision: 1c4ec35802abf3a20672be7e5c51a098796f71d6
+    configs: [tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3-235B-A22B NVFP4", arch: moe, attention: full, quant: nvfp4, params_b: 235.0, active_b: 22.0, nvidia: true}
+
+  # ---- 10. Mistral Medium 3.5 128B: dense, full attention --------------------
+  # 95.3 GB: dual-node only. Large dense is where TP2 and PP2 differ most: TP2
+  # halves the weights each node streams per token, PP2 does not at low load.
+  # That makes it the cleanest TP-vs-PP comparison under RDMA.
+  - name: nvidia/Mistral-Medium-3.5-128B-NVFP4
+    label: mistral-medium-3.5-128b-nvfp4
+    revision: b8c66d2098edd8c9c26bde2b2ff41b5967e111ae
+    configs: [tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Mistral-Medium-3.5-128B NVFP4", arch: dense, attention: full, quant: nvfp4, params_b: 128.0, active_b: 128.0, nvidia: true}
+
+  # ---- 11. Qwen3-Next 80B-A3B: MoE (3B active), Gated DeltaNet hybrid --------
+  # Carried over from the October RDMA pilot (same revisions; re-measured with
+  # replicates). Same architecture family and the same 3B active parameters as
+  # entry 3 at 2.3x the total size, which separates total from active
+  # parameters in MoE serving. The BF16 checkpoint needs two nodes while NVFP4
+  # fits one, the second precision-decides-node-count pair beside entry 8.
+  # The pilot's other two pairs (Nemotron Super 49B, Nemotron Puzzle 75B) are
+  # dropped: the dense axis is covered by entries 1, 2, 4, and 10, and the
+  # NemotronH Mamba-MoE family by entries 6 and 8.
+  - name: nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4        # 50.8 GB
     label: qwen3-next-80b-nvfp4
     revision: 8fb2682f136cf94d932a498f18cb1e428832a912
     configs: [single, tp2, pp2]
     max_model_len: 8704
     trust_remote_code: true
+    meta: {pretty: "Qwen3-Next-80B-A3B NVFP4", arch: moe, attention: linear-hybrid, quant: nvfp4, params_b: 80.0, active_b: 3.0, ladder_base: qwen3-next-80b, nvidia: true}
 
-  - name: Qwen/Qwen3-Next-80B-A3B-Instruct
+  - name: Qwen/Qwen3-Next-80B-A3B-Instruct                # 162.7 GB: dual only, the largest entry
     label: qwen3-next-80b-bf16
     revision: 9c7f2fbe84465e40164a94cc16cd30b6999b0cc7
     configs: [tp2, pp2]
     max_model_len: 8704
     trust_remote_code: true
+    meta: {pretty: "Qwen3-Next-80B-A3B", arch: moe, attention: linear-hybrid, quant: bf16, params_b: 80.0, active_b: 3.0, ladder_base: qwen3-next-80b, nvidia: false}
 
-
+# Same-family, same-precision dense/MoE pairs for plotting/plot_trends.py.
+dense_moe_pairs:
+  - [qwen3.6-27b, qwen3.6-35b-a3b]
+  - [qwen3.6-27b-fp8, qwen3.6-35b-a3b-fp8]
+  - [qwen3.6-27b-nvfp4, qwen3.6-35b-a3b-nvfp4]
+  - [gemma4-31b-it-nvfp4, gemma4-26b-a4b-nvfp4]

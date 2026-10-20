@@ -11,11 +11,14 @@
 #   REVISION        pinned Hugging Face commit for model files.
 #   TOKENIZER_REVISION pinned commit for tokenizer files (defaults to REVISION).
 #   TRUST_REMOTE_CODE  non-empty adds --trust-remote-code (models with custom code).
-#   GPU_UTIL        override --gpu-memory-utilization (default 0.80 for every
-#                   config). One uniform value so single vs tp2/pp2 comparisons
-#                   hold the KV budget policy constant; 0.80 is the highest that
-#                   clears the two-node preflight and Ray's node memory monitor
-#                   on Grace unified memory (see README troubleshooting).
+#   GPU_UTIL        override --gpu-memory-utilization. The campaign passes the
+#                   run-wide 0.90 value on every launch, targeting 115.2 GB of
+#                   a nominal 128 GB per node. The preflight checks the same
+#                   fraction of each node's MemTotal. vLLM applies this limit
+#                   per instance, so reserve each node and run one serving
+#                   instance per node at a time.
+#   MAX_NUM_SEQS    optional positive scheduler sequence limit. A model-specific
+#                   value applies consistently to single, tp2, and pp2.
 #   PREFIX_CACHING  1 re-enables vLLM prefix caching. Default off: the synthetic
 #                   workload can repeat prompt slices, and cache hits skipped up
 #                   to a third of prefill work in some models but not others,
@@ -31,6 +34,12 @@
 #                   burns minutes on doomed metadata retries before falling back to
 #                   cache. Set HF_HUB_OFFLINE=0 only to pull a not-yet-cached model
 #                   (predownload it first with scripts/predownload.sh).
+#   SINGLE_CONTAINER  where `single` runs. "standalone" (default) starts its own
+#                   container named $VLLM_CONTAINER, which replaces a running Ray
+#                   head. "ray" execs the TP=1 PP=1 server into the running Ray
+#                   head container instead, so the cluster survives and a
+#                   campaign can interleave single with tp2/pp2 launches (the
+#                   worker cannot be restarted from the head).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
@@ -39,6 +48,9 @@ CONFIG="${1:-single}"          # single, tp2, pp2
 MODEL="${MODEL:-Qwen/Qwen3-8B}"
 REVISION="${REVISION:-}"
 PORT="${PORT:-8000}"
+# The benchmark client always runs on the head, so the API listens on loopback
+# only; HOST=0.0.0.0 exposes it for a remote client.
+HOST="${HOST:-127.0.0.1}"
 DTYPE="${DTYPE:-auto}"
 QUANT="${QUANT:-}"             # for example fp8; empty means none
 TOKENIZER="${TOKENIZER:-}"     # optional tokenizer id/path; empty means model default
@@ -51,10 +63,20 @@ TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-}"  # non-empty adds --trust-remote-code
 # vLLM max model length is prompt + generated tokens. The default experiment's
 # largest bucket is 8192 input + 512 output, so use at least 8704 by default.
 MAXLEN="${MAXLEN:-8704}"
-GPU_UTIL="${GPU_UTIL:-0.80}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
+if [[ -n "$MAX_NUM_SEQS" && ! "$MAX_NUM_SEQS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[launch] MAX_NUM_SEQS must be a positive integer" >&2
+  exit 2
+fi
+GPU_UTIL="${GPU_UTIL:-0.90}"
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+SINGLE_CONTAINER="${SINGLE_CONTAINER:-standalone}"
+case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
+  echo "[launch] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
+  exit 1 ;;
+esac
 
 # Serve from the local HF cache by default; the worker node cannot reach
 # huggingface.co, so online metadata lookups only add slow, failing retries.
@@ -68,14 +90,20 @@ if [[ -n "$CONTAINER_DNS" ]]; then
   container_dns_args=( --dns "$CONTAINER_DNS" )
 fi
 
-common=( --host 0.0.0.0 --port "$PORT" --dtype "$DTYPE"
+# --language-model-only: the workload is text-only. Vision-language checkpoints
+# (Qwen3.6, Gemma 4, Mistral Medium 3.5) would otherwise reserve memory for
+# their vision encoder and its profiling, shrinking their KV cache relative to
+# text-only models. vLLM ignores the flag for text-only architectures.
+common=( --host "$HOST" --port "$PORT" --dtype "$DTYPE"
          --max-model-len "$MAXLEN" --gpu-memory-utilization "$GPU_UTIL"
          --generation-config "$GENERATION_CONFIG"
+         --language-model-only
          --no-enable-log-requests )
 if [[ "$PREFIX_CACHING" != "1" ]]; then
   common+=( --no-enable-prefix-caching )
 fi
 if [[ -n "$QUANT" ]]; then common+=( --quantization "$QUANT" ); fi
+if [[ -n "$MAX_NUM_SEQS" ]]; then common+=( --max-num-seqs "$MAX_NUM_SEQS" ); fi
 if [[ -n "$TOKENIZER" ]]; then common+=( --tokenizer "$TOKENIZER" ); fi
 if [[ -n "$REVISION" ]]; then common+=( --revision "$REVISION" ); fi
 if [[ -n "$TOKENIZER_REVISION" ]]; then
@@ -94,6 +122,16 @@ if [[ "${DROP_CACHES:-0}" == "1" ]]; then
   echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
   echo "[launch] page cache flushed"
 fi
+
+# A TP=1 server inside the Ray head container needs only that container and
+# its Ray head; it does not need the worker node.
+_require_ray_head() {
+  if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
+    echo "[launch] ERROR: Ray is not active in $VLLM_CONTAINER" >&2
+    echo "[launch] Start it first: scripts/start_ray.sh head" >&2
+    exit 1
+  fi
+}
 
 # For distributed configs, confirm Ray is healthy before committing to the launch.
 _require_ray() {
@@ -136,6 +174,7 @@ PY
 _check_cluster_cache() {
   echo "[launch] preflight: pinned model snapshot on both Ray nodes"
   docker exec -i \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
     -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
     -e MODEL="$MODEL" -e REVISION="$REVISION" \
     -e TOKENIZER="$TOKENIZER" -e TOKENIZER_REVISION="$TOKENIZER_REVISION" \
@@ -149,8 +188,10 @@ ray.init(address="auto", log_to_driver=False)
 def validate(repo, revision, require_weights):
     from pathlib import Path
     from huggingface_hub import snapshot_download
-    path = Path(snapshot_download(repo, revision=revision or None,
-                                  local_files_only=True))
+    path = Path(snapshot_download(
+        repo, revision=revision or None, local_files_only=True,
+        ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"],
+    ))
     broken = [str(p.relative_to(path)) for p in path.rglob("*")
               if p.is_symlink() and not p.exists()]
     partial = list((path.parents[1] / "blobs").glob("*.incomplete"))
@@ -327,9 +368,23 @@ MSG
 
 case "$CONFIG" in
   single)
+    if [[ "$SINGLE_CONTAINER" == "ray" ]]; then
+      # Same image, mounts, and offline policy as the dual configs. With
+      # TP=PP=1 vLLM uses its in-process executor and never touches Ray.
+      echo "[launch] single node TP=1 PP=1 inside the Ray head container $VLLM_CONTAINER"
+      _require_ray_head
+      _check_local_memory
+      docker exec "${hf_offline_env[@]}" \
+        -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
+        "$VLLM_CONTAINER" \
+        vllm serve "$MODEL" "${common[@]}" \
+        --tensor-parallel-size 1 --pipeline-parallel-size 1
+      exit $?
+    fi
     echo "[launch] single node TP=1 PP=1, standalone container"
     _check_local_memory
     run_env=( -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
+              -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS"
               -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
               -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
               -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
@@ -358,6 +413,7 @@ case "$CONFIG" in
     _check_cluster_cache
     _check_cluster_memory
     docker exec "${hf_offline_env[@]}" \
+      -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
       -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
       "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \

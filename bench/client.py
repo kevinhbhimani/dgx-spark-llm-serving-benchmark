@@ -6,6 +6,7 @@ this keeps token counts exact even when decoded text is empty or one HTTP chunk
 contains several tokens. Output length is forced to exactly ``output_len`` by
 setting ``max_tokens`` and ``min_tokens`` equal with ``ignore_eos`` true, and a
 stream is successful only when its token-id count and final usage both match.
+Paper runs also require server-reported prompt usage to match the input bucket.
 """
 from __future__ import annotations
 import json
@@ -24,6 +25,7 @@ class RequestRecord:
     t_end: float = 0.0
     output_tokens: int = 0
     token_times: list = field(default_factory=list)
+    usage_input_tokens: int | None = None
     usage_output_tokens: int | None = None
     finish_reason: str = ""
     stream_done: bool = False
@@ -61,6 +63,7 @@ class RequestRecord:
             "t_first_token": self.t_first_token,
             "t_end": self.t_end,
             "token_times": self.token_times,
+            "usage_input_tokens": self.usage_input_tokens,
             "usage_output_tokens": self.usage_output_tokens,
             "finish_reason": self.finish_reason,
             "stream_done": self.stream_done,
@@ -104,13 +107,20 @@ def _extract_token_ids(chunk):
     return value if isinstance(value, list) else None
 
 
-def _extract_usage_output_tokens(chunk):
+def _extract_usage_tokens(chunk, field):
     usage = chunk.get("usage") or {}
-    value = usage.get("completion_tokens")
-    try:
-        return int(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
+    value = usage.get(field)
+    # Do not truncate fractional counts or accept booleans as token counts.
+    # Usage is our independent cross-check on the streamed token IDs.
+    return value if type(value) is int and value >= 0 else None
+
+
+def _extract_usage_input_tokens(chunk):
+    return _extract_usage_tokens(chunk, "prompt_tokens")
+
+
+def _extract_usage_output_tokens(chunk):
+    return _extract_usage_tokens(chunk, "completion_tokens")
 
 
 def _extract_finish_reason(chunk):
@@ -169,6 +179,9 @@ async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
                     usage_tokens = _extract_usage_output_tokens(chunk)
                     if usage_tokens is not None:
                         rec.usage_output_tokens = usage_tokens
+                    input_tokens = _extract_usage_input_tokens(chunk)
+                    if input_tokens is not None:
+                        rec.usage_input_tokens = input_tokens
                     finish_reason = _extract_finish_reason(chunk)
                     if finish_reason:
                         rec.finish_reason = finish_reason
@@ -195,6 +208,15 @@ async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
             rec.error = "server did not return delta token_ids"
         if not rec.error and rec.usage_output_tokens is None:
             rec.error = "server did not return final completion token usage"
+        if (not rec.error and getattr(cfg, "require_provenance", False)
+                and rec.usage_input_tokens is None):
+            rec.error = "server did not return final prompt token usage"
+        if (not rec.error
+                and (cfg.use_token_ids or getattr(cfg, "require_provenance", False))
+                and rec.usage_input_tokens is not None
+                and rec.usage_input_tokens != spec.input_len):
+            rec.error = ("prompt token usage does not match requested input length: "
+                         f"{rec.usage_input_tokens} != {spec.input_len}")
         if (not rec.error
                 and rec.usage_output_tokens != rec.output_tokens):
             rec.error = ("stream token-id count does not match final usage: "

@@ -28,7 +28,10 @@ from .metrics import aggregate
 from . import server_info
 
 
-METHODOLOGY_VERSION = "steady-exact-v3"
+# v4: the closed-loop window may extend under the minimum-sample rule
+# (min_window_requests), and the index records the configured window beside
+# the actual one. Replicates are independent server launches.
+METHODOLOGY_VERSION = "steady-exact-v4"
 
 
 INDEX_FIELDS = [
@@ -78,6 +81,8 @@ INDEX_FIELDS = [
     "expected_concurrencies",
     "target_qps",
     "measure_s",
+    "configured_measure_s",
+    "measure_extension_s",
     "warmup_s",
     "configured_warmup_s",
     "warmup_extension_s",
@@ -705,6 +710,11 @@ def _validate_result_quality(summary, cfg) -> None:
         raise RuntimeError(
             f"release point has {failed} failed request(s); no row was published"
         )
+    if summary.get("failed_requests_with_window_tokens", 0):
+        raise RuntimeError(
+            "release point includes window tokens from failed request(s); "
+            "no row was published"
+        )
     if completed < cfg.min_successful_requests:
         raise RuntimeError(
             f"release point has {completed} successful request(s), fewer than "
@@ -993,6 +1003,14 @@ def _load_serving_policy(path: str | None, cfg) -> tuple[dict | None, dict | Non
         f"power_backend={policy['power_backend']}\n",
         f"cluster_runtime={runtime_hash}\n",
     ))
+    max_num_seqs = policy.get("max_num_seqs", "")
+    if max_num_seqs != "":
+        if (not isinstance(max_num_seqs, str)
+                or re.fullmatch(r"[1-9][0-9]*", max_num_seqs) is None):
+            raise RuntimeError(
+                "serving policy max_num_seqs must be a positive integer string"
+            )
+        legacy_input += f"max_num_seqs={max_num_seqs}\n"
     if hashlib.sha256(legacy_input.encode()).hexdigest() != fingerprint:
         raise RuntimeError(
             "serving policy fields do not reproduce serving_fingerprint"
@@ -1152,6 +1170,8 @@ def _append_index(out_dir, s):
         ),
         "target_qps": s["target_qps"],
         "measure_s": measure_s,
+        "configured_measure_s": s.get("configured_measure_s"),
+        "measure_extension_s": s.get("measure_extension_s"),
         "warmup_s": s.get("warmup_s"),
         "configured_warmup_s": s.get("configured_warmup_s"),
         "warmup_extension_s": s.get("warmup_extension_s"),
@@ -1442,6 +1462,10 @@ def main():
     print(f"[bench] continuous phase: minimum warmup {cfg.warmup_s:g}s + "
           f"measure {cfg.measure_s:g}s + minimum cooldown {cfg.cooldown_s:g}s "
           f"= {minimum_s:g}s, with automatic steady-state extensions")
+    if cfg.min_window_requests:
+        print(f"[bench] window extends in {cfg.window_extension_step_s:g}s steps "
+              f"until {cfg.min_window_requests} requests have started in it "
+              f"(cap {cfg.max_measure_s:g}s)")
     try:
         power.start()
         if wpower:
@@ -1521,6 +1545,11 @@ def main():
     summary["warmup_s"] = actual_warmup_s
     summary["configured_warmup_s"] = cfg.warmup_s
     summary["warmup_extension_s"] = warmup_extension_s
+    # aggregate() already set measure_s to the actual window length.
+    summary["configured_measure_s"] = cfg.measure_s
+    summary["measure_extension_s"] = max(0.0, summary["measure_s"] - cfg.measure_s)
+    summary["window_extensions"] = phase.get("window_extensions", 0)
+    summary["min_window_requests"] = cfg.min_window_requests
     summary["cooldown_s"] = cfg.cooldown_s
     summary["load_extension_s"] = load_extension_s
     # Wall-clock anchor for the perf_counter window bounds, so raw.jsonl can be

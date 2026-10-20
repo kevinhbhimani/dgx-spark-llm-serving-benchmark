@@ -1,0 +1,8 @@
+gpu_util_default: 0.1
+models:
+- name: nvidia/Llama-3.1-8B-Instruct-NVFP4
+  label: llama3.1-8b-nvfp4
+  revision: bdb54e24298451af785c0ac63c1b485e9b7400a2
+  configs:
+  - single
+  max_model_len: 8704
