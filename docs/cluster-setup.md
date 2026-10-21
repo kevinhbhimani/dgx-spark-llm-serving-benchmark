@@ -30,7 +30,7 @@ different node. Commands launched on Diya can use Ray to run work on Hoedus.
 ## 0. Disable Nvidia DGX Dashboard Automatic Update Notifier (remember to check for updates periodically at localhost:11000)
 
 ```bash
-yes | sudo rm dgx-dashboard-notify.desktop
+yes | sudo rm /etc/xdg/autostart/dgx-dashboard-notify.desktop
 ```
 
 ## 1. Firmware and system software (both nodes)
