@@ -27,6 +27,12 @@ different node. Commands launched on Diya can use Ray to run work on Hoedus.
 | `scripts/purge_model_cache.sh` | Diya only | Purges Diya and, when Ray is active, Hoedus caches |
 | `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each machine |
 
+## 0. Disable Nvidia DGX Dashboard Automatic Update Notifier (remember to check for updates periodically at localhost:11000)
+
+```bash
+yes | sudo rm dgx-dashboard-notify.desktop
+```
+
 ## 1. Firmware and system software (both nodes)
 
 ```bash
