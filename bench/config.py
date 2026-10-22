@@ -113,7 +113,7 @@ class ExperimentConfig:
     repeat_count: int = 1          # intended total windows in this campaign
     server_log: str = ""          # optional vLLM stdout log for exact capacity figures
     collect_hf_metadata: bool = False  # optional HF Hub lookups for weight/KV fallback
-    out_dir: str = "results"
+    out_dir: str = ""                 # resolved from OUT_DIR or the UTC default
     run_note: str = ""
 
     @staticmethod

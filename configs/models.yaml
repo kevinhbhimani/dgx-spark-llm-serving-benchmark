@@ -54,6 +54,7 @@
 # The launcher checks this fraction of each node's detected MemTotal and passes
 # it to vLLM. vLLM applies --gpu-memory-utilization per instance, so reserve
 # each node and run one serving instance per node at a time.
+# Set GPU_UTIL to override the shared target for planning, validation, and launch.
 gpu_util_default: 0.80
 
 models:

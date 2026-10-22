@@ -55,6 +55,48 @@ class PlanningReadinessTests(unittest.TestCase):
                     self.plan()
                 self.configuration = original
 
+    def test_gpu_util_override_changes_expected_and_launch_value(self) -> None:
+        with mock.patch.dict(os.environ, {"GPU_UTIL": "0.85"}):
+            plan = self.plan()
+            self.assertEqual(plan["gpu_utilization"], 0.85)
+            self.assertEqual(plan["matrix"][0]["gpu_utilization"], 0.85)
+            self.assertEqual(
+                validator.validate_models_yaml(self.models)[0].gpu_utilization,
+                0.85,
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/models_for_config.py",
+                    str(self.models),
+                    "single",
+                ],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            )
+        self.assertEqual(result.stdout.strip().split("|")[4], "0.85")
+
+    def test_gpu_util_override_rejects_out_of_range_and_non_finite_values(self) -> None:
+        self.models.write_text(yaml.safe_dump({"models": [self.model]}))
+        for value in ("0", "1.1", "nan", "inf", "invalid"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"GPU_UTIL": value}
+            ):
+                with self.assertRaisesRegex(
+                    validator.CampaignValidationError, "GPU_UTIL"
+                ):
+                    validator.validate_models_yaml(self.models)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/models_for_config.py",
+                        str(self.models),
+                        "single",
+                    ],
+                    cwd=ROOT, text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("GPU_UTIL", result.stderr)
+
     def test_trace_context_limit_uses_requests_instead_of_bucket_maximum(self):
         self.configuration["trace_path"] = "trace.jsonl"
         trace = self.root / "trace.jsonl"

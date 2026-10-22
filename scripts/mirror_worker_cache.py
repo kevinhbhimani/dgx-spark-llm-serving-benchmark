@@ -25,7 +25,7 @@ import time
 import ray
 from ray.exceptions import GetTimeoutError
 
-HUB = "/root/.cache/huggingface/hub"
+HUB = os.environ.get("HF_HUB_CACHE", "/hf-cache/hub")
 MARGIN = int(os.environ.get("MIRROR_MARGIN_GB", "10")) << 30
 CHUNK = 4 << 20
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
@@ -186,8 +186,18 @@ class Receiver:
             conn = None
             try:
                 conn, _ = self.sock.accept()
+                cache_uid = int(os.environ.get("HF_CACHE_UID", str(os.getuid())))
+                cache_gid = int(os.environ.get("HF_CACHE_GID", str(os.getgid())))
+                extract_code = (
+                    "import os; "
+                    f"os.setgroups([{cache_gid}]); "
+                    f"os.setgid({cache_gid}); os.setuid({cache_uid}); "
+                    "os.umask(0o002); "
+                    "os.execvp('tar', ['tar', '-C', "
+                    f"{HUB!r}, '-xf', '-', '--overwrite'])"
+                )
                 proc = subprocess.Popen(
-                    ["tar", "-C", HUB, "-xf", "-", "--overwrite"],
+                    [sys.executable, "-c", extract_code],
                     stdin=conn.fileno(),
                 )
                 self.result["rc"] = proc.wait(timeout=RECEIVER_TRANSFER_S)

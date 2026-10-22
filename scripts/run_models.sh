@@ -32,8 +32,6 @@
 #      SKIP_DONE (1 behaves like --skip-done, default 0)
 #      CANARY_ONLY=1 launches each selected model, validates the exact streaming
 #      contract, and tears it down without starting the long measurement sweep.
-#      CACHE_PREFLIGHT=1 (default) requires every selected pinned snapshot to be
-#      locally complete before launching the first server.
 #      MODEL_LABELS (optional space-separated label allowlist for targeted
 #      canaries or reruns; default is every entry for the serving config).
 #      ONLY_REPEAT (optional replicate id: run only that replicate's missing
@@ -48,11 +46,22 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_CONTAINER, HEAD_IP, and .env
+source "$HERE/campaign_output.sh"
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2) ;; *)
   echo "usage: run_models.sh [single|tp2|pp2] [--skip-done]" >&2; exit 1 ;;
 esac
+if [[ "$CONFIG" == "single" ]]; then
+  HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
+else
+  HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+  if [[ "$HF_HUB_OFFLINE" != "1" ]]; then
+    echo "[models] dual-node serving requires HF_HUB_OFFLINE=1 after cache mirroring" >&2
+    exit 1
+  fi
+fi
+export HF_HUB_OFFLINE
 
 require_local_connectx_ip "$HEAD_IP" "model benchmark head role" || exit 1
 acquire_campaign_lock || exit 1
@@ -67,7 +76,8 @@ done
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
-OUT_DIR="${OUT_DIR:-results}"
+campaign_resolve_out_dir
+campaign_reject_existing_implicit_out_dir || exit 1
 # Unset defers to the experiment YAML's power_backend; set it to override.
 POWER_BACKEND="${POWER_BACKEND:-}"
 CONFIG_YAML="${CONFIG_YAML:-configs/experiment.yaml}"
@@ -76,7 +86,6 @@ EXPECTED_CONCURRENCIES="${EXPECTED_CONCURRENCIES:-$CONCURRENCIES}"
 REPEATS="${REPEATS:-3}"
 READY_TIMEOUT="${READY_TIMEOUT:-1800}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-600}"
-CACHE_PREFLIGHT="${CACHE_PREFLIGHT:-1}"
 CANARY_ONLY="${CANARY_ONLY:-0}"
 MODEL_LABELS="${MODEL_LABELS:-}"
 ONLY_REPEAT="${ONLY_REPEAT:-}"
@@ -88,7 +97,7 @@ case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
   echo "[models] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
   exit 1 ;;
 esac
-for flag_name in SKIP_DONE CACHE_PREFLIGHT CANARY_ONLY STATUS_ONLY; do
+for flag_name in SKIP_DONE CANARY_ONLY STATUS_ONLY; do
   flag_value="${!flag_name}"
   if [[ "$flag_value" != "0" && "$flag_value" != "1" ]]; then
     echo "[models] $flag_name must be 0 or 1, got '$flag_value'" >&2
@@ -209,14 +218,6 @@ if [[ -n "$MODEL_LABELS" ]]; then
   ENTRIES=("${FILTERED[@]}")
 fi
 echo "[models] $CONFIG: ${#ENTRIES[@]} model(s) from $MODELS_YAML"
-
-# Cache misses are a deterministic launch failure because serving is offline.
-# Validate the complete selected matrix once, before spending time loading a GPU.
-# A status query launches nothing, so it must work before weights are fetched.
-if [[ "$CACHE_PREFLIGHT" == "1" && "$STATUS_ONLY" != "1" ]]; then
-  CHECK_ONLY=1 MODEL_LABELS="$MODEL_LABELS" MODELS_YAML="$MODELS_YAML" \
-    PYTHON="$PYTHON" "$HERE/predownload.sh" "$CONFIG"
-fi
 
 # Runtime identity is collected before any resume decision. Dual runs execute
 # model code on both containers, so their existing canonical two-node snapshot
@@ -519,13 +520,15 @@ restrict_schedule() {
   printf '%s' "${out[*]}"
 }
 
-# The client builds exact token-id prompts with the served tokenizer. Load it
-# offline from the shared cache before a launch, so a tokenizer the pinned
-# client cannot read fails here in seconds rather than at the first point.
+# The client loads the pinned tokenizer before the server launch. Single-node
+# launches can acquire tokenizer files online; dual-node launches use the
+# mirrored cache without Hub access.
 client_tokenizer_check() {
   local tokenizer="$1" tokrev="$2" trust="$3"
-  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_CACHE="$HF_CACHE/hub" \
-  HF_MODULES_CACHE="${HF_MODULES_CACHE:-$HOME/.cache/huggingface-client/modules}" \
+  check_hf_cache_access
+  HF_HUB_OFFLINE="$HF_HUB_OFFLINE" TRANSFORMERS_OFFLINE="$HF_HUB_OFFLINE" \
+  HF_HOME="$HF_HOME" HF_HUB_CACHE="$HF_HUB_CACHE" \
+  HF_MODULES_CACHE="$HF_MODULES_CACHE" \
   TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
     "$PYTHON" - "$tokenizer" "$tokrev" "$trust" <<'PY'
 import sys
@@ -769,6 +772,7 @@ run_one() {
   local fingerprint deployment="" schedule=""
   local status=0
   LAST_SERVER_LOG=""
+  LAST_FAILURE_STAGE="input-validation"
   echo "[models] === $label ($name) config=$CONFIG ==="
 
   if [[ ! "$label" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
@@ -791,6 +795,7 @@ run_one() {
   echo "[models] serving fingerprint: $fingerprint"
   fingerprint_prefix="${fingerprint:0:16}"
 
+  LAST_FAILURE_STAGE="serving-policy"
   policy_file="$OUT_DIR/serving_policy_${label}_${CONFIG}_${fingerprint}.json"
   if ! write_serving_policy "$policy_file" "$fingerprint" "$name" \
       "$revision" "$tokenizer" "$tokenizer_revision" "$actual_maxlen" \
@@ -803,6 +808,7 @@ run_one() {
   # Resume at exact (repeat, concurrency) granularity. Only rows produced by
   # the current methodology/config/source/serving-policy identity count as
   # complete; live KV capacity is allowed to differ from launch to launch.
+  LAST_FAILURE_STAGE="resume-validation"
   if [[ "$SKIP_DONE" == "1" || "$STATUS_ONLY" == "1" ]]; then
     if ! schedule="$(POWER_BACKEND="$POWER_BACKEND" \
                        EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES" \
@@ -831,6 +837,7 @@ run_one() {
     for c in $CONCURRENCIES; do schedule+="${schedule:+ }$ONLY_REPEAT:$c"; done
   fi
 
+  LAST_FAILURE_STAGE="client-tokenizer"
   if ! client_tokenizer_check "$tokenizer" "$tokenizer_revision" "$trust"; then
     echo "[models] skipping $label: the client cannot build exact prompts" >&2
     return 1
@@ -849,9 +856,11 @@ run_one() {
                     TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
                     HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
                     SINGLE_CONTAINER="$SINGLE_CONTAINER")
+  LAST_FAILURE_STAGE="pre-launch-teardown"
   teardown
   wait_endpoint_down || return 1
 
+  LAST_FAILURE_STAGE="server-log-allocation"
   if ! launch_timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"; then
     echo "[models] could not obtain a UTC launch timestamp for $label" >&2
     return 1
@@ -878,9 +887,10 @@ run_one() {
                    CONCURRENCIES="$CONCURRENCIES"
                    EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES"
                    REPEATS="$REPEATS" SWEEP_SCHEDULE="$schedule"
-                   HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-                   HF_HUB_CACHE="$HF_CACHE/hub"
-                   HF_MODULES_CACHE="${HF_MODULES_CACHE:-$HOME/.cache/huggingface-client/modules}"
+                   HF_HUB_OFFLINE="$HF_HUB_OFFLINE"
+                   TRANSFORMERS_OFFLINE="$HF_HUB_OFFLINE"
+                   HF_HOME="$HF_HOME" HF_HUB_CACHE="$HF_HUB_CACHE"
+                   HF_MODULES_CACHE="$HF_MODULES_CACHE"
                    PYTHON="$PYTHON")
 
   echo "[models] immutable server log: $log"
@@ -889,11 +899,13 @@ run_one() {
   env "${launch_env[@]}" "$HERE/launch_server.sh" "$CONFIG" >>"$log" 2>&1 &
   LAUNCH_PID=$!
 
+  LAST_FAILURE_STAGE="readiness-canary"
   if ! wait_ready "$name"; then
     echo "[models] skipping $label; see $log" >&2
     teardown
     return 1
   fi
+  LAST_FAILURE_STAGE="transport-audit"
   if [[ "$CONFIG" != "single" ]] && ! nccl_transport_check "$log"; then
     echo "[models] skipping $label: wrong NCCL transport for this campaign" >&2
     teardown
@@ -905,6 +917,7 @@ run_one() {
   # that changes underneath a measurement (different vLLM build, KV capacity,
   # block size) is caught. It is deliberately not part of resume identity:
   # repeats collected across launches never reproduce the same block count.
+  LAST_FAILURE_STAGE="deployment-fingerprint"
   if ! deployment="$("$PYTHON" - "$BASE_URL" "$name" "$log" "$fingerprint" <<'PY'
 import sys
 from bench.run_benchmark import collect_deployment_info, deployment_fingerprint
@@ -922,6 +935,7 @@ PY
   fi
   echo "[models] deployment fingerprint: $deployment"
 
+  LAST_FAILURE_STAGE="post-launch-resume-validation"
   if [[ "$SKIP_DONE" == "1" ]]; then
     if ! schedule="$(POWER_BACKEND="$POWER_BACKEND" \
                        EXPECTED_CONCURRENCIES="$EXPECTED_CONCURRENCIES" \
@@ -944,6 +958,7 @@ PY
   sweep_env+=(DEPLOYMENT_FINGERPRINT="$deployment" SWEEP_SCHEDULE="$schedule")
 
   if [[ "$CANARY_ONLY" == "1" ]]; then
+    LAST_FAILURE_STAGE="canary-teardown"
     echo "[models] $label canary passed; measurement intentionally skipped"
     teardown
     wait_endpoint_down || return 1
@@ -953,6 +968,7 @@ PY
   # Sweep this model. run_all.sh receives the model, label, immutable server log,
   # and canonical serving-policy path so rows can retain the complete launch
   # provenance while recording capacity figures.
+  LAST_FAILURE_STAGE="measurement"
   env "${sweep_env[@]}" "$HERE/run_all.sh" "$CONFIG" &
   ACTIVE_CHILD=$!
   if ! wait "$ACTIVE_CHILD"; then
@@ -961,6 +977,7 @@ PY
   fi
   ACTIVE_CHILD=""
 
+  LAST_FAILURE_STAGE="measurement-teardown"
   teardown
   echo "[models] done $label"
   sleep 5
@@ -972,6 +989,7 @@ trap 'handle_signal 130' INT
 trap 'handle_signal 143' TERM
 
 FAILURES=0
+FAILED_ITEMS=()
 REQUESTED_REPEAT="$ONLY_REPEAT"
 REPLICATE_IDS=("$REQUESTED_REPEAT")
 if [[ -z "$REQUESTED_REPEAT" && "$STATUS_ONLY" != "1" && "$CANARY_ONLY" != "1" ]]; then
@@ -984,9 +1002,19 @@ for entry in "${ENTRIES[@]}"; do
     # run_job.sh. A status query still checks the entire requested rectangle,
     # and a canary runs only once per model.
     ONLY_REPEAT="$replicate"
-    if ! run_one "$label" "$name" "$revision" "$maxlen" "$gpu_util" \
-                 "$quant" "$tok" "$tokrev" "$trust" "$max_num_seqs"; then
+    if run_one "$label" "$name" "$revision" "$maxlen" "$gpu_util" \
+               "$quant" "$tok" "$tokrev" "$trust" "$max_num_seqs"; then
+      :
+    else
+      status=$?
       FAILURES=$((FAILURES + 1))
+      failure="label=$label model=$name revision=${revision:0:12} "\
+"config=$CONFIG replicate=$replicate stage=$LAST_FAILURE_STAGE rc=$status "\
+"node_scope=$RUNTIME_SCOPE head=$HEAD_IP worker=$HOEDUS_IP "\
+"results=$OUT_DIR server_log=${LAST_SERVER_LOG:-none}"
+      FAILED_ITEMS+=("$failure")
+      echo "[models] FAILURE: $failure; inspect campaign and server logs," \
+           "then rerun with --skip-done" >&2
       # A failed launcher preflight means a node is short on memory; every later
       # model would fail the same way, so stop instead of cycling through them.
       if [[ -n "$LAST_SERVER_LOG" ]] && \
@@ -996,13 +1024,22 @@ for entry in "${ENTRIES[@]}"; do
              "with --skip-done." >&2
         exit 1
       fi
-      echo "[models] $label${replicate:+ replicate $replicate} did not complete; continuing" >&2
+      if [[ "$CONFIG" != "single" || "$SINGLE_CONTAINER" == "ray" ]]; then
+        if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null \
+            | grep -q "Active"; then
+          echo "[models] shared Ray health is unavailable after $label;" \
+               "aborting further launches" >&2
+          exit 1
+        fi
+      fi
+      echo "[models] $label replicate $replicate did not complete; continuing to independent work" >&2
     fi
   done
 done
 
 if (( FAILURES > 0 )); then
   echo "[models] $FAILURES model launch(es) failed for $CONFIG; see logs in $OUT_DIR" >&2
+  printf '  - %s\n' "${FAILED_ITEMS[@]}" >&2
   exit 1
 fi
 

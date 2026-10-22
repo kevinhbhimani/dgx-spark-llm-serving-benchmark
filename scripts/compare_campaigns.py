@@ -10,8 +10,9 @@ replicates. A provenance table lists what differs between the campaigns
 serving policies), because a ratio between campaigns measures *all* of those
 differences at once, not only the transport.
 
-    python3 scripts/compare_campaigns.py --new results/index.csv \
-        --baseline baselines/pmbs26-tcp/index.csv --md results/compare.md
+    python3 scripts/compare_campaigns.py \
+        --new results/benchmark-2026-10-22 \
+        --baseline baselines/pmbs26-tcp/index.csv
 """
 from __future__ import annotations
 
@@ -22,6 +23,11 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from campaign_output import resolve_campaign_output_path, resolve_index_path
 
 KEYS = ["model_label", "config_label", "concurrency"]
 T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447}
@@ -149,6 +155,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--baseline", required=True, help="baseline index.csv")
     parser.add_argument("--md", help="also write the report as markdown")
     args = parser.parse_args(argv)
+
+    new_index = resolve_index_path(args.new)
+    baseline_index = resolve_index_path(args.baseline)
+    args.new = str(new_index)
+    args.baseline = str(baseline_index)
+    if args.md:
+        args.md = str(resolve_campaign_output_path(args.md, new_index))
 
     new_raw, base_raw = load(args.new), load(args.baseline)
     rows = summarize(point_stats(new_raw), point_stats(base_raw))

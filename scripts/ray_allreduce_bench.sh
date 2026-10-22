@@ -9,10 +9,12 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+source "$HERE/campaign_output.sh"
+campaign_resolve_out_dir
+campaign_reject_existing_implicit_out_dir || exit 1
 require_local_connectx_ip "$HEAD_IP" "all-reduce benchmark head role" || exit 1
 acquire_campaign_lock || exit 1
 
-OUT_DIR="${OUT_DIR:-results}"
 PORT="${ALLREDUCE_PORT:-29517}"
 # Floor calibrated on this cluster 2026-10-12: NCCL RDMA all-reduce plateaus
 # at 19.4-23.6 GB/s at 1 GiB. 16 GB/s (~13% below the lowest healthy run)

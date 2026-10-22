@@ -99,11 +99,6 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-# Refuse to mirror a metadata stub or partial weight set. This validates the
-# exact revisions selected above, not merely the presence of a repo directory.
-CHECK_ONLY=1 MODELS_YAML="$MODELS_YAML" PYTHON="$PYTHON" \
-  MODEL_LABELS="$MODEL_LABELS" "$HERE/predownload.sh" "$CONFIG"
-
 if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
   echo "[mirror] ERROR: Ray cluster is not active in $VLLM_CONTAINER" >&2
   echo "[mirror] Start Ray first: scripts/start_ray.sh head (Diya), worker (Hoedus)" >&2

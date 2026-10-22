@@ -29,7 +29,7 @@ from typing import TypedDict
 
 from huggingface_hub import scan_cache_dir
 
-HUB = "/root/.cache/huggingface/hub"
+HUB = os.environ.get("HF_HUB_CACHE", "/hf-cache/hub")
 COMPILE_CACHE = os.path.join(
     os.environ.get("VLLM_CACHE_ROOT", "/root/.cache/vllm"), "torch_compile_cache"
 )
