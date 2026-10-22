@@ -2,7 +2,7 @@
 
 Builds a self-contained bundle for a DGX Spark with no outbound network access.
 The bundle carries the container image, the pinned client wheelhouse, and the
-repository source. It excludes model weights.
+repository source. It excludes model weights unless `--include-models` is used.
 
 ## Contents
 
@@ -11,6 +11,7 @@ repository source. It excludes model weights.
 | `vllm-ray-image.tar.zst` | vLLM image with Ray baked in |
 | `wheels/` | `requirements.lock` wheels for the target platform |
 | `dgx-spark-benchmark-src.tar.gz` | repository source |
+| `model-cache.tar` | Optional Hugging Face cache, included with `--include-models` |
 | `install_offline.sh` | installer for the Spark |
 | `SHA256SUMS` | checksums for every file above |
 | `BUNDLE_INFO` | image tag, base digest, Ray version, target platform |
@@ -31,7 +32,23 @@ Run on a machine with internet access and Docker.
 offline/build_bundle.sh
 ```
 
-Output directory: `offline-bundle/`.
+Output directory: `offline/offline-bundle/`.
+
+Model weights are excluded by default. To include the Hugging Face cache, pass
+`--include-models`. The cache root must contain a non-empty `hub/` directory.
+Set `MODEL_CACHE_DIR` to select a cache on an external drive; otherwise the
+builder uses `HF_CACHE` from `scripts/connectx_env.sh`.
+
+```bash
+MODEL_CACHE_DIR=/media/external-drive/huggingface \
+  offline/build_bundle.sh --include-models /media/external-drive/offline-bundle
+```
+
+This writes the cache to `model-cache.tar` in the bundle and excludes the
+Hugging Face `.locks` directory. The builder archives files already in the
+cache and does not check that pinned model snapshots are complete. To carry
+model weights separately, leave off `--include-models` and keep the cache
+directory on the external drive.
 
 The build machine must be `aarch64` with Python 3.12, or use BuildKit
 emulation and cross-platform wheel download. `build_bundle.sh` compares the
@@ -39,7 +56,7 @@ build machine to `TARGET_PLATFORM` and `TARGET_PYTHON` and passes `--platform`
 and `--python-version` to `pip download` when they differ.
 
 Overrides: `VLLM_IMAGE`, `RAY_VERSION`, `TARGET_PLATFORM`, `TARGET_PYTHON`,
-`DERIVED_IMAGE`, `ZSTD_LEVEL`.
+`DERIVED_IMAGE`, `ZSTD_LEVEL`, `MODEL_CACHE_DIR`.
 
 ### Build on x86_64
 
@@ -70,7 +87,7 @@ Docker Desktop has the arm64 handler built in; skip the registration step.
 ## Transfer
 
 ```bash
-rsync -avP --partial offline-bundle/ /media/external-drive/offline-bundle/
+rsync -avP --partial offline/offline-bundle/ /media/external-drive/offline-bundle/
 ```
 
 ## Install
@@ -112,10 +129,18 @@ Output: `results/allreduce_ray_<fingerprint>_<timestamp>.csv`.
 
 ### Model serving
 
-Model weights are not in the bundle. `scripts/predownload.sh` needs network and
-does not run on the Spark. Stage the pinned snapshots into `HF_CACHE` on both
-nodes from a machine that has them, or from the external drive, then follow
-`rdma-testing/docs/pre-flight-checklist.md` from step 10.
+Model weights are omitted by default. `scripts/predownload.sh` needs network and
+does not run on the Spark. Copy the cache from the external drive into the
+`HF_CACHE` path on both nodes. If `model-cache.tar` is present, extract it into
+the cache root on each node, for example:
+
+```bash
+mkdir -p /media/external-drive/huggingface
+tar -xf model-cache.tar -C /media/external-drive/huggingface
+export HF_CACHE=/media/external-drive/huggingface
+```
+
+Follow `rdma-testing/docs/pre-flight-checklist.md` from step 10.
 
 ## Files
 

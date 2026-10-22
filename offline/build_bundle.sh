@@ -3,10 +3,10 @@
 #
 # Run on a machine with internet access and Docker. The bundle carries the
 # derived vLLM+Ray image, the pinned client wheelhouse, and the repository
-# source. It excludes model weights; stage those separately (see README.md).
+# source. Model weights are excluded unless --include-models is passed.
 #
 # Usage:
-#   offline/build_bundle.sh [OUTPUT_DIR]
+#   offline/build_bundle.sh [--include-models] [OUTPUT_DIR]
 #
 # Environment overrides:
 #   VLLM_IMAGE       base image (default: pinned digest in scripts/connectx_env.sh)
@@ -15,10 +15,43 @@
 #   TARGET_PYTHON    client Python version (default: 3.12)
 #   DERIVED_IMAGE    derived image tag (default: dgx-spark-vllm-ray:$RAY_VERSION)
 #   ZSTD_LEVEL       zstd compression level (default: 3)
+#   MODEL_CACHE_DIR  Hugging Face cache root for --include-models (default: HF_CACHE)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
+
+INCLUDE_MODELS=0
+OUTPUT_DIR=""
+while (($#)); do
+  case "$1" in
+    --include-models)
+      INCLUDE_MODELS=1
+      ;;
+    --help|-h)
+      cat <<EOF
+Usage: $(basename "$0") [--include-models] [OUTPUT_DIR]
+
+By default, model weights are excluded. When --include-models is set, the
+Hugging Face hub cache under MODEL_CACHE_DIR or HF_CACHE is added to the bundle.
+EOF
+      exit 0
+      ;;
+    --*)
+      echo "[offline] unknown option: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$OUTPUT_DIR" ]]; then
+        echo "[offline] only one OUTPUT_DIR may be specified" >&2
+        exit 2
+      fi
+      OUTPUT_DIR="$1"
+      ;;
+  esac
+  shift
+done
+
 # shellcheck source=../scripts/connectx_env.sh
 source "$REPO_ROOT/scripts/connectx_env.sh"
 
@@ -26,7 +59,16 @@ TARGET_PLATFORM="${TARGET_PLATFORM:-linux/arm64}"
 TARGET_PYTHON="${TARGET_PYTHON:-3.12}"
 DERIVED_IMAGE="${DERIVED_IMAGE:-dgx-spark-vllm-ray:${RAY_VERSION}}"
 ZSTD_LEVEL="${ZSTD_LEVEL:-3}"
-OUTPUT_DIR="${1:-$REPO_ROOT/offline-bundle}"
+OUTPUT_DIR="${OUTPUT_DIR:-$HERE/offline-bundle}"
+MODEL_CACHE_ARCHIVE=none
+if (( INCLUDE_MODELS )); then
+  MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${HF_CACHE:-}}"
+  if [[ -z "$MODEL_CACHE_DIR" || ! -d "$MODEL_CACHE_DIR/hub" || -L "$MODEL_CACHE_DIR/hub" ]] \
+      || ! find "$MODEL_CACHE_DIR/hub" -mindepth 1 -print -quit | grep -q .; then
+    echo "[offline] --include-models requires a non-empty hub/ directory under MODEL_CACHE_DIR or HF_CACHE" >&2
+    exit 1
+  fi
+fi
 
 case "$TARGET_PLATFORM" in
   linux/arm64)
@@ -143,6 +185,14 @@ tar -C "$REPO_ROOT" \
 cp "$HERE/install_offline.sh" "$OUTPUT_DIR/install_offline.sh"
 chmod +x "$OUTPUT_DIR/install_offline.sh"
 
+if (( INCLUDE_MODELS )); then
+  MODEL_CACHE_ARCHIVE=model-cache.tar
+  echo "[offline] archiving Hugging Face hub cache from $MODEL_CACHE_DIR"
+  tar -C "$MODEL_CACHE_DIR" --exclude='hub/.locks' -cf "$OUTPUT_DIR/$MODEL_CACHE_ARCHIVE" hub
+else
+  echo "[offline] model weights excluded; pass --include-models to add the Hugging Face hub cache"
+fi
+
 cat > "$OUTPUT_DIR/BUNDLE_INFO" <<EOF
 derived_image=$DERIVED_IMAGE
 base_image=$VLLM_IMAGE
@@ -152,6 +202,7 @@ target_arch=$TARGET_ARCH
 target_python=$TARGET_PYTHON
 image_archive=$IMAGE_ARCHIVE
 source_archive=$SOURCE_ARCHIVE
+model_cache_archive=$MODEL_CACHE_ARCHIVE
 image_id=$(docker image inspect --format '{{.Id}}' "$DERIVED_IMAGE")
 built_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
