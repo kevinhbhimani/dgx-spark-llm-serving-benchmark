@@ -194,11 +194,14 @@ if [[ "$CHECK_ONLY" == "1" ]]; then
     check_args+=("$repo" "$revision" "$kind")
   done
   echo "[predownload] CHECK_ONLY=1: validating local pinned snapshots"
+  # Cache operations only need Python; do not run the serving image entrypoint
+  # that may initialize GPU and driver support.
   docker run --rm --user "$HF_CACHE_UID:$HF_CACHE_GID" \
+    --entrypoint python3 \
     -e HOME=/tmp -v "$HF_CACHE":/hf-cache \
     -v "$HERE/cache_access_probe.py:/tmp/cache_access_probe.py:ro" \
     "${run_env[@]}" "$VLLM_IMAGE" \
-    python3 -c 'import json, sys
+    -c 'import json, sys
 from pathlib import Path
 from huggingface_hub import snapshot_download
 
@@ -256,11 +259,12 @@ for spec in "${SPECS[@]}"; do
   IFS='|' read -r repo revision kind <<<"$spec"
   echo "[acquire] start $repo@$revision"
   if docker run --rm --user "$HF_CACHE_UID:$HF_CACHE_GID" \
+       --entrypoint python3 \
        -e HOME=/tmp -v "$HF_CACHE":/hf-cache \
        -v "$HERE/download_hf_snapshot.py:/tmp/download_hf_snapshot.py:ro" \
        -v "$HERE/failure_diagnostics.py:/tmp/failure_diagnostics.py:ro" \
        "${dns_args[@]}" "${run_env[@]}" \
-       "$VLLM_IMAGE" python3 -u /tmp/download_hf_snapshot.py \
+       "$VLLM_IMAGE" -u /tmp/download_hf_snapshot.py \
        "$repo" "$revision" "$DOWNLOAD_WORKERS"; then
     :
   else
