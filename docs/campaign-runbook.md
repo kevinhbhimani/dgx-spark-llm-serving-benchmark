@@ -67,6 +67,11 @@ its `index.csv`; default figures and reports go under that campaign's `figs/`.
 | `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each node |
 | Perftest suite | Diya client and Hoedus host | Both nodes use separate client and server commands |
 
+Firmware, Netplan, and `/etc/hosts` changes require an administrator. Researchers
+using preconfigured nodes can run the client setup, cache checks, unit suite,
+and benchmark commands as their own account. The account must have access to
+the Docker daemon. `DROP_CACHES=1` is optional and requires sudo.
+
 Keep the image digest, Ray version, constraints file, model matrix, and
 experiment configuration identical across the two checkouts. Commit changes
 before running the campaign. `scripts/run_job.sh` stops if benchmark sources
@@ -87,16 +92,29 @@ changes.
    editing the file. The token is used for downloads from Hugging Face. Hoedus
    receives model files from Diya and does not need Hugging Face access for
    those files.
-5. Set `HF_CACHE` in each node's `.env` only when the default cache directory
-   lacks space. Each node has its own cache. The host cache defaults to
+5. Each node has its own cache. The host cache defaults to
    `$HOME/.cache/huggingface`; scripts derive `HF_HUB_CACHE=$HF_CACHE/hub` and
-   mount the cache at `/hf-cache` in containers.
+   mount the cache at `/hf-cache` in containers. The cache directory must be
+   writable by the account running the scripts. If the default directory is
+   owned by another account or has less than 200 GB free, set `HF_CACHE` in the
+   repo-local `.env` on that node. For a home filesystem with enough space, use:
 
-The host user and the pinned image probe create/read/delete access before cache
-acquisition. Downloads and single-node serving use the invoking UID/GID. Ray
-mirror extraction uses the worker's invoking UID/GID. Single-node serving uses
-online Hub access for pinned revisions by default. Set `HF_HUB_OFFLINE=1` only
-when the snapshot is already cached. Dual-node serving remains offline after
+   ```bash
+   export HF_CACHE="$HOME/.cache/huggingface-$UID"
+   ```
+
+   Use a user-writable local scratch path when the home filesystem lacks space.
+
+The host and pinned image probe cache create/read/delete access before use. A
+failure reports the effective UID:GID and, when available, the cache directory
+owner and mode. The scripts do not change ownership. Cache setup and regular
+benchmark commands do not require sudo. `DROP_CACHES=1` invokes sudo and is
+optional.
+
+Downloads and single-node serving use the invoking UID/GID. Ray mirror
+extraction uses the worker's invoking UID/GID. Single-node serving uses online
+Hub access for pinned revisions by default. Set `HF_HUB_OFFLINE=1` only when
+the snapshot is already cached. Dual-node serving remains offline after
 head-side acquisition and worker mirroring.
 
 The scripts set `HF_HUB_DISABLE_SHARED_BLOBS=1` for new Hugging Face downloads.
@@ -161,6 +179,10 @@ PLAN_ONLY=1 scripts/run_job.sh
 environment, campaign options, model and experiment YAML, revision pins,
 request bounds, and expected result matrix. The plan prints launch count,
 measurement-window count, and minimum measurement time.
+
+The unit suite uses local fixtures and mocked external commands. It does not
+start benchmark containers or require a GPU or sudo. Hardware benchmark
+commands require permission to access the Docker daemon.
 
 ## Start Ray and check hardware
 
