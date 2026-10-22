@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 import sys
 import tempfile
 
@@ -23,10 +24,24 @@ def probe_cache(cache_path: str) -> None:
                 raise OSError("probe contents changed after write")
             probe_path.unlink()
     except OSError as exc:
-        raise OSError(
+        message = (
             f"{type(exc).__name__} during cache create/read/delete at {root}; "
             f"effective UID:GID {os.geteuid()}:{os.getegid()}"
-        ) from exc
+        )
+        try:
+            cache_stat = root.stat()
+        except OSError:
+            pass
+        else:
+            message += (
+                f"; directory owner UID:GID {cache_stat.st_uid}:{cache_stat.st_gid}"
+                f", mode {stat.S_IMODE(cache_stat.st_mode):04o}"
+            )
+        message += (
+            ". Set HF_CACHE to a directory writable by this user with enough "
+            "free space, then rerun; this does not require sudo."
+        )
+        raise OSError(message) from exc
     print(
         f"[cache] create/read/delete OK: {root} "
         f"(UID:GID {os.geteuid()}:{os.getegid()})"

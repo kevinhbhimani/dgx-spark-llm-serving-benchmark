@@ -124,7 +124,20 @@ Hugging Face cache. The cache defaults to `$HOME/.cache/huggingface`; scripts
 derive `HF_HUB_CACHE=$HF_CACHE/hub` and mount it at `/hf-cache` in containers.
 `HF_HUB_DISABLE_SHARED_BLOBS=1` keeps new downloads in repository-local cache
 blobs. The largest snapshot is about 163 GB, so keep about 200 GB free in each
-cache. Set `HF_CACHE` in each node's `.env` to use a larger drive.
+cache. The cache directory must be writable by the account running the scripts.
+If the default directory is owned by another account or has insufficient space,
+set `HF_CACHE` in the repo-local `.env` on each node to a user-owned path with
+about 200 GB free. For a home filesystem with enough space, use:
+
+```bash
+export HF_CACHE="$HOME/.cache/huggingface-$UID"
+```
+
+The host and pinned image check cache create/read/delete access before use. A
+failure reports the effective UID:GID and, when available, the cache directory
+owner and mode. The scripts do not change ownership. Cache setup and regular
+benchmark commands do not require sudo. `DROP_CACHES=1` requires sudo and is
+optional.
 
 The campaign GPU-memory target defaults to `0.80` in
 `configs/models.yaml`. Set `GPU_UTIL` on Diya to override the target for plan
@@ -143,6 +156,9 @@ scripts/start_ray.sh head          # Diya
 scripts/start_ray.sh worker        # Hoedus
 docker exec vllm-spark ray status  # Diya: two nodes Active
 ```
+
+Omit `DROP_CACHES=1` when the account does not have sudo access. Ray startup
+does not need a page-cache flush.
 
 `start_ray.sh` installs Ray `RAY_VERSION` (2.56.1) into both containers with
 the exact dependency constraints in `scripts/ray-runtime-constraints.txt`. Both
