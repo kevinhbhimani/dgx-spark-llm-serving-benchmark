@@ -47,6 +47,11 @@ python plotting/plot_results.py --help
 python -m unittest discover -s tests -v
 ```
 
+The unit suite uses local fixtures and mocked external commands. It does not
+start benchmark containers or require a GPU or sudo. Docker launchers and
+campaign scripts require access to Docker's GPU runtime and a writable
+Hugging Face cache on each participating node.
+
 Before touching the GPUs, validate the complete default campaign definition:
 
 ```bash
@@ -59,6 +64,28 @@ result rectangle. The shipped matrix is 19 checkpoints in 53 model/config
 curves times 8 concurrencies times `REPEATS=3` independent replicates: 159
 server launches and 1272 measurement windows (see
 [Replicates and statistics](#replicates-and-statistics)).
+
+Before running a Docker-backed model command, confirm that each participating
+node has a writable cache with at least 200 GB free. The default is
+`$HOME/.cache/huggingface`. Scripts check create/read/delete access as the host
+user and inside the pinned container image. The check reports the effective
+UID:GID and cache directory owner and mode when access fails. Scripts do not
+change cache ownership.
+
+If the default cache belongs to another account or has insufficient space, set
+`HF_CACHE` in the repo-local `.env` on each node. Use a directory owned by the
+account running the benchmark. For a home filesystem with enough space, use:
+
+```bash
+export HF_CACHE="$HOME/.cache/huggingface-$UID"
+```
+
+Use a writable local scratch path when the home filesystem lacks 200 GB. The
+head and worker use separate caches. The regular test and benchmark commands
+do not invoke sudo. `DROP_CACHES=1` is optional and invokes sudo to flush the
+host page cache. Docker commands require permission to access the Docker
+daemon. Put `HF_TOKEN` in `.env` on the head node for gated models and run
+`chmod 600 .env` after adding the token.
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
    Spark node, run this in one terminal:
@@ -385,7 +412,8 @@ export MAXLEN=8704
 export VLLM_IMAGE=nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2
 export VLLM_CONTAINER=vllm-spark
 export HF_TOKEN=...
-export HF_CACHE=$HOME/.cache/huggingface
+# Optional. Set on each node if the default cache is unwritable or too small.
+# export HF_CACHE="$HOME/.cache/huggingface-$UID"
 # Optional DNS passed to Docker launch/Ray containers. Unset/empty uses
 # Docker's host-derived resolver, which is the default.
 # export CONTAINER_DNS=8.8.8.8
@@ -567,25 +595,26 @@ ConnectX interface configured in `scripts/connectx_env.sh`.
 scripts/verify_connectx.sh
 ```
 
-2. Start Ray on the head node. As with `single` mode, `DROP_CACHES=1` flushes
-   stale page cache first to avoid a false OOM on Grace unified memory (see
-   below); it only affects the node it runs on, so set it on both head and
-   worker:
+2. Start Ray on the head node:
 
 ```bash
-DROP_CACHES=1 scripts/start_ray.sh head
+scripts/start_ray.sh head
 ```
 
 3. Start Ray on the worker node:
 
 ```bash
-DROP_CACHES=1 scripts/start_ray.sh worker
+scripts/start_ray.sh worker
 ```
 
-Direct `run_models.sh` launches need pinned snapshots in the head cache and,
-for dual-node models, in the worker cache. The full matrix is about 1.07 TB, so
-select models with `MODEL_LABELS` for manual launches. `run_job.sh` fetches and
-mirrors one model on demand, then purges it.
+`DROP_CACHES=1` is an optional page-cache flush on the local node. It requires
+sudo. Omit it on systems where the benchmark account does not have sudo access.
+
+Direct `run_models.sh tp2` and `run_models.sh pp2` launches need pinned snapshots
+in both node caches. Single-node launches can acquire pinned revisions through
+vLLM when Hub access is enabled. The full matrix is about 1.07 TB, so select
+models with `MODEL_LABELS` for manual dual-node launches. `run_job.sh` fetches
+and mirrors one model group on demand, then purges it.
 
 ```bash
 export MODEL_LABELS="llama3.1-8b"
@@ -733,8 +762,8 @@ CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh single
 
 # Dual-node models. Start Ray on both nodes first; run_models.sh then cycles
 # only the vLLM serve process between models and leaves the Ray cluster up.
-DROP_CACHES=1 scripts/start_ray.sh head        # on Diya
-DROP_CACHES=1 scripts/start_ray.sh worker      # on Hoedus
+scripts/start_ray.sh head                      # on Diya
+scripts/start_ray.sh worker                    # on Hoedus
 # Each node has its OWN HF cache, and the worker can neither reach
 # huggingface.co nor be SSH'd into. Acquire exact revisions on Diya, then mirror
 # them to Hoedus over the cluster network. The mirror streams from Diya to
@@ -1482,11 +1511,9 @@ using temperature to interpret a hardware failure.
   startup value; reporting `gpu_blocks * block_size` there would be wrong.
 - Tokenizer download fails: set `HF_TOKEN`, log in with the Hugging Face CLI, or
   set `tokenizer` to a local tokenizer path.
-- HF cache access fails: check the reported path and UID/GID. The host and
-  pinned image run create/read/delete probes before acquisition. Downloads and
-  single-node serving use the invoking host UID/GID. Dual-node mirror extraction
-  uses the worker's invoking UID/GID. The benchmark fails on a cache permission
-  error and does not select a second cache.
+- HF cache access fails: check the reported path, effective UID:GID, directory
+  owner, and mode. Set `HF_CACHE` in each node's `.env` to a user-owned path
+  with enough space. The probe does not change directory ownership.
 - Docker cannot access the GPU: verify `docker run --gpus all ... nvidia-smi`
   works with your container runtime.
 - Dual-node launch says Ray is not active: run `scripts/start_ray.sh head` on
