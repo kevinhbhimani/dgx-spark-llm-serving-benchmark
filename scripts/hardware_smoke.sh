@@ -13,7 +13,8 @@
 # writes is a paper result. On a machine without the ConnectX addresses, point
 # CX_IFACE/HEAD_IP at a local interface and its address.
 #
-# Env: OUT_DIR (default results-smoke), SMOKE_LABEL (default llama3.1-8b-nvfp4,
+# Env: OUT_DIR (default results/smoke-<UTC-date>), SMOKE_LABEL (default
+#      llama3.1-8b-nvfp4,
 #      any label in configs/models.yaml that can run single), SMOKE_GPU_UTIL
 #      (default 0.10), SMOKE_CONCURRENCIES (default "1 4"), PORT (default
 #      8100), VLLM_CONTAINER (default vllm-spark-smoke), PYTHON, DROP_CACHES
@@ -23,13 +24,15 @@
 # only under load. Stress a suspect checkpoint at the campaign's top load:
 #
 #   SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
-#     SMOKE_CONCURRENCIES="1 128" OUT_DIR=results-smoke-lightning \
+#     SMOKE_CONCURRENCIES="1 128" OUT_DIR=results/smoke-lightning-2026-10-22 \
 #     scripts/hardware_smoke.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 
-export OUT_DIR="${OUT_DIR:-results-smoke}"
+source "$HERE/campaign_output.sh"
+campaign_resolve_out_dir smoke
+campaign_reject_existing_implicit_out_dir || exit 1
 export PORT="${PORT:-8100}"
 export BASE_URL="${BASE_URL:-http://127.0.0.1:$PORT}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark-smoke}"
@@ -57,6 +60,7 @@ if [[ -e "$OUT_DIR/index.csv" ]]; then
   exit 1
 fi
 mkdir -p "$OUT_DIR"
+export CAMPAIGN_PATH_PREPARED=1
 export MODELS_YAML="$OUT_DIR/smoke-models.yaml"
 export CONFIG_YAML="$OUT_DIR/smoke-experiment.yaml"
 
@@ -118,10 +122,12 @@ STATUS_ONLY=1 scripts/run_models.sh single
 step "figures, tables, replicate statistics"
 "$PYTHON" plotting/plot_results.py --index "$OUT_DIR/index.csv" \
   --out "$OUT_DIR/figs" --format png --table
+mkdir -p "$OUT_DIR/figs/stats"
 "$PYTHON" scripts/variance_report.py --index "$OUT_DIR/index.csv" \
-  --md "$OUT_DIR/replicate_stats.md" >/dev/null
+  --md "$OUT_DIR/figs/stats/replicate_stats.md" >/dev/null
 "$PYTHON" scripts/compare_campaigns.py --new "$OUT_DIR/index.csv" \
-  --baseline baselines/pmbs26-tcp/index.csv --md "$OUT_DIR/compare.md" >/dev/null || true
+  --baseline baselines/pmbs26-tcp/index.csv \
+  --md "$OUT_DIR/figs/stats/compare_vs_pmbs26_tcp.md" >/dev/null || true
 
 if [[ "$downloaded" == "1" && "$KEEP_WEIGHTS" != "1" ]]; then
   step "purge the weights this test downloaded"
@@ -132,4 +138,4 @@ rows="$(($(wc -l < "$OUT_DIR/index.csv") - 1))"
 echo
 echo "[smoke] PASSED: $rows measurement rows in $OUT_DIR/index.csv"
 echo "[smoke] summary table: $OUT_DIR/figs/summary_table.md"
-echo "[smoke] replicate statistics: $OUT_DIR/replicate_stats.md"
+echo "[smoke] replicate statistics: $OUT_DIR/figs/stats/replicate_stats.md"

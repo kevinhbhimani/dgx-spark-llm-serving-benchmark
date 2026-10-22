@@ -8,6 +8,8 @@
 #
 # scripts/connectx_env.sh defaults to the dual-cable RDMA layout with NCCL
 # transport logging; nothing has to be sourced first.
+# An unset OUT_DIR uses results/benchmark-<UTC-date>. An explicit OUT_DIR is
+# the complete campaign path and remains stable when a campaign resumes.
 #
 # Model lifecycle. The matrix never has to fit on disk at once. Each model in
 # configs/models.yaml (file order; entries sharing a repo form one group) goes
@@ -52,7 +54,9 @@
 #     (harness_source_sha256). The launch gate also requires these files to be
 #     committed, so every row names a recoverable Git revision.
 #
-# Knobs (env): OUT_DIR, CONCURRENCIES, REPEATS (default 3), CANARY_FIRST
+# Knobs (env): OUT_DIR, GPU_UTIL (default 0.80, overrides the shared
+#   gpu_util_default for planning, validation, and serving), CONCURRENCIES,
+#   REPEATS (default 3), CANARY_FIRST
 #   (auto|0|1), STOP_AFTER_CANARY, ALLOW_CANARY_FAILURES, PURGE_WEIGHTS,
 #   CAMPAIGN_LABELS / CAMPAIGN_CONFIGS (space-separated subsets, e.g. for the
 #   TCP transport ablation), PLAN_ONLY.
@@ -64,6 +68,11 @@ cd "$HERE"
 # scripts/load_env.sh gives already-exported values precedence over .env, so
 # exporting them here keeps a stale OUT_DIR/CONCURRENCIES in .env from
 # silently retargeting the paper campaign at an old result directory.
+if [[ -n "${OUT_DIR:-}" ]]; then
+  export CAMPAIGN_OUT_DIR_IMPLICIT=0
+else
+  export CAMPAIGN_OUT_DIR_IMPLICIT=1
+fi
 export OUT_DIR="${OUT_DIR:-results}"
 export CONCURRENCIES="${CONCURRENCIES-1 2 4 8 16 32 64 128}"
 export EXPECTED_CONCURRENCIES="$CONCURRENCIES"
@@ -101,6 +110,12 @@ if [[ -z "${PYTHON:-}" ]]; then
 fi
 export PYTHON
 export PYTHONNOUSERSITE=1
+if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
+  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve)" || exit 1
+else
+  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve --out-dir "$OUT_DIR")" || exit 1
+fi
+export OUT_DIR
 
 option_error() {
   echo "[job] invalid campaign options: $*" >&2
@@ -164,6 +179,30 @@ if [[ -n "$SCHEDULE_TEXT" ]]; then
   mapfile -t MODEL_GROUPS <<<"$SCHEDULE_TEXT"
 fi
 
+if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
+  CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/campaign_output.py" identity \
+    --file "$MODELS_YAML" --file "$CONFIG_YAML" \
+    --value "git_commit=$(git rev-parse HEAD)" \
+    --value "concurrencies=$CONCURRENCIES" --value "repeats=$REPEATS" \
+    --value "gpu_util_override=${GPU_UTIL:-}" \
+    --value "campaign_labels=$CAMPAIGN_LABELS" \
+    --value "campaign_configs=$CAMPAIGN_CONFIGS" \
+    --value "image=$VLLM_IMAGE" --value "network_policy=$NCCL_IB_DISABLE" \
+    --value "ib_hca=${NCCL_IB_HCA:-}" \
+    --value "gid_index=${NCCL_IB_GID_INDEX:-}" \
+    --value "net_plugin=${NCCL_NET_PLUGIN:-}" \
+    --value "ray_version=$RAY_VERSION" --value "head_ip=$HEAD_IP" \
+    --value "worker_ip=$HOEDUS_IP" --value "connectx_iface=$CX_IFACE" \
+    --value "dtype=${DTYPE:-auto}" \
+    --value "prefix_caching=${PREFIX_CACHING:-0}" \
+    --value "generation_config=${GENERATION_CONFIG:-vllm}" \
+    --value "inductor_cache=${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
+    --value "single_container=$SINGLE_CONTAINER")" || exit 1
+  prepare_args=(--out-dir "$OUT_DIR" --identity-json "$CAMPAIGN_IDENTITY")
+  [[ "$PLAN_ONLY" == "1" ]] && prepare_args+=(--plan-only)
+  "$PYTHON" "$HERE/campaign_output.py" prepare "${prepare_args[@]}" || exit 1
+fi
+
 count_steps() {
   local entry steps total=0
   for entry in "${MODEL_GROUPS[@]}"; do
@@ -175,7 +214,7 @@ count_steps() {
 }
 
 print_plan() {
-  local launches points point_s="" minimum_h="?"
+  local launches points point_s="" minimum_h="?" gpu_util_target
   launches="$(count_steps)"
   points=$(( launches * ${#CONCURRENCY_SET[@]} ))
   point_s="$("$PYTHON" -c 'import sys, yaml
@@ -185,10 +224,17 @@ print(int(float(c["warmup_s"]) + float(c["measure_s"]) + float(c["cooldown_s"]))
   if [[ "$point_s" =~ ^[0-9]+$ ]]; then
     minimum_h=$(( points * point_s / 3600 ))
   fi
+  gpu_util_target="$("$PYTHON" -c 'import os, sys, yaml
+doc = yaml.safe_load(open(sys.argv[1])) or {}
+value = os.environ.get("GPU_UTIL")
+if value is None:
+    value = doc.get("gpu_util_default", 0.80)
+print(f"{float(value):g}")' "$MODELS_YAML")"
   echo "[plan] campaign options valid; no hardware operations will be performed"
   echo "[plan] PYTHON=$PYTHON PYTHONNOUSERSITE=$PYTHONNOUSERSITE OUT_DIR=$OUT_DIR"
   echo "[plan] canonical inputs: MODELS_YAML=$MODELS_YAML CONFIG_YAML=$CONFIG_YAML POWER_BACKEND=<experiment.yaml> MODEL_LABELS=<all> CANARY_ONLY=$CANARY_ONLY"
   echo "[plan] selection: labels=${CAMPAIGN_LABELS:-<all>} configs=${CAMPAIGN_CONFIGS:-<all>}"
+  echo "[plan] GPU_UTIL target: $gpu_util_target (default 0.80; override with GPU_UTIL)"
   echo "[plan] concurrencies (${#CONCURRENCY_SET[@]}): $CONCURRENCIES"
   echo "[plan] expected concurrency order: $EXPECTED_CONCURRENCIES"
   echo "[plan] replicates: REPEATS=$REPEATS independent launches per model/config, rotated config order"
@@ -221,6 +267,7 @@ require_local_connectx_ip "$HEAD_IP" "paper campaign head role" || exit 1
 acquire_campaign_lock || exit 1
 
 mkdir -p "$OUT_DIR"
+export CAMPAIGN_PATH_PREPARED=1
 LOG="$OUT_DIR/run_job_$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
 
@@ -360,6 +407,7 @@ canary_identity() {
       "$NCCL_IB_DISABLE" "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" \
       "${NCCL_NET_PLUGIN:-}" "${DTYPE:-auto}" "${PREFIX_CACHING:-0}" \
       "${GENERATION_CONFIG:-vllm}" "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
+      "${GPU_UTIL:-}" \
       "${HF_HUB_OFFLINE:-1}" "$SINGLE_CONTAINER" \
       "$CAMPAIGN_LABELS" "$CAMPAIGN_CONFIGS"
   } | sha256sum | awk '{print $1}'
@@ -367,12 +415,11 @@ canary_identity() {
 
 fetch_group() {
   local labels="$1" needs_dual="$2"
-  if ! env MODEL_LABELS="$labels" CHECK_ONLY=1 scripts/predownload.sh all; then
-    log "head cache lacks $labels; downloading the pinned snapshot(s)"
-    env MODEL_LABELS="$labels" scripts/predownload.sh all || return 1
-  fi
   if [[ "$needs_dual" == "1" ]]; then
+    env MODEL_LABELS="$labels" scripts/predownload.sh all || return 1
     env MODEL_LABELS="$labels" scripts/mirror_worker_cache.sh all || return 1
+  else
+    log "single-node group $labels uses pinned-revision vLLM JIT acquisition"
   fi
 }
 
@@ -405,7 +452,7 @@ group_status() {
 }
 
 canary_pass() {
-  local entry labels needs_dual steps step rep config label
+  local entry labels needs_dual steps step rep config label purge_status
   local -a failures=() step_list=()
   log "=== canary pass: ${#MODEL_GROUPS[@]} model group(s) ==="
   for entry in "${MODEL_GROUPS[@]}"; do
@@ -419,13 +466,20 @@ canary_pass() {
       for step in "${step_list[@]}"; do
         IFS=':' read -r rep config label <<<"$step"
         [[ "$rep" == "1" ]] || continue
+        ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
         if ! run_child env CANARY_ONLY=1 SKIP_DONE=0 MODEL_LABELS="$label" \
             scripts/run_models.sh "$config"; then
           failures+=("$label/$config")
         fi
       done
     fi
-    run_child purge_group "$labels" || failures+=("$labels: purge")
+    if run_child purge_group "$labels"; then
+      :
+    else
+      purge_status=$?
+      log "cache purge failed (rc=$purge_status) for $labels; aborting because cache state is shared"
+      exit 1
+    fi
   done
   if (( ${#failures[@]} )); then
     log "canary pass FAILED for ${#failures[@]} item(s):"
@@ -452,25 +506,40 @@ measure_group() {
     log "$labels: every replicate is complete; not downloading"
     return 0
   elif [[ "$status" != "3" ]]; then
-    log "$labels: status check failed; skipping without downloading"
-    FAILED+=("$labels: status")
-    return 0
+    log "$labels: resume status validation failed; aborting because campaign state is not trustworthy"
+    exit 1
   fi
   if ! run_child fetch_group "$labels" "$needs_dual"; then
     FAILED+=("$labels: fetch/mirror")
-    [[ "$PURGE_WEIGHTS" == "1" ]] && leg "purge $labels" purge_group "$labels"
+    if [[ "$PURGE_WEIGHTS" == "1" ]]; then
+      if run_child purge_group "$labels"; then
+        :
+      else
+        status=$?
+        log "cache purge failed (rc=$status) for $labels; aborting because cache state is shared"
+        exit 1
+      fi
+    fi
     return 0
   fi
   IFS=';' read -ra step_list <<<"$steps"
   for step in "${step_list[@]}"; do
     IFS=':' read -r rep config label <<<"$step"
+    ray_ok || { log "Ray cluster lost during measurements"; exit 1; }
     leg "$label $config replicate $rep/$REPEATS" \
       env REPEATS="$REPEATS" ONLY_REPEAT="$rep" MODEL_LABELS="$label" \
           CONCURRENCIES="$CONCURRENCIES" EXPECTED_CONCURRENCIES="$CONCURRENCIES" \
           scripts/run_models.sh "$config" --skip-done
   done
   if [[ "$PURGE_WEIGHTS" == "1" ]]; then
-    leg "purge $labels" purge_group "$labels"
+    log "=== cleanup: purge $labels ==="
+    if run_child purge_group "$labels"; then
+      log "cleanup OK: purge $labels"
+    else
+      status=$?
+      log "cleanup FAILED (rc=$status): purge $labels; aborting because cache state is shared"
+      exit 1
+    fi
   else
     log "PURGE_WEIGHTS=0: keeping $labels in the caches"
   fi
@@ -539,7 +608,7 @@ fi
 prep "complete result grid + artifact verification" \
   "$PYTHON" scripts/validate_campaign.py verify "${VERIFY_ARGS[@]}"
 
-prep "plots + summary table" \
+leg "primary result figures + summary table" \
   "$PYTHON" plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" \
     --format both --table
 

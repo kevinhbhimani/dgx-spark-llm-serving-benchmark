@@ -10,7 +10,7 @@ directory, compares the observed transport with the one the launch's serving
 policy requested, and summarizes device and GPUDirect RDMA use, which is the
 evidence a reviewer asking "was this really RDMA?" needs.
 
-    python3 scripts/audit_nccl_transport.py results --md results/figs/stats/nccl_transport_audit.md
+    python3 scripts/audit_nccl_transport.py results/benchmark-2026-10-22
 
 Exits 1 when any launch is unverified or shows the wrong transport, or no
 dual-node logs were found. Use --allow-unverified only for historical,
@@ -23,6 +23,11 @@ import json
 from pathlib import Path
 import re
 import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from campaign_output import campaign_root_from_input, resolve_campaign_output_path
 
 LOG_RE = re.compile(
     r"server_(?P<label>.+)_(?P<config>single|tp2|pp2)_(?P<fp>[0-9a-f]{16})_"
@@ -84,7 +89,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--allow-unverified", action="store_true",
                         help="allow absent logs/evidence/policies for exploratory reports")
     args = parser.parse_args(argv)
-    out_dir = Path(args.out_dir)
+    out_dir = campaign_root_from_input(args.out_dir)
+    if args.md:
+        args.md = str(resolve_campaign_output_path(args.md, out_dir))
     expected = policy_expectations(out_dir)
 
     rows = []

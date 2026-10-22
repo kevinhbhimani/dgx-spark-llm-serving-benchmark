@@ -21,10 +21,12 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+source "$HERE/campaign_output.sh"
+campaign_resolve_out_dir
+campaign_reject_existing_implicit_out_dir || exit 1
 require_local_connectx_ip "$HEAD_IP" "interconnect benchmark head role" || exit 1
 acquire_campaign_lock || exit 1
 
-OUT_DIR="${OUT_DIR:-results}"
 PORT="${INTERCONNECT_PORT:-29518}"
 if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$PORT < 1 || 10#$PORT > 65535 )); then
   echo "[microbench] INTERCONNECT_PORT must be in [1, 65535]" >&2

@@ -98,10 +98,15 @@ echo "[purge] ${#REPOS[@]} repo(s) for '${MODEL_LABELS:-none}'" \
      "(worker: $([[ "$PURGE_WORKER" == "1" ]] && echo "$HOEDUS_IP" || echo no))"
 if [[ "$ray_up" == "1" ]]; then
   docker cp "$HERE/purge_model_cache.py" "$VLLM_CONTAINER":/tmp/purge_model_cache.py
-  docker exec "$VLLM_CONTAINER" \
+  docker exec -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
+    -e HF_MODULES_CACHE=/hf-cache/modules \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
+    "$VLLM_CONTAINER" \
     python3 -u /tmp/purge_model_cache.py "${args[@]}" "${REPOS[@]}"
 else
-  docker run --rm -i -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
-    -v "$HF_CACHE":/root/.cache/huggingface "$VLLM_IMAGE" \
+  docker run --rm -i -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
+    -e HF_MODULES_CACHE=/hf-cache/modules \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
+    -v "$HF_CACHE":/hf-cache "$VLLM_IMAGE" \
     python3 -u - "${args[@]}" "${REPOS[@]}" < "$HERE/purge_model_cache.py"
 fi

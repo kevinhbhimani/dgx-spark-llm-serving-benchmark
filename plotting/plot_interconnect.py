@@ -7,7 +7,8 @@ avg_s, ...). Each row's transport is what NCCL actually used, read from its own
 INFO log, not what the environment requested. Pass several result directories
 to overlay transports, for example the RDMA campaign and the TCP ablation:
 
-    python plotting/plot_interconnect.py results results-tcp-ablation --out results/figs
+    python plotting/plot_interconnect.py results/rdma-v4-paper-2026-10-22 \
+        results/tcp-ablation-2026-10-22
 
 Hue is the transport and linestyle/marker the primitive (all-reduce is TP's
 per-layer collective, send/recv is PP's stage hand-off), so neither dimension
@@ -18,6 +19,7 @@ import argparse
 import glob
 import os
 import sys
+from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
@@ -26,6 +28,10 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, NullFormatter
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from campaign_output import campaign_root_from_input, resolve_campaign_output_path
 from plot_results import COL_W, save, set_rc
 
 # Okabe-Ito pair (CVD-safe); same hues as the PMBS26 interconnect figure.
@@ -145,10 +151,14 @@ def fig_interconnect(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("dirs", nargs="+", help="result directories holding interconnect_extra_*.csv")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", help="output directory (default: first campaign/figs/stats)")
     ap.add_argument("--format", default="both", choices=["pdf", "png", "both"])
     ap.add_argument("--serif", action="store_true")
     args = ap.parse_args()
+    args.dirs = [str(campaign_root_from_input(directory)) for directory in args.dirs]
+    args.out = str(resolve_campaign_output_path(
+        args.out, args.dirs[0], default_subdir="figs/stats"
+    ))
     set_rc(200, args.serif)
     df = load(args.dirs)
     if df.empty:

@@ -5,6 +5,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+source "$HERE/campaign_output.sh"
 LABEL="${1-single}"
 case "$LABEL" in
   single|tp2|pp2) ;;
@@ -14,7 +15,8 @@ case "$LABEL" in
     ;;
 esac
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
-OUT_DIR="${OUT_DIR:-results}"
+campaign_resolve_out_dir
+campaign_reject_existing_implicit_out_dir || exit 1
 # Unset means the YAML's power_backend applies; set it to override (e.g. "none"
 # to disable sampling for a run without editing the config).
 POWER_BACKEND="${POWER_BACKEND:-}"
@@ -110,6 +112,7 @@ DEPLOYMENT_FINGERPRINT="${DEPLOYMENT_FINGERPRINT:-}"
 
 run_point() {
     local rep="$1" c="$2"
+    local status=0
     echo "[sweep] ${MODEL_LABEL:+$MODEL_LABEL }$LABEL concurrency=$c (repeat $rep/$REPEATS)"
     args=( --config "$CONFIG_YAML" --config-label "$LABEL" --mode closed
            --concurrency "$c" --expected-concurrencies "$EXPECTED_CONCURRENCIES"
@@ -134,8 +137,60 @@ run_point() {
     [[ -n "$WORKER_POWER_NODE_IP" && -n "$WORKER_POWER_CONTAINER" ]] && \
       args+=( --worker-power-node-ip "$WORKER_POWER_NODE_IP"
               --worker-power-container "$WORKER_POWER_CONTAINER" )
-    "$PYTHON" -m bench.run_benchmark "${args[@]}"
+    if "$PYTHON" -m bench.run_benchmark "${args[@]}"; then
+      :
+    else
+      status=$?
+    fi
     sleep 3
+    return "$status"
+}
+
+POINT_FAILURES=()
+CAMPAIGN_ABORTED=0
+
+server_is_healthy() {
+  local body
+  if ! body="$(curl -fsS --max-time 5 "$BASE_URL/v1/models")"; then
+    echo "[sweep] serving endpoint is unavailable after a failed point" >&2
+    return 1
+  fi
+  if [[ -n "$MODEL" ]]; then
+    if ! "$PYTHON" -c 'import json, sys
+try:
+    models = json.load(sys.stdin).get("data") or []
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if any(model.get("id") == sys.argv[1] for model in models)
+                 else 1)' "$MODEL" <<<"$body"; then
+      echo "[sweep] expected model $MODEL is not served after a failed point" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
+run_scheduled_point() {
+  local rep="$1" c="$2" status=0
+  if run_point "$rep" "$c"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  POINT_FAILURES+=("repeat=$rep concurrency=$c rc=$status")
+  echo "[sweep] point FAILED (rc=$status): ${MODEL_LABEL:+label=$MODEL_LABEL }" \
+       "model=${MODEL:-unknown} revision=${MODEL_REVISION:-unknown} config=$LABEL" \
+       "repeat=$rep concurrency=$c head=${HEAD_IP:-unknown}" \
+       "worker=${WORKER_POWER_NODE_IP:-none} results=$OUT_DIR" \
+       "server_log=${SERVER_LOG:-none}; checking shared serving state" >&2
+  if ! server_is_healthy; then
+    echo "[sweep] stopping because shared serving state is unhealthy" >&2
+    CAMPAIGN_ABORTED=1
+    return 1
+  fi
+  echo "[sweep] shared serving state is healthy; continuing to the next point" >&2
+  return 0
 }
 
 if [[ -n "$SWEEP_SCHEDULE" ]]; then
@@ -154,14 +209,29 @@ if [[ -n "$SWEEP_SCHEDULE" ]]; then
       echo "[sweep] schedule concurrency $c is outside EXPECTED_CONCURRENCIES" >&2
       exit 1
     fi
-    run_point "$rep" "$c"
+    if ! run_scheduled_point "$rep" "$c" && (( CAMPAIGN_ABORTED )); then
+      break
+    fi
   done
 else
   for rep in $(seq 1 "$REPEATS"); do
     for c in $CONCURRENCIES; do
-      run_point "$rep" "$c"
+      if ! run_scheduled_point "$rep" "$c" && (( CAMPAIGN_ABORTED )); then
+        break 2
+      fi
     done
   done
+fi
+
+if (( ${#POINT_FAILURES[@]} )); then
+  if (( CAMPAIGN_ABORTED )); then
+    echo "[sweep] ${#POINT_FAILURES[@]} independent point(s) failed before shared serving state became unhealthy:" >&2
+  else
+    echo "[sweep] ${#POINT_FAILURES[@]} independent point(s) failed; completed remaining safe points:" >&2
+  fi
+  printf '  - %s\n' "${POINT_FAILURES[@]}" >&2
+  echo "[sweep] results are partial; rerun with --skip-done to fill the missing points" >&2
+  exit 1
 fi
 
 echo "[sweep] done, see $OUT_DIR/index.csv"

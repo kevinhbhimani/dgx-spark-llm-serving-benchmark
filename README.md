@@ -50,7 +50,7 @@ python -m unittest discover -s tests -v
 Before touching the GPUs, validate the complete default campaign definition:
 
 ```bash
-OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
+PLAN_ONLY=1 scripts/run_job.sh
 ```
 
 Plan mode performs no hardware operations. It checks the isolated environment,
@@ -126,9 +126,11 @@ from the smoke step.
 6. Plot the sweep:
 
 ```bash
-OUT_DIR="${OUT_DIR:-results}"
-python plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
+python plotting/plot_results.py --format both
 ```
+
+This uses `OUT_DIR` when exported or the current UTC-dated default. Pass a
+campaign directory or its `index.csv` to plot an older or explicitly named run.
 
 ## Repository Layout
 
@@ -173,7 +175,7 @@ scripts/
   compare_campaigns.py        compare a campaign with a baseline index
   pack_raw.sh                 archive raw telemetry for storage outside git
 plotting/
-  plot_results.py             generate PDF/PNG figures from results/index.csv
+  plot_results.py             generate figures from a campaign directory or index
   plot_trends.py              cross-model trend figures (metadata from models.yaml)
   plot_interconnect.py        all-reduce and send/recv latency/bandwidth by transport
 docs/
@@ -324,7 +326,8 @@ fields:
 - `collect_hf_metadata`: when true, query Hugging Face after the measurement for
   optional full-checkpoint weight/KV estimates. It is false by default so smoke
   and release runs do not depend on post-measurement network metadata lookups.
-- `out_dir`: output directory, default `results`.
+- Campaign output paths are selected with `OUT_DIR`, not in the experiment
+  YAML. If unset, campaign tools use `results/benchmark-<UTC-date>`.
 - `run_note`: free-form note preserved in the resolved configuration block.
 
 Each full result records methodology `steady-exact-v4`, the YAML and harness
@@ -368,9 +371,8 @@ export MODEL_REVISION="$REVISION"
 export PORT=8000
 export DTYPE=auto
 export MAXLEN=8704
-# Optional direct-launch overrides (campaigns use gpu_util_default in
-# configs/models.yaml for one shared value across every model and config):
-# export GPU_UTIL=0.80        # launch_server.sh default
+# Optional shared serving target for campaigns and direct launches:
+# export GPU_UTIL=0.80        # default; overrides gpu_util_default in models.yaml
 # export PREFIX_CACHING=1     # prefix caching is OFF by default: cache hits on
 #                             # repeated synthetic prompts skipped up to a third
 #                             # of prefill work in some models but not others
@@ -398,10 +400,13 @@ export HF_CACHE=$HOME/.cache/huggingface
 # connectx_env.sh default; read by run_models.sh and audit_nccl_transport.py).
 # export NCCL_DEBUG=INFO
 # export NCCL_DEBUG_SUBSYS=INIT,NET
-# Offline serving is the default; predownload exact revisions before launching.
-export HF_HUB_OFFLINE=1
+# Single-node serving uses online, pinned-revision Hub acquisition by default.
+# Set HF_HUB_OFFLINE=1 only when the required snapshot is already cached.
+# Dual-node serving stays offline after acquisition and mirroring.
+# export HF_HUB_OFFLINE=1
 export BASE_URL=http://127.0.0.1:8000
-export OUT_DIR=results
+# Optional. Set the complete campaign output path, such as:
+# export OUT_DIR=results/rdma-v4-paper-2026-10-22
 export CONFIG_YAML=configs/experiment.yaml
 export CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
 export REPEATS="${REPEATS:-3}"
@@ -676,16 +681,19 @@ with `scripts/run_models.sh`. Each entry names a Hugging Face model, a short
 `quant`, `tokenizer`, `tokenizer_revision`, and `trust_remote_code`. The
 shipped paper matrix pins every active model to an
 immutable commit. `gpu_util_default` in `configs/models.yaml` sets the run-wide
-machine memory target, defaulting to `0.80`. Every model and serving config in
-the campaign receives this value. The launcher passes it to `vllm serve` as
-`--gpu-memory-utilization`. A 0.80 setting targets 102.4 GB on a nominal 128 GB
-node. The launch preflight requires 80% of each node's detected `MemTotal` to
-be free before serving starts. The vLLM setting is a per-instance limit, as
-documented in the [vLLM CacheConfig reference](https://docs.vllm.ai/en/v0.29.0/api/vllm/config/cache/).
+machine memory target, defaulting to `0.80`. Set `GPU_UTIL` to override that
+target for planning, validation, and every serving launch. The resolved value
+is recorded in serving fingerprints and implicit campaign identity. Use the
+same value and `OUT_DIR` when resuming a campaign. Every model and serving
+config receives one shared value. The
+launcher passes it to `vllm serve` as `--gpu-memory-utilization` and uses the
+same value for its free-memory preflight. A 0.80 setting targets 102.4 GB on a
+nominal 128 GB node. The vLLM setting is a per-instance limit, as documented
+in the [vLLM CacheConfig reference](https://docs.vllm.ai/en/v0.29.0/api/vllm/config/cache/).
 The campaign uses one serving instance per node at a time, so reserve each node
 for campaign workloads. This setting does not limit aggregate use by unrelated
-concurrent processes. Per-model `gpu_util` settings are rejected; change
-`gpu_util_default` once when a campaign needs a different target.
+concurrent processes. Per-model `gpu_util` settings are rejected. Set `GPU_UTIL`
+when a campaign needs a different shared target.
 The tokenizer id and revision are passed to both vLLM and the client so exact
 token-ID prompts match the served tokenizer. A model whose weights plus KV
 cache do not fit on one GB10 must omit `single` and use the dual-node configs,
@@ -693,9 +701,11 @@ which pool two nodes over ConnectX for roughly twice the memory (a 70B model in
 bf16 is dual-only).
 
 `run_models.sh` takes one serving config at a time. It selects the models that
-request that config, verifies all pinned revisions are already complete in the
-local cache before spending GPU time, and tears down any stale server before
-each launch. Readiness requires both the expected `/v1/models` id and a strict
+request that config and checks host cache access before loading the pinned
+tokenizer. Single-node launches can download a pinned model revision through
+vLLM. Dual-node launches require the pinned snapshot on both nodes and perform
+a final cache check before distributed serving. Each path tears down any stale
+server before launch. Readiness requires both the expected `/v1/models` id and a strict
 streaming probe with delta token IDs, matching final usage,
 `finish_reason: length`, and `[DONE]`; an old or merely HTTP-ready server cannot
 pass. The wrapper then runs the concurrency sweep tagged with the model label
@@ -708,15 +718,14 @@ other capacity figures are captured; the policy makes the launch inputs and
 runtime identity independently inspectable.
 
 ```bash
-# Fetch the exact model/tokenizer revisions before allocating a server. The
-# local-only check is also run automatically by run_models.sh.
+# Optional single-node cache warmup. A single-node launch can also acquire the
+# pinned revision through vLLM when the cache is cold and Hub access is enabled.
 scripts/predownload.sh all
 CHECK_ONLY=1 scripts/predownload.sh all
 
 # Launch/probe/tear down every single-node model without starting a sweep.
 CANARY_ONLY=1 scripts/run_models.sh single
-# Or target an exact space-separated label allowlist. The automatic local-only
-# cache check honors the same allowlist.
+# Or target an exact space-separated label allowlist.
 CANARY_ONLY=1 MODEL_LABELS='llama3.3-70b-fp8' scripts/run_models.sh single
 
 # Single-node models (no Ray). Launches and removes a container per model.
@@ -727,11 +736,11 @@ CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh single
 DROP_CACHES=1 scripts/start_ray.sh head        # on Diya
 DROP_CACHES=1 scripts/start_ray.sh worker      # on Hoedus
 # Each node has its OWN HF cache, and the worker can neither reach
-# huggingface.co nor be SSH'd into. Mirror the weights to it over the
-# cluster network first, or the launch dies with HFValidationError from
-# the remote Ray worker. The mirror streams from Diya to Hoedus over a
-# Ray-managed TCP connection. Idempotent; existing worker files are skipped.
-scripts/mirror_worker_cache.sh all             # on Diya, after predownload.sh
+# huggingface.co nor be SSH'd into. Acquire exact revisions on Diya, then mirror
+# them to Hoedus over the cluster network. The mirror streams from Diya to
+# Hoedus over a Ray-managed TCP connection. Existing worker files are skipped.
+MODEL_LABELS='llama3.3-70b-fp8' scripts/predownload.sh all
+MODEL_LABELS='llama3.3-70b-fp8' scripts/mirror_worker_cache.sh all
 CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed launch
 CANARY_ONLY=1 scripts/run_models.sh pp2
 scripts/run_models.sh tp2
@@ -755,7 +764,31 @@ scripts/start_ray.sh stop                      # on each node when finished
 scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 ```
 
+Each repeat/concurrency measurement is handled independently. If a point
+fails, `run_all.sh` records its model, revision, node scope, concurrency,
+return code, result directory, and server log. When `MODEL` is set, it checks
+that the expected model remains served before starting another point. A
+missing or unhealthy server stops the sweep. After safe points finish, the
+command returns a failure status and leaves the campaign partial. `run_job.sh`
+continues to independent model/configuration work while Ray and shared cache
+state remain healthy. Invalid resume state, failed resource preflight, loss of
+Ray, or a failed cache purge stops the campaign. Rerun the same `OUT_DIR` with
+`--skip-done` to fill missing points.
+
 ### Final unattended campaign
+
+`OUT_DIR` is the complete campaign output path. With no `OUT_DIR`,
+`run_job.sh` resolves `results/benchmark-<UTC-date>` once and passes the
+absolute path to every child process. `PLAN_ONLY=1` prints that path without
+creating it. A default path collision resumes only when the campaign identity
+matches. Otherwise, the job stops before hardware work. Set a dated path such
+as `OUT_DIR=results/rdma-v4-paper-2026-10-22` to name a campaign. Explicit
+legacy paths remain available for existing campaigns and resume.
+
+Plotting accepts a campaign directory or an explicit `index.csv` path. When
+`--out` is omitted, figures and tables go under the selected campaign's
+`figs/` directory. The campaign manifest records the campaign name, date when
+present in the directory name, and resolved absolute path.
 
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
@@ -768,7 +801,7 @@ With the locked virtual environment active, run the hardware-free plan first:
 
 ```bash
 export PYTHONNOUSERSITE=1
-export OUT_DIR=results
+export OUT_DIR=results/rdma-v4-paper-2026-10-22
 PLAN_ONLY=1 scripts/run_job.sh
 ```
 
@@ -793,9 +826,10 @@ runtime identity, and records the Ray all-reduce gate and the send/recv
 microbenchmark while the GPUs are idle. It then works through
 `configs/models.yaml` one model at a time:
 
-1. **fetch** the current model's pinned snapshot into the head cache through
-   `predownload.sh` in one-label mode, only if it is not already complete;
-2. **mirror** it to the worker cache if the model runs tp2/pp2;
+1. **acquire** the current model through pinned-revision vLLM JIT when the
+   group is single-node only; otherwise fetch its pinned snapshot with
+   `predownload.sh` in one-label mode;
+2. **mirror** the snapshot to the worker cache if the model runs tp2/pp2;
 3. **measure** every config it lists in 3 replicates, rotating the config
    order between replicates (see below);
 4. **purge** the snapshot, and vLLM's compile cache, from both nodes.
@@ -806,9 +840,10 @@ Single-node launches run inside the Ray head container
 (`SINGLE_CONTAINER=ray`), so the cluster survives them and the old
 "single last" ordering is gone.
 
-Before the first measurement, a **canary pass** fetches each model, launches
-it once under every config with the strict stream contract and the client
-tokenizer preflight, and purges it again. It collects every failure and stops
+Before the first measurement, a **canary pass** acquires each model through
+single-node JIT or the dual-node cache flow, launches it once under every
+config with the strict stream contract and the client tokenizer preflight, and
+purges it again. It collects every failure and stops
 the job before any measurement if one failed, so an unsupported architecture or
 an image problem shows up within hours, not on day 10. The pass costs one extra
 download of the matrix plus 53 launches, and it is skipped automatically once
@@ -834,8 +869,9 @@ orchestrators take a nonblocking campaign lock and fail if another sweep or
 all-reduce job is already active. Keep the committed source and YAML unchanged
 until the campaign is complete.
 
-`scripts/predownload.sh` uses the same pinned image, cache mount, model ids, and
-revisions as serving. It sizes each pinned revision from the Hub's per-file
+`scripts/predownload.sh` is the explicit cache-warming and dual-node acquisition
+path. It uses the same pinned image, cache mount, model ids, and revisions as
+serving. It sizes each pinned revision from the Hub's per-file
 listing (`scripts/hf_snapshot_size.py`), net of blobs already in the cache, and
 exits on an API failure before the first download. `CHECK_ONLY=1` uses Hugging
 Face local-only resolution and fails on a missing or partial snapshot; it never
@@ -990,7 +1026,7 @@ scripts/start_ray.sh stop
 NCCL_IB_DISABLE=1 scripts/start_ray.sh head        # Hoedus: ... worker
 # On Diya: same harness, TCP all-reduce thresholds, subset of the matrix.
 NCCL_IB_DISABLE=1 ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8 ALLREDUCE_MAX_8B_LATENCY_S=0.005 \
-  OUT_DIR=results-tcp-ablation \
+  OUT_DIR=results/tcp-ablation-2026-10-22 \
   CAMPAIGN_LABELS="llama3.1-8b nemotron3-super-120b-a12b-nvfp4" \
   CAMPAIGN_CONFIGS="tp2 pp2" scripts/run_job.sh
 ```
@@ -1050,8 +1086,9 @@ Every measurement point writes these files under `out_dir`:
   exact delta-token timestamps, final usage count, finish reason, stream-end
   state, inter-token gaps, success state, and error text.
 - `<run_tag>.power.jsonl`: the timestamped raw head and, for dual runs, worker
-  power samples used for window integration. It is written whenever a power
-  backend is active.
+  power samples used for window integration, with GPU temperature in Celsius
+  and GPU/node identity when the sensor reports it. It is written whenever a
+  power backend is active.
 - `<run_tag>.vllm_metrics.jsonl`: timestamped raw values and label sets for the
   required vLLM Prometheus series whenever metrics scraping is active.
 - `<run_tag>.summary.json`: aggregate metrics, capacity samples, server-side
@@ -1060,8 +1097,8 @@ Every measurement point writes these files under `out_dir`:
   configuration, observed workload-bucket counts, and the actual
   `warmup_extension_s`, `load_extension_s`, and `drain_s` phase timings. It also
   carries methodology/config/source/serving/experiment provenance hashes and
-  the client environment, live deployment hash, pinned revisions, and repeat
-  number.
+  the client environment, live deployment hash, pinned revisions, repeat
+  number, and a versioned temperature summary for the request window.
 - `index.csv`: one row per measurement point for plotting sweeps. Each row is
   tagged with `model`, `model_label`, and `repeat_id` and carries the provenance,
   server-side counters, and capacity columns below alongside the client-side
@@ -1102,8 +1139,7 @@ tag is prefixed with that label:
 Plot all rows in an index:
 
 ```bash
-OUT_DIR="${OUT_DIR:-results}"
-python plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" --format both
+python plotting/plot_results.py --index "$OUT_DIR" --format both
 ```
 
 Available formats are `pdf`, `png`, and `both`. The plotting script writes
@@ -1374,6 +1410,13 @@ an incomplete counter span; or a non-advancing generation counter while the
 client receives tokens rejects the point. Disable these requirements only for an explicitly
 non-paper diagnostic run.
 
+Temperature fields use telemetry schema version 2. Summary values include the
+window-only mean, maximum, valid sample count, maximum observed sample gap,
+sensor source, units, and head/worker coverage. Missing readings remain null
+with an explicit status. GPU temperature is diagnostic and does not gate a
+result. Validate sensor support and behavior on the pinned GB10 image before
+using temperature to interpret a hardware failure.
+
 ## Troubleshooting
 
 - `ModuleNotFoundError` for `pandas`, `aiohttp`, or `yaml`: activate the Python
@@ -1381,11 +1424,10 @@ non-paper diagnostic run.
   `python scripts/check_environment.py` with `PYTHONNOUSERSITE=1`.
 - `Connection refused` or model resolution fails: confirm vLLM is running and
   `curl http://127.0.0.1:8000/v1/models` works from the benchmark client.
-- `CHECK_ONLY=1` or the automatic model-cache preflight reports a missing
-  revision: run `scripts/predownload.sh <config>` while Hub access is available,
-  then repeat the check. Do not drop the revision or enable online serving to
-  make the error disappear; that would change or leave ambiguous the model
-  being measured. For tp2/pp2, mirror the checked snapshot to the worker too.
+- A dual-node cache check reports a missing revision: run
+  `scripts/predownload.sh <config>` while Hub access is available, then mirror
+  the checked snapshot to the worker. The launch checks both nodes before
+  distributed serving.
 - `/v1/models` works but the readiness probe fails: inspect the server log and
   try the same two-token streaming completion manually. The benchmark requires
   vLLM's delta `token_ids`, final usage, `finish_reason: length`, and `[DONE]`;
@@ -1428,8 +1470,8 @@ non-paper diagnostic run.
 - `run_models.sh` skips a model with a timeout or "launcher exited": that model
   failed to come up (often OOM). Check the newest matching
   `OUT_DIR/server_<label>_<config>_*.log` (logs are never overwritten);
-  lower the shared `gpu_util_default` in `configs/models.yaml`, add a `quant`,
-  or move it to the dual-node configs if it does not fit on one GB10. The
+  set a lower `GPU_UTIL` for the campaign, add a `quant`, or move it to the
+  dual-node configs if it does not fit on one GB10. The
   orchestrator continues to the next model rather than aborting the whole
   sweep.
 - `weight_gb`/`kv_cache_gb` blank in the index: the model config or Hub metadata
@@ -1440,20 +1482,18 @@ non-paper diagnostic run.
   startup value; reporting `gpu_blocks * block_size` there would be wrong.
 - Tokenizer download fails: set `HF_TOKEN`, log in with the Hugging Face CLI, or
   set `tokenizer` to a local tokenizer path.
-- Tokenizer or config download fails with `PermissionError` under
-  `~/.cache/huggingface`: the serving container downloads models into the
-  mounted cache as root, which leaves it root-owned on the host. The benchmark
-  detects this and automatically switches its own small downloads to
-  `~/.cache/huggingface-client` (printing a `[bench]` note). To share one cache
-  again, `sudo chown -R "$USER" ~/.cache/huggingface` — but expect the container
-  to re-create root-owned directories for newly downloaded models.
+- HF cache access fails: check the reported path and UID/GID. The host and
+  pinned image run create/read/delete probes before acquisition. Downloads and
+  single-node serving use the invoking host UID/GID. Dual-node mirror extraction
+  uses the worker's invoking UID/GID. The benchmark fails on a cache permission
+  error and does not select a second cache.
 - Docker cannot access the GPU: verify `docker run --gpus all ... nvidia-smi`
   works with your container runtime.
 - Dual-node launch says Ray is not active: run `scripts/start_ray.sh head` on
   the head node and `scripts/start_ray.sh worker` on the worker node, then check
   `docker exec vllm-spark ray status`.
 - `tp2`/`pp2` launch dies with `HFValidationError: Repo id must be in the form
-  ...` quoting a `/root/.cache/huggingface/...` path, raised by a
+  ...` quoting a `/hf-cache/hub/...` path, raised by a
   `RayWorkerWrapper` at the worker's IP: the model's weights are not in the
   worker node's HF cache (each node has its own; `predownload.sh` only warms
   the node it runs on). Run `scripts/mirror_worker_cache.sh tp2|pp2|all` from
@@ -1483,8 +1523,9 @@ non-paper diagnostic run.
   with `DROP_CACHES=1` (see step 2 above) before relaunching.
 - Same `ray.exceptions.OutOfMemoryError`, but it happens later, right after
   `Available KV cache memory: ...` logs during model load rather than at Ray
-  startup: the model exceeds available unified memory. `gpu_util_default` is
-  `0.80`; lower the shared value in `configs/models.yaml` for the entire run.
+  startup: the model exceeds available unified memory. The campaign defaults to
+  `0.80`; set a lower `GPU_UTIL` for the campaign or lower `gpu_util_default`
+  in `configs/models.yaml` for a persistent change.
 - Dual-node performance looks like Wi-Fi or management-network traffic: rerun
   `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
   counters during a `tp2` run.
@@ -1530,7 +1571,7 @@ Useful checks after editing the repository:
 ```bash
 export PYTHONNOUSERSITE=1
 python scripts/check_environment.py
-OUT_DIR=results PLAN_ONLY=1 scripts/run_job.sh
+PLAN_ONLY=1 scripts/run_job.sh
 python -m compileall bench plotting scripts
 python -m unittest discover -s tests -v
 (for script in scripts/*.sh; do bash -n "$script" || exit 1; done)

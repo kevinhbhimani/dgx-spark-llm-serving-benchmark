@@ -13,6 +13,7 @@ import json
 import time
 from dataclasses import dataclass, field
 import aiohttp
+from scripts.failure_diagnostics import redact_diagnostic
 
 
 @dataclass
@@ -230,5 +231,5 @@ async def send_request(session, cfg, spec, t_start=None) -> RequestRecord:
         rec.success = not rec.error
     except Exception as e:  # network, timeout, parse
         rec.t_end = time.perf_counter()
-        rec.error = f"{type(e).__name__}: {e}"
+        rec.error = f"{type(e).__name__}: {redact_diagnostic(str(e), (cfg.api_key,))}"
     return rec

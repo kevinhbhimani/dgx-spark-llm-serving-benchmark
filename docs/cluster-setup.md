@@ -1,12 +1,13 @@
 # Cluster setup and pre-flight
 
-Two DGX Sparks: **Diya** (`cisc-diya`, head, `10.10.10.1`) and **Hoedus**
-(`cisc-hoedus`, worker, `10.10.10.2`), joined by two QSFP cables, which give
-four ConnectX-7 interfaces per node. The campaign requests NCCL over RDMA (RoCEv2) with all four interfaces
-available. Confirm the transport in the NCCL logs and the devices actually used
-before claiming four-interface striping. Run the steps in order; each must pass
-before the next. See [RDMA readiness](rdma-readiness.md) for the software checks,
-remaining hardware gates, and paper reporting limits.
+Two DGX Spark GB10 systems: **Diya** (`cisc-diya`, head, `10.10.10.1`) and
+**Hoedus** (`cisc-hoedus`, worker, `10.10.10.2`). Two QSFP cables connect the
+systems and provide four ConnectX-7 interfaces per node. The campaign requests
+NCCL over RDMA (RoCEv2) with all four interfaces available. Check NCCL logs
+and device use before claiming four-interface striping.
+Complete required setup and campaign gates before measurement. Optional
+diagnostics are labeled. See [RDMA readiness](rdma-readiness.md) for software
+checks, hardware gates, and paper reporting limits.
 
 ## Command scope by node
 
@@ -23,11 +24,14 @@ different node. Commands launched on Diya can use Ray to run work on Hoedus.
 | `scripts/start_ray.sh head` / `worker` | Diya / Hoedus, respectively | Starts one Ray node on each machine |
 | `ray status`, RDMA microbenchmarks, canary, and campaign | Diya only | Ray distributes two-node benchmarks and dual-node serving to Hoedus |
 | `scripts/hardware_smoke.sh` | Diya only | Diya GPU only; it does not require Hoedus |
-| `scripts/predownload.sh` | Diya only | Downloads to Diya's local Hugging Face cache |
+| `scripts/predownload.sh` | Diya only | Acquires pinned snapshots for dual-node serving or offline cache warming |
 | `scripts/purge_model_cache.sh` | Diya only | Purges Diya and, when Ray is active, Hoedus caches |
 | `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each machine |
 
-## 0. Disable Nvidia DGX Dashboard Automatic Update Notifier (remember to check for updates periodically at localhost:11000)
+## 0. Disable the DGX Dashboard update notifier
+
+This removes the automatic update notification entry. Check for system updates
+periodically at `localhost:11000`.
 
 ```bash
 yes | sudo rm /etc/xdg/autostart/dgx-dashboard-notify.desktop
@@ -113,12 +117,19 @@ PYTHONNOUSERSITE=1 .venv/bin/python scripts/check_environment.py
 ```
 
 Put `HF_TOKEN` (with the Llama 3.1 license accepted) in Diya's repo-local
-`.env`; set its permissions to `600`. The campaign downloads one model at a
-time to Diya and mirrors dual-node weights to Hoedus over Ray-managed TCP.
-Each node has a separate Hugging Face cache. `HF_HUB_DISABLE_SHARED_BLOBS=1`
-keeps new downloads in repository-local cache blobs. The largest snapshot is
-about 163 GB, so keep about 200 GB free in each cache. Set `HF_CACHE` in each
-node's `.env` to use a larger drive.
+`.env`; set its permissions to `600`. Single-node launches can acquire pinned
+revisions through vLLM. Dual-node serving acquires snapshots on Diya and mirrors
+them to Hoedus over Ray-managed TCP. Each node has a separate host-user-writable
+Hugging Face cache. The cache defaults to `$HOME/.cache/huggingface`; scripts
+derive `HF_HUB_CACHE=$HF_CACHE/hub` and mount it at `/hf-cache` in containers.
+`HF_HUB_DISABLE_SHARED_BLOBS=1` keeps new downloads in repository-local cache
+blobs. The largest snapshot is about 163 GB, so keep about 200 GB free in each
+cache. Set `HF_CACHE` in each node's `.env` to use a larger drive.
+
+The campaign GPU-memory target defaults to `0.80` in
+`configs/models.yaml`. Set `GPU_UTIL` on Diya to override the target for plan
+validation, memory preflight, and every serving launch. Keep the same value
+when resuming a campaign.
 
 ## 7. Ray cluster
 
@@ -137,23 +148,29 @@ docker exec vllm-spark ray status  # Diya: two nodes Active
 the exact dependency constraints in `scripts/ray-runtime-constraints.txt`. Both
 nodes need PyPI access at start. Update that file when changing `RAY_VERSION`.
 
-## 8. RDMA gates (launch on Diya, use both nodes)
+## 8. Optional RDMA diagnostics (launch on Diya, use both nodes)
 
 ```bash
-OUT_DIR=results scripts/ray_allreduce_bench.sh        # fails below 16 GB/s at 1 GiB
-OUT_DIR=results scripts/interconnect_extra_bench.sh   # all-reduce + send/recv, transport from NCCL's own log
+export OUT_DIR=results/rdma-v4-paper-2026-10-22
+scripts/ray_allreduce_bench.sh        # fails below 16 GB/s at 1 GiB
+scripts/interconnect_extra_bench.sh   # all-reduce + send/recv, transport from NCCL's own log
 ```
 
-`run_job.sh` runs both itself; running them here catches a link problem
-before anything else. TCP sockets plateau near 2 GB/s and the four-port RDMA
-pilot reached 23.6 GB/s, so the 16 GB/s floor separates them cleanly.
+These commands provide diagnostics before the campaign. `run_job.sh` always
+runs a fresh all-reduce gate before the canary and before each campaign or
+resume invocation. A manual all-reduce run therefore does not replace the
+campaign gate. During `run_job.sh`, a send/recv failure is logged and does not
+block later campaign work. The campaign can reuse a valid send/recv result that
+matches the current runtime and source. TCP sockets plateau near 2 GB/s and the
+four-port RDMA pilot reached 23.6 GB/s, so the 16 GB/s floor separates them
+cleanly.
 
 ## 9. Hardware smoke test (Diya only, single node)
 
 ```bash
 scripts/hardware_smoke.sh
 SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
-  SMOKE_CONCURRENCIES="1 128" OUT_DIR=results-smoke-lightning \
+  SMOKE_CONCURRENCIES="1 128" OUT_DIR=results/smoke-lightning-2026-10-22 \
   scripts/hardware_smoke.sh
 ```
 
@@ -173,20 +190,27 @@ checks, the one-model-at-a-time cache flow, canary preflight, and resume
 commands.
 
 ```bash
-PLAN_ONLY=1 scripts/run_job.sh           # hardware-free: matrix, windows, hours
-STOP_AFTER_CANARY=1 scripts/run_job.sh   # every model x config launches once
-scripts/run_job.sh                       # the campaign; rerun to resume
+export OUT_DIR=results/rdma-v4-paper-2026-10-22
+PLAN_ONLY=1 scripts/run_job.sh
+CANARY_FIRST=1 STOP_AFTER_CANARY=1 scripts/run_job.sh
+scripts/run_job.sh
 ```
 
-The canary pass lists every failure at the end; fix them, commit, and rerun
-it. A passed canary is remembered in `results/.canary_passed`.
+The plan validates the matrix and reports windows and estimated measurement
+time without hardware operations. The canary launches every model/configuration
+pair once and stops before measurements. It collects recoverable pair failures
+and reports them; a failed canary does not proceed to measurements by default.
+Fix failures, commit the changes, and rerun the canary. A passing canary is
+remembered in `$OUT_DIR/.canary_passed` when the campaign identity matches,
+including `GPU_UTIL`. Keep `OUT_DIR` and `GPU_UTIL` unchanged when resuming.
 
 ## TCP ablation (after the campaign)
 
 Restart Ray on both nodes with `NCCL_IB_DISABLE=1`, then run the subset in
 the top-level README (section "Transport evidence and the TCP ablation")
-into `results-tcp-ablation`. `plotting/plot_interconnect.py results
-results-tcp-ablation --out results/figs` overlays both transports.
+into `results/tcp-ablation-2026-10-22`. `plotting/plot_interconnect.py
+results/rdma-v4-paper-2026-10-22 results/tcp-ablation-2026-10-22` overlays
+both transports and writes the figure under the first campaign's `figs/stats/`.
 
 ## Rollback
 

@@ -33,6 +33,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from campaign_output import campaign_metadata, resolve_campaign_dir
 
 
 ALLOWED_CONFIGS = frozenset({"single", "tp2", "pp2"})
@@ -204,9 +205,13 @@ def validate_models_yaml(
         raise CampaignValidationError(
             f"models YAML {path} must define a non-empty 'models' list"
         )
+    gpu_util_override = os.environ.get("GPU_UTIL")
     run_gpu_utilization = _validate_gpu_util(
-        document.get("gpu_util_default", 0.80),
-        "models YAML gpu_util_default",
+        gpu_util_override
+        if gpu_util_override is not None
+        else document.get("gpu_util_default", 0.80),
+        "GPU_UTIL" if gpu_util_override is not None
+        else "models YAML gpu_util_default",
     )
 
     models: list[ModelSpec] = []
@@ -500,6 +505,7 @@ def plan_campaign(
         {
             "model_label": model.label,
             "model": model.name,
+            "gpu_utilization": model.gpu_utilization,
             "config_label": config,
             "concurrencies": list(loads),
             "repeat_ids": list(range(1, repeat_count + 1)),
@@ -512,6 +518,7 @@ def plan_campaign(
         "schema_version": 1,
         "models_yaml": str(campaign.models_path),
         "experiment_yaml": str(campaign.experiment_path),
+        "gpu_utilization": campaign.models[0].gpu_utilization,
         "largest_request_tokens": campaign.largest_request_tokens,
         "model_count": len(campaign.models),
         "model_config_count": len(matrix),
@@ -1337,8 +1344,10 @@ def _build_manifest(
         "schema_version": 1,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "campaign": {
+            **campaign_metadata(out_dir),
             "models_yaml": str(campaign.models_path),
             "experiment_yaml": str(campaign.experiment_path),
+            "gpu_utilization": campaign.models[0].gpu_utilization,
             "concurrencies": list(concurrencies),
             "repeats": repeats,
             "expected_count": expected_count,
@@ -1885,7 +1894,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument(
         "--out-dir",
         default=None,
-        help="result directory (default: experiment YAML out_dir or 'results')",
+        help="result directory (default: OUT_DIR or results/benchmark-<UTC-date>)",
     )
     verify_parser.add_argument(
         "--manifest",
@@ -1925,10 +1934,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         else:
             if args.out_dir is None:
-                experiment = _load_mapping(args.experiment_path, "experiment YAML")
-                out_dir = str(experiment.get("out_dir") or "results")
+                out_dir = str(resolve_campaign_dir(os.environ.get("OUT_DIR")))
             else:
-                out_dir = args.out_dir
+                out_dir = str(resolve_campaign_dir(args.out_dir))
+            if args.manifest:
+                manifest_path = Path(args.manifest).expanduser()
+                if not manifest_path.is_absolute():
+                    manifest_path = Path(out_dir) / manifest_path
+                args.manifest = str(manifest_path.resolve())
             result = verify_campaign(
                 args.models_path,
                 args.experiment_path,

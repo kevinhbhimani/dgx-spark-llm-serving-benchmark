@@ -20,12 +20,18 @@ import tempfile
 import time
 import urllib.request
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from campaign_output import resolve_campaign_dir
+
 from .config import ExperimentConfig
 from .workload import Workload
 from .runner import run_phase
 from .monitors import PowerSampler, VLLMMetricsScraper, WorkerPowerSampler
-from .metrics import aggregate
+from .metrics import aggregate, temperature_summary
 from . import server_info
+from .hf_cache import configure_hf_cache
 
 
 # v4: the closed-loop window may extend under the minimum-sample rule
@@ -801,33 +807,6 @@ def _validate_provenance(cfg) -> None:
         raise RuntimeError("required provenance is incomplete: " + "; ".join(problems))
 
 
-def _ensure_writable_hf_cache():
-    """Fall back to a client-local HF cache when the shared one is unwritable.
-
-    The serving container downloads models into the mounted HF cache as root,
-    leaving ~/.cache/huggingface root-owned on the host; the client's own
-    tokenizer/config downloads then die with PermissionError mid-sweep. When
-    the default hub cache is not writable (and the user has not pointed HF
-    elsewhere), redirect this process to a separate user-owned cache. It only
-    ever holds tokenizers and configs, a few MB per model.
-    """
-    if any(os.environ.get(v) for v in
-           ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME")):
-        return
-    hub = os.path.expanduser("~/.cache/huggingface/hub")
-    probe = hub
-    while probe != os.path.dirname(probe) and not os.path.exists(probe):
-        probe = os.path.dirname(probe)
-    if os.access(probe, os.W_OK):
-        return
-    alt = os.path.expanduser("~/.cache/huggingface-client/hub")
-    os.makedirs(alt, exist_ok=True)
-    os.environ["HF_HUB_CACHE"] = alt
-    print(f"[bench] shared HF cache {hub} is not writable (owned by the "
-          f"serving container's root user); using {alt} for client-side "
-          "tokenizer/config downloads")
-
-
 def _load_tokenizer(cfg):
     if not cfg.tokenizer:
         return None
@@ -1345,8 +1324,10 @@ def main():
         cfg.cooldown_s = args.cooldown_s
     if args.base_url:
         cfg.base_url = args.base_url
-    if args.out_dir:
-        cfg.out_dir = args.out_dir
+    if args.out_dir is not None:
+        cfg.out_dir = str(resolve_campaign_dir(args.out_dir))
+    else:
+        cfg.out_dir = str(resolve_campaign_dir(os.environ.get("OUT_DIR")))
     if args.power_backend:
         cfg.power_backend = args.power_backend
     if args.worker_power_container:
@@ -1431,7 +1412,7 @@ def main():
     )
     # Before the first transformers/huggingface_hub import reads the HF env.
     if cfg.tokenizer or cfg.collect_hf_metadata:
-        _ensure_writable_hf_cache()
+        configure_hf_cache()
     workload = Workload(cfg, _load_tokenizer(cfg))
 
     point = cfg.concurrency if cfg.mode == "closed" else cfg.qps
@@ -1523,6 +1504,19 @@ def main():
     summary = aggregate(records, cfg, window_start, window_end,
                         power if cfg.power_backend != "none" else None, vmet,
                         worker_power=wpower)
+    summary["telemetry_schema_version"] = 2
+    summary["temperature"] = temperature_summary(
+        power,
+        wpower,
+        window_start,
+        window_end,
+        expected_nodes=2 if cfg.config_label in {"tp2", "pp2"} else 1,
+        head_node_ip=cfg.head_node_ip or os.environ.get("HEAD_IP") or None,
+        worker_node_ip=(wpower.identity_ip if wpower and wpower.identity_ip
+                        else cfg.worker_power_node_ip or None),
+        worker_ray_node_id=(wpower.identity_node_id if wpower and wpower.identity_node_id
+                            else None),
+    )
     _validate_observability(summary, cfg)
     _validate_result_quality(summary, cfg)
     summary["run_tag"] = tag
@@ -1582,18 +1576,22 @@ def main():
     power_data = b""
     if cfg.power_backend != "none":
         power_name = f"{tag}.power.jsonl"
+        head_node_ip = cfg.head_node_ip or os.environ.get("HEAD_IP") or None
         power_rows = [
-            {"source": "head", "t_perf": t, "watts": watts}
-            for t, watts in power.samples()
+            {"source": "head", "node_ip": head_node_ip,
+             "telemetry_schema_version": 2, **record}
+            for record in power.sample_records()
         ]
         if wpower:
             power_rows.extend(
-                {"source": "worker", "t_perf": t, "watts": watts,
-                 "node_ip": wpower.identity_ip,
-                 "ray_node_id": wpower.identity_node_id}
-                for t, watts in wpower.samples()
+                {"source": "worker", "node_ip": wpower.identity_ip,
+                 "ray_node_id": wpower.identity_node_id,
+                 "telemetry_schema_version": 2, **record}
+                for record in wpower.sample_records()
             )
-        power_rows.sort(key=lambda row: (row["t_perf"], row["source"]))
+        power_rows.sort(key=lambda row: (
+            row["t_perf"], row["source"], row.get("gpu_index") or ""
+        ))
         power_data = "".join(
             json.dumps(_json_safe(row), sort_keys=True) + "\n"
             for row in power_rows

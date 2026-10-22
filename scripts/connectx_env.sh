@@ -62,6 +62,13 @@ export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+# HF_CACHE is the host Hugging Face home. Every host and container process uses
+# its repository cache below that root.
+export HF_HOME="$HF_CACHE"
+export HF_HUB_CACHE="${HF_CACHE%/}/hub"
+export HF_MODULES_CACHE="${HF_CACHE%/}/modules"
+export HF_CACHE_UID="$(id -u)"
+export HF_CACHE_GID="$(id -g)"
 # Keep Hugging Face downloads in repo-local blobs. The cache-wide Xet blob
 # store creates an extra symlink level that complicates mirroring and cleanup.
 export HF_HUB_DISABLE_SHARED_BLOBS=1
@@ -76,6 +83,26 @@ export CONTAINER_DNS="${CONTAINER_DNS-}"
 # Python dependency versions to the latest full runtime recorded in this repo.
 # Update the image, Ray version, and constraints together.
 export RAY_VERSION="${RAY_VERSION:-2.56.1}"
+
+check_hf_cache_access() {
+  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local python="${PYTHON:-python3}"
+  mkdir -p "$HF_HUB_CACHE" || {
+    echo "[cache] cannot create HF_HUB_CACHE=$HF_HUB_CACHE as UID:GID $HF_CACHE_UID:$HF_CACHE_GID" >&2
+    return 1
+  }
+  "$python" "$script_dir/cache_access_probe.py" "$HF_HUB_CACHE"
+}
+
+check_hf_cache_access_in_image() {
+  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  docker run --rm --user "$HF_CACHE_UID:$HF_CACHE_GID" \
+    --entrypoint python3 \
+    -v "$HF_CACHE:/hf-cache" \
+    -v "$script_dir/cache_access_probe.py:/tmp/cache_access_probe.py:ro" \
+    -e HOME=/tmp -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
+    "$VLLM_IMAGE" /tmp/cache_access_probe.py /hf-cache/hub
+}
 
 # Safety helpers shared by every launcher/orchestrator. Paper measurements must
 # originate on the configured head because local GPU power is part of each row.

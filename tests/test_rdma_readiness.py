@@ -11,6 +11,8 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest import mock
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,6 +81,7 @@ class ConnectXPreflightTests(unittest.TestCase):
                         DGX_SPARK_ENV_LOADED="1", CX_IFACE="cx0,cx1",
                         NCCL_IB_DISABLE="0",
                         DIYA_IP="10.10.10.1", HOEDUS_IP="10.10.10.2", HEAD_IP="10.10.10.1",
+                        HF_CACHE=str(self.root / "hf-cache"),
                         CALL_LOG=str(self.calls))
         self.command("getent", '''case "$2" in
           cisc-diya)
@@ -155,6 +158,14 @@ class ConnectXPreflightTests(unittest.TestCase):
             self.assertIn("MAX_NUM_SEQS must be a positive integer", result.stderr)
         self.assertFalse(self.calls.exists())
 
+    def test_invalid_gpu_util_fails_before_host_or_docker_operations(self) -> None:
+        for value in ("0", "1.1", "nan", "inf", "invalid"):
+            with self.subTest(value=value):
+                result = self.run_script("launch_server.sh", GPU_UTIL=value)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("GPU_UTIL must satisfy 0 < value <= 1", result.stderr)
+                self.assertFalse(self.calls.exists())
+
     def test_campaign_matrix_emits_run_wide_memory_fraction(
         self: ConnectXPreflightTests,
     ) -> None:
@@ -172,24 +183,53 @@ class ConnectXPreflightTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         fractions = {line.split("|")[4] for line in result.stdout.splitlines()}
-        self.assertEqual(fractions, {"0.9"})
+        models_config = yaml.safe_load((ROOT / "configs" / "models.yaml").read_text())
+        self.assertEqual(fractions, {str(models_config["gpu_util_default"])})
 
     def test_gpu_memory_fraction_and_scheduler_limit_reach_all_serving_modes(
         self: ConnectXPreflightTests,
     ) -> None:
+        self.command("python3", '''if [[ "$1" == "-" ]]; then
+          cat >/dev/null
+          exit 0
+        fi
+        exec /usr/bin/python3 "$@"''')
         self.command("docker", '''case "$*" in
           *'ray status'*) echo Active;;
           *) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
         for config in ("single", "tp2", "pp2"):
             result = self.run_script("launch_server.sh", config, MAX_NUM_SEQS="4",
-                                     SINGLE_CONTAINER="ray", GPU_UTIL="0.90",
+                                     SINGLE_CONTAINER="ray", GPU_UTIL="0.85",
                                      HF_CACHE=str(self.root / "empty-cache"))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             args = self.calls.read_text().splitlines()
             gpu_memory_index = args.index("--gpu-memory-utilization")
-            self.assertEqual(args[gpu_memory_index + 1], "0.90")
+            self.assertEqual(args[gpu_memory_index + 1], "0.85")
             max_num_seqs_index = args.index("--max-num-seqs")
             self.assertEqual(args[max_num_seqs_index + 1], "4")
+
+    def test_direct_launch_defaults_gpu_memory_fraction_to_80_percent(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        self.command("python3", '''if [[ "$1" == "-" ]]; then
+          cat >/dev/null
+          exit 0
+        fi
+        exec /usr/bin/python3 "$@"''')
+        self.command("docker", '''case "$*" in
+          *'ray status'*) echo Active;;
+          *) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
+        result = self.run_script(
+            "launch_server.sh",
+            "single",
+            SINGLE_CONTAINER="ray",
+            GPU_UTIL="",
+            HF_CACHE=str(self.root / "empty-cache"),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = self.calls.read_text().splitlines()
+        gpu_memory_index = args.index("--gpu-memory-utilization")
+        self.assertEqual(args[gpu_memory_index + 1], "0.80")
 
     def test_purge_wrapper_passes_explicit_cache_pruning_opt_out(
         self: ConnectXPreflightTests,
