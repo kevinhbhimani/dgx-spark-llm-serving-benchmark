@@ -130,7 +130,7 @@ class CampaignFixture:
             "connectx_iface": "enp1s0f0np0",
             "dtype": "auto",
             "generation_config": "vllm",
-            "gpu_util": "0.9",
+            "gpu_util": "0.8",
             "head_ip": "192.0.2.10",
             "hf_hub_offline": "1",
             "image": IMAGE,
@@ -250,7 +250,7 @@ class CampaignFixture:
         repeat_id: int = 1,
         repeat_count: int = 1,
         gpu_blocks: int = 10,
-        gpu_memory_utilization: float = 0.9,
+        gpu_memory_utilization: float = 0.8,
     ) -> None:
         cfg = ExperimentConfig.from_yaml(str(self.experiment))
         cfg.model = "org/model"
@@ -536,11 +536,11 @@ class VerifyTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = CampaignFixture(Path(tmp))
-            fixture.add_point(gpu_memory_utilization=0.8)
+            fixture.add_point(gpu_memory_utilization=0.9)
 
             with self.assertRaisesRegex(
                 validator.CampaignValidationError,
-                "live gpu_memory_utilization=0.8, expected 0.9",
+                "live gpu_memory_utilization=0.9, expected 0.8",
             ):
                 validator.verify_campaign(
                     fixture.models, fixture.experiment, fixture.results, [1], 1
