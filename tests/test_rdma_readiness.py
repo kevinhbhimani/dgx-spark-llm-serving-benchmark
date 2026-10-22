@@ -172,7 +172,7 @@ class ConnectXPreflightTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         fractions = {line.split("|")[4] for line in result.stdout.splitlines()}
-        self.assertEqual(fractions, {"0.9"})
+        self.assertEqual(fractions, {"0.8"})
 
     def test_gpu_memory_fraction_and_scheduler_limit_reach_all_serving_modes(
         self: ConnectXPreflightTests,
@@ -182,12 +182,12 @@ class ConnectXPreflightTests(unittest.TestCase):
           *) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
         for config in ("single", "tp2", "pp2"):
             result = self.run_script("launch_server.sh", config, MAX_NUM_SEQS="4",
-                                     SINGLE_CONTAINER="ray", GPU_UTIL="0.90",
+                                     SINGLE_CONTAINER="ray", GPU_UTIL="0.80",
                                      HF_CACHE=str(self.root / "empty-cache"))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             args = self.calls.read_text().splitlines()
             gpu_memory_index = args.index("--gpu-memory-utilization")
-            self.assertEqual(args[gpu_memory_index + 1], "0.90")
+            self.assertEqual(args[gpu_memory_index + 1], "0.80")
             max_num_seqs_index = args.index("--max-num-seqs")
             self.assertEqual(args[max_num_seqs_index + 1], "4")
 
