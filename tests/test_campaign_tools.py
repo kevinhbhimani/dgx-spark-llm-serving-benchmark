@@ -93,8 +93,10 @@ class PurgeModelCacheTests(unittest.TestCase):
             (snap / "model.safetensors").symlink_to(blobs / "abc")
         (self.hub / ".locks" / "models--org--gone").mkdir(parents=True)
         self.patches = [
-            mock.patch.object(purge_model_cache, "HUB", str(self.hub)),
-            mock.patch.object(purge_model_cache, "busy_processes", return_value=[]),
+            mock.patch.object(purge_model_cache_container, "HUB", str(self.hub)),
+            mock.patch.object(
+                purge_model_cache_container, "busy_processes", return_value=[]
+            ),
         ]
         for patch in self.patches:
             patch.start()
