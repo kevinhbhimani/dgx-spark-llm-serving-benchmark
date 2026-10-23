@@ -16,7 +16,8 @@ DEFAULT_CAMPAIGN_NAME = "benchmark"
 RESULTS_DIRECTORY = "results"
 LOGS_DIRECTORY = "logs"
 IDENTITY_FILENAME = "campaign_run.json"
-DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})$")
+DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})(?:-(\d{3,}))?$")
+CAMPAIGN_COUNTER_WIDTH: int = 3
 
 
 def utc_date(now: datetime | None = None) -> str:
@@ -50,6 +51,34 @@ def resolve_campaign_dir(
             raise ValueError(f"invalid default campaign name: {default_name!r}")
         target = base / RESULTS_DIRECTORY / f"{default_name}-{utc_date(now)}"
     return target.resolve()
+
+
+def next_available_campaign_dir(
+    *,
+    default_name: str = DEFAULT_CAMPAIGN_NAME,
+    cwd: str | os.PathLike[str] | None = None,
+    now: datetime | None = None,
+) -> Path:
+    """Select the default campaign path or the next unused numbered path."""
+    target = resolve_campaign_dir(default_name=default_name, cwd=cwd, now=now)
+    maximum_counter = 0
+    counter_prefix = f"{target.name}-"
+    for existing_path in target.parent.glob(f"{target.name}-*"):
+        suffix = existing_path.name[len(counter_prefix) :]
+        if suffix.isdigit() and (existing_path.exists() or existing_path.is_symlink()):
+            maximum_counter = max(maximum_counter, int(suffix))
+
+    if not target.exists() and not target.is_symlink() and maximum_counter == 0:
+        return target
+
+    counter = maximum_counter + 1
+    while True:
+        candidate = target.with_name(
+            f"{target.name}-{counter:0{CAMPAIGN_COUNTER_WIDTH}d}"
+        )
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+        counter += 1
 
 
 def campaign_metadata(out_dir: str | os.PathLike[str]) -> dict[str, str | None]:
@@ -319,6 +348,11 @@ def _parser() -> argparse.ArgumentParser:
     resolve = commands.add_parser("resolve", help="resolve a campaign output path")
     resolve.add_argument("--out-dir")
     resolve.add_argument("--default-name", default=DEFAULT_CAMPAIGN_NAME)
+    resolve.add_argument(
+        "--next-available",
+        action="store_true",
+        help="select the next unused default path for a new campaign",
+    )
 
     results = commands.add_parser("results-dir", help="resolve a campaign results directory")
     results.add_argument("--out-dir", required=True)
@@ -341,7 +375,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "resolve":
-            print(resolve_campaign_dir(args.out_dir, default_name=args.default_name))
+            if args.next_available and not args.out_dir:
+                output_dir = next_available_campaign_dir(default_name=args.default_name)
+            else:
+                output_dir = resolve_campaign_dir(
+                    args.out_dir, default_name=args.default_name
+                )
+            print(output_dir)
         elif args.command == "results-dir":
             print(resolve_campaign_results_dir(args.out_dir))
         elif args.command == "logs-dir":

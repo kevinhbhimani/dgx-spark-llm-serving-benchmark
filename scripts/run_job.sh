@@ -8,8 +8,9 @@
 #
 # scripts/connectx_env.sh defaults to the dual-cable RDMA layout with NCCL
 # transport logging; nothing has to be sourced first.
-# An unset OUT_DIR uses results/benchmark-<UTC-date>. An explicit OUT_DIR is
-# the complete campaign path and remains stable when a campaign resumes.
+# An unset OUT_DIR uses the next available results/benchmark-<UTC-date> path.
+# An explicit OUT_DIR is the complete campaign path and remains stable when a
+# campaign resumes.
 #
 # Model lifecycle. The matrix never has to fit on disk at once. Each model in
 # configs/models.yaml (file order; entries sharing a repo form one group) goes
@@ -111,7 +112,8 @@ fi
 export PYTHON
 export PYTHONNOUSERSITE=1
 if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
-  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve)" || exit 1
+  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve \
+    --next-available)" || exit 1
 else
   OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve --out-dir "$OUT_DIR")" || exit 1
 fi

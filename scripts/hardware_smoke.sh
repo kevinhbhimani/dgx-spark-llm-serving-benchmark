@@ -30,7 +30,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 
-source "$HERE/campaign_output.sh"
+source "$HERE/scripts/campaign_output.sh"
 campaign_resolve_out_dir smoke
 campaign_reject_existing_implicit_out_dir || exit 1
 CAMPAIGN_FIGURES_DIR="$OUT_DIR/figs"
