@@ -24,7 +24,7 @@ different node. Commands launched on Diya can use Ray to run work on Hoedus.
 | `scripts/start_ray.sh head` / `worker` | Diya / Hoedus, respectively | Starts one Ray node on each machine |
 | `ray status`, RDMA microbenchmarks, canary, and campaign | Diya only | Ray distributes two-node benchmarks and dual-node serving to Hoedus |
 | `scripts/hardware_smoke.sh` | Diya only | Diya GPU only; it does not require Hoedus |
-| `scripts/predownload.sh` | Diya only | Acquires pinned snapshots for dual-node serving or offline cache warming |
+| `scripts/predownload.sh` | Diya only | Acquires pinned snapshots on demand before single- or dual-node runs |
 | `scripts/purge_model_cache.sh` | Diya only | Purges Diya and, when Ray is active, Hoedus caches |
 | `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each machine |
 
@@ -117,9 +117,9 @@ PYTHONNOUSERSITE=1 .venv/bin/python scripts/check_environment.py
 ```
 
 Put `HF_TOKEN` (with the Llama 3.1 license accepted) in Diya's repo-local
-`.env`; set its permissions to `600`. Single-node launches can acquire pinned
-revisions through vLLM. Dual-node serving acquires snapshots on Diya and mirrors
-them to Hoedus over Ray-managed TCP. Each node has a separate host-user-writable
+`.env`; set its permissions to `600`. `run_models.sh` acquires pinned revisions
+on Diya for both single- and dual-node runs. Dual-node runs mirror them to Hoedus
+over Ray-managed TCP. Each node has a separate host-user-writable
 Hugging Face cache. The cache defaults to `$HOME/.cache/huggingface`; scripts
 derive `HF_HUB_CACHE=$HF_CACHE/hub` and mount it at `/hf-cache` in containers.
 `HF_HUB_DISABLE_SHARED_BLOBS=1` keeps new downloads in repository-local cache

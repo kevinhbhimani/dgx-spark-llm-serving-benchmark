@@ -27,7 +27,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import campaign_root_from_input, resolve_campaign_output_path
+from campaign_output import (
+    campaign_root_from_input,
+    resolve_campaign_logs_dir,
+    resolve_campaign_output_path,
+    resolve_campaign_results_dir,
+)
 
 LOG_RE = re.compile(
     r"server_(?P<label>.+)_(?P<config>single|tp2|pp2)_(?P<fp>[0-9a-f]{16})_"
@@ -92,10 +97,12 @@ def main(argv: list[str]) -> int:
     out_dir = campaign_root_from_input(args.out_dir)
     if args.md:
         args.md = str(resolve_campaign_output_path(args.md, out_dir))
-    expected = policy_expectations(out_dir)
+    results_dir = resolve_campaign_results_dir(out_dir)
+    logs_dir = resolve_campaign_logs_dir(out_dir)
+    expected = policy_expectations(results_dir)
 
     rows = []
-    for path in sorted(out_dir.glob("server_*.log")):
+    for path in sorted(logs_dir.glob("server_*.log")):
         match = LOG_RE.fullmatch(path.name)
         if not match or match["config"] == "single":
             continue

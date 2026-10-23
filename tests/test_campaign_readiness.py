@@ -195,8 +195,9 @@ class MicrobenchArtifactTests(unittest.TestCase):
             wrapper = scripts / name
             wrapper.write_text('#!/bin/bash\nif [[ "${1:-}" == "--fingerprint-only" ]]; then echo identity; else echo RERUN; fi\n')
             wrapper.chmod(0o755)
-            out = work / "results"
-            out.mkdir()
+            campaign = work / "campaign"
+            out = campaign / "results"
+            out.mkdir(parents=True)
             artifact_id = "identity" if matching else "old-identity"
             if kind == "allreduce":
                 artifact = out / f"allreduce_ray_{artifact_id}_fixture.csv"
@@ -209,7 +210,10 @@ class MicrobenchArtifactTests(unittest.TestCase):
             else:
                 self.write_interconnect(out / f"interconnect_extra_{artifact_id}_fixture.csv", transport=transport)
             environment = os.environ.copy()
-            environment.update(OUT_DIR=str(out), PYTHON=sys.executable, NCCL_IB_DISABLE="0")
+            environment.update(
+                OUT_DIR=str(campaign), CAMPAIGN_RESULTS_DIR=str(out),
+                PYTHON=sys.executable, NCCL_IB_DISABLE="0",
+            )
             result = subprocess.run(
                 ["bash", "-c", f"log() {{ :; }}\n{function}() {{{body}\n}}\n{function}"],
                 cwd=work, env=environment, text=True, capture_output=True, check=False,
@@ -237,6 +241,7 @@ class ReplicateLaunchTests(unittest.TestCase):
         environment.update(
             REPEATS="3", ONLY_REPEAT="", STATUS_ONLY="0", CANARY_ONLY="0",
             STATUS_MISSING="0", CONFIG="single", OUT_DIR="results",
+            CAMPAIGN_RESULTS_DIR="results/results",
             LAST_SERVER_LOG="",
         )
         environment.update(overrides)

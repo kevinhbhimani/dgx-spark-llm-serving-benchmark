@@ -4,8 +4,8 @@
 # with Ray up on both nodes (scripts/start_ray.sh head|worker) and NO model
 # being served.
 #
-# Writes results to $OUT_DIR/allreduce_ray_<timestamp>.csv so the interconnect
-# numbers live beside the serving results they explain.
+# Writes result CSVs under $OUT_DIR/results/ and diagnostic streams under
+# $OUT_DIR/logs/.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
@@ -60,17 +60,13 @@ if [[ "${1:-}" == "--fingerprint-only" ]]; then
   exit 0
 fi
 
-if docker exec "$VLLM_CONTAINER" pgrep -f "vllm serve" >/dev/null 2>&1; then
-  echo "[microbench] a vLLM server is running in $VLLM_CONTAINER; stop it" \
-       "first, the GPU must be idle for a clean interconnect reading" >&2
-  exit 1
-fi
+wait_for_resources_idle required || exit 1
 
-mkdir -p "$OUT_DIR"
-LOG="$OUT_DIR/allreduce_ray_${ARTIFACT_FINGERPRINT}_$(date +%Y%m%d-%H%M%S).csv"
-TMP="$LOG.tmp.$$"
-RAW="${LOG%.csv}_raw.log"
-DIAG="${LOG%.csv}_nccl.log"
+mkdir -p "$CAMPAIGN_RESULTS_DIR" "$CAMPAIGN_LOGS_DIR"
+RESULT="$CAMPAIGN_RESULTS_DIR/allreduce_ray_${ARTIFACT_FINGERPRINT}_$(date +%Y%m%d-%H%M%S).csv"
+TMP="$RESULT.tmp.$$"
+RAW="$CAMPAIGN_LOGS_DIR/$(basename "${RESULT%.csv}")_raw.log"
+DIAG="$CAMPAIGN_LOGS_DIR/$(basename "${RESULT%.csv}")_nccl.log"
 trap 'rm -f "$TMP"' EXIT
 docker exec -i \
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
@@ -89,9 +85,9 @@ if [[ -z "${PYTHON:-}" && ! -x "$validator_python" ]]; then validator_python=pyt
 # Only a successful complete pipeline becomes a resumable campaign artifact.
 # A failed docker/Ray/NCCL run leaves no allreduce_ray_*.csv for run_job.sh to
 # mistake as completed on its next invocation.
-mv "$TMP" "$LOG"
+mv "$TMP" "$RESULT"
 trap - EXIT
 
-echo "[microbench] wrote $LOG"
+echo "[microbench] wrote $RESULT"
 echo "[microbench] accepted: 1GiB busbw >= $MIN_1G_BUSBW GB/s and 8B min_s <= $MAX_8B_LATENCY s"
 echo "[microbench] busbw at 1GiB approximates sustained link bandwidth; 8B min_s is the collective latency floor"

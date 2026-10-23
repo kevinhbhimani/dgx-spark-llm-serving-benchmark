@@ -12,9 +12,8 @@
 # HEAD_IP stay on the first subnet for the Ray rendezvous. Override CX_IFACE
 # for a single cable and NCCL_IB_DISABLE=1 for the TCP-socket ablation.
 
-_CONNECTX_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$_CONNECTX_HERE/load_env.sh"
-unset _CONNECTX_HERE
+CONNECTX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$CONNECTX_SCRIPT_DIR/load_env.sh"
 
 export CX_IFACE="${CX_IFACE:-enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1}"
 
@@ -177,16 +176,34 @@ require_connectx_rdma() {
   done
 }
 
-# One fixed serving container and one head GPU means campaigns targeting
-# different output directories still conflict. Scope the nonblocking lock to
-# the physical head/container pair, not OUT_DIR.
-_campaign_lock_id="${VLLM_CONTAINER}_${HEAD_IP//[:.]/_}"
-export CAMPAIGN_LOCK_FILE="${CAMPAIGN_LOCK_FILE:-/tmp/dgx-spark-benchmark_${_campaign_lock_id}.lock}"
-unset _campaign_lock_id
+# One physical head GPU and its local cache are shared by every campaign,
+# regardless of output directory or serving-container name. Every repository
+# command that changes or measures these resources takes this same lock.
+_resource_lock_id="$(hostname -s 2>/dev/null || printf 'unknown-host')"
+export CAMPAIGN_LOCK_FILE="${CAMPAIGN_LOCK_FILE:-${RESOURCE_LOCK_FILE:-/tmp/dgx-spark-resources_${_resource_lock_id}.lock}}"
+export RESOURCE_LOCK_FILE="$CAMPAIGN_LOCK_FILE"
+export RESOURCE_LOCK_WAIT_SECONDS="${RESOURCE_LOCK_WAIT_SECONDS:-3600}"
+export RESOURCE_WAIT_TIMEOUT_SECONDS="${RESOURCE_WAIT_TIMEOUT_SECONDS:-1800}"
+export RESOURCE_WAIT_INTERVAL_SECONDS="${RESOURCE_WAIT_INTERVAL_SECONDS:-5}"
+unset _resource_lock_id
 
-acquire_campaign_lock() {
-  if [[ "${CAMPAIGN_LOCK_HELD:-0}" == "1" ]]; then
-    return 0
+acquire_resource_lock() {
+  if [[ "${CAMPAIGN_LOCK_HELD:-0}" == "1" && -n "${CAMPAIGN_LOCK_FD:-}" \
+        && -e "/proc/$$/fd/$CAMPAIGN_LOCK_FD" ]]; then
+    local inherited_path expected_path
+    inherited_path="$(readlink "/proc/$$/fd/$CAMPAIGN_LOCK_FD" 2>/dev/null || true)"
+    expected_path="$(readlink -f "$CAMPAIGN_LOCK_FILE" 2>/dev/null || true)"
+    if [[ "$inherited_path" == "$expected_path" ]] \
+        && flock -n "$CAMPAIGN_LOCK_FD"; then
+      export RESOURCE_LOCK_INHERITED=1
+      return 0
+    fi
+  fi
+  unset CAMPAIGN_LOCK_HELD CAMPAIGN_LOCK_FD
+
+  if [[ ! "$RESOURCE_LOCK_WAIT_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "[resources] RESOURCE_LOCK_WAIT_SECONDS must be a non-negative integer" >&2
+    return 2
   fi
   # flock(2) locks an inode through any descriptor and never needs write
   # permission, so open an EXISTING lock file read-only. That matters on a
@@ -200,22 +217,129 @@ acquire_campaign_lock() {
   # would survive the success path and silently discard every later error.
   if [[ -e "$CAMPAIGN_LOCK_FILE" ]]; then
     if ! exec {CAMPAIGN_LOCK_FD}<"$CAMPAIGN_LOCK_FILE"; then
-      echo "[cluster] campaign lock exists but is not readable:" >&2
+      echo "[resources] resource lock exists but is not readable:" >&2
       ls -l "$CAMPAIGN_LOCK_FILE" >&2 2>/dev/null || true
-      echo "[cluster] make it readable (chmod a+r) so every user on this head" \
-           "node can take the same lock." >&2
+      echo "[resources] make it readable (chmod a+r) so every user on this host" \
+           "can take the same lock." >&2
       return 1
     fi
-  elif ! exec {CAMPAIGN_LOCK_FD}>"$CAMPAIGN_LOCK_FILE"; then
-    echo "[cluster] cannot create the campaign lock $CAMPAIGN_LOCK_FILE" >&2
-    echo "[cluster] its directory must be writable, or point" \
-         "CAMPAIGN_LOCK_FILE at a path shared by everyone who runs campaigns" \
-         "on this head node." >&2
-    return 1
+  else
+    # Create a read-only lock inode so another account can open it to take the
+    # same flock. Noclobber makes simultaneous first use safe.
+    if ! (umask 0222; set -o noclobber; : >"$CAMPAIGN_LOCK_FILE") 2>/dev/null \
+        && [[ ! -e "$CAMPAIGN_LOCK_FILE" ]]; then
+      echo "[resources] cannot create the resource lock $CAMPAIGN_LOCK_FILE" >&2
+      echo "[resources] its directory must be writable by this user" >&2
+      return 1
+    fi
+    if ! exec {CAMPAIGN_LOCK_FD}<"$CAMPAIGN_LOCK_FILE"; then
+      echo "[resources] cannot open the resource lock $CAMPAIGN_LOCK_FILE" >&2
+      return 1
+    fi
   fi
   if ! flock -n "$CAMPAIGN_LOCK_FD"; then
-    echo "[cluster] another benchmark campaign holds $CAMPAIGN_LOCK_FILE" >&2
+    echo "[resources] another repository operation holds $CAMPAIGN_LOCK_FILE; waiting up to ${RESOURCE_LOCK_WAIT_SECONDS}s" >&2
+    if ! flock -w "$RESOURCE_LOCK_WAIT_SECONDS" "$CAMPAIGN_LOCK_FD"; then
+      echo "[resources] timed out waiting for $CAMPAIGN_LOCK_FILE" >&2
+      return 1
+    fi
+  fi
+  export CAMPAIGN_LOCK_FD
+  export CAMPAIGN_LOCK_HELD=1
+  export RESOURCE_LOCK_INHERITED=0
+}
+
+# Existing callers use this name; it now takes the shared resource lock.
+acquire_campaign_lock() { acquire_resource_lock; }
+
+resource_check_once() {
+  local worker_scope="${1:-auto}" mode="${2:-all}"
+  local local_output="" worker_output="" local_status=0 worker_status=0
+  local container_running=0 check_worker=0 ray_status=""
+  local manager="$CONNECTX_SCRIPT_DIR/resource_manager.py"
+  local python="${RESOURCE_MANAGER_PYTHON:-python3}"
+
+  case "$worker_scope" in auto|required|none) ;; *)
+    echo "[resources] invalid worker scope '$worker_scope'" >&2; return 2 ;; esac
+  case "$mode" in all|serving) ;; *)
+    echo "[resources] invalid resource-check mode '$mode'" >&2; return 2 ;; esac
+
+  if local_output="$("$python" "$manager" --mode "$mode" 2>&1)"; then
+    local_status=0
+  else
+    local_status=$?
+  fi
+  if (( local_status > 1 )); then
+    printf '%s\n' "$local_output" >&2
+    return 2
+  fi
+
+  if docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null \
+      | grep -q '^true$'; then
+    container_running=1
+  fi
+  if [[ "$worker_scope" == "required" ]]; then
+    check_worker=1
+  elif [[ "$worker_scope" == "auto" && "$container_running" == "1" ]]; then
+    ray_status="$(docker exec "$VLLM_CONTAINER" ray status 2>/dev/null || true)"
+    [[ "$ray_status" == *"Active:"* ]] && check_worker=1
+  fi
+  if [[ "$check_worker" == "1" ]]; then
+    if [[ "$container_running" != "1" ]]; then
+      echo "[resources] UNKNOWN: required Ray container $VLLM_CONTAINER is not running" >&2
+      return 2
+    fi
+    local -a worker_check_args=(--mode "$mode" --worker --head-ip "$HEAD_IP" --worker-ip "$HOEDUS_IP")
+    [[ "$worker_scope" == "auto" ]] && worker_check_args+=(--allow-missing-worker)
+    if worker_output="$(docker exec -i "$VLLM_CONTAINER" python3 - "${worker_check_args[@]}" \
+        < "$manager" 2>&1)"; then
+      worker_status=0
+    else
+      worker_status=$?
+    fi
+    if (( worker_status > 1 )) || \
+        { (( worker_status == 1 )) && [[ "$worker_output" != *"[resources] BUSY"* ]]; }; then
+      printf '%s\n' "$worker_output" >&2
+      return 2
+    fi
+  fi
+
+  [[ -n "$local_output" ]] && printf '%s\n' "$local_output"
+  [[ -n "$worker_output" ]] && printf '%s\n' "$worker_output"
+  if (( local_status == 1 || worker_status == 1 )); then
     return 1
   fi
-  export CAMPAIGN_LOCK_HELD=1
 }
+
+wait_for_resources_idle() {
+  local worker_scope="${1:-auto}" mode="${2:-all}"
+  local elapsed=0 status=0 output=""
+  if [[ ! "$RESOURCE_WAIT_TIMEOUT_SECONDS" =~ ^[0-9]+$ \
+        || ! "$RESOURCE_WAIT_INTERVAL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[resources] wait timeout must be non-negative and interval must be positive" >&2
+    return 2
+  fi
+  while :; do
+    if output="$(resource_check_once "$worker_scope" "$mode" 2>&1)"; then
+      echo "$output"
+      return 0
+    else
+      status=$?
+    fi
+    if (( status != 1 )); then
+      [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+      echo "[resources] availability could not be confirmed; refusing to proceed" >&2
+      return 2
+    fi
+    if (( elapsed >= RESOURCE_WAIT_TIMEOUT_SECONDS )); then
+      printf '%s\n' "$output" >&2
+      echo "[resources] timed out after ${elapsed}s waiting for idle resources" >&2
+      return 1
+    fi
+    echo "[resources] resources are occupied; waiting (${elapsed}/${RESOURCE_WAIT_TIMEOUT_SECONDS}s)" >&2
+    [[ -n "$output" ]] && printf '%s\n' "$output" >&2
+    sleep "$RESOURCE_WAIT_INTERVAL_SECONDS"
+    elapsed=$((elapsed + RESOURCE_WAIT_INTERVAL_SECONDS))
+  done
+}
+

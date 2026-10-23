@@ -116,6 +116,12 @@ else
   OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve --out-dir "$OUT_DIR")" || exit 1
 fi
 export OUT_DIR
+CAMPAIGN_RESULTS_DIR="$("$PYTHON" "$HERE/campaign_output.py" \
+  results-dir --out-dir "$OUT_DIR")" || exit 1
+CAMPAIGN_LOGS_DIR="$("$PYTHON" "$HERE/campaign_output.py" \
+  logs-dir --out-dir "$OUT_DIR")" || exit 1
+CAMPAIGN_FIGURES_DIR="$OUT_DIR/figs"
+export CAMPAIGN_RESULTS_DIR CAMPAIGN_LOGS_DIR CAMPAIGN_FIGURES_DIR
 
 option_error() {
   echo "[job] invalid campaign options: $*" >&2
@@ -249,7 +255,7 @@ print(f"{float(value):g}")' "$MODELS_YAML")"
   done
   echo "[plan] minimum measurement time: ~${minimum_h} h (${point_s:-?} s per window before automatic extensions)"
   echo "[plan] canary pass: CANARY_FIRST=$CANARY_FIRST STOP_AFTER_CANARY=$STOP_AFTER_CANARY ALLOW_CANARY_FAILURES=$ALLOW_CANARY_FAILURES"
-  echo "[plan] weights: PURGE_WEIGHTS=$PURGE_WEIGHTS (fetch, mirror, measure, purge per model)"
+  echo "[plan] weights: PURGE_WEIGHTS=$PURGE_WEIGHTS (acquire, mirror if dual-node, measure, purge per model)"
   echo "[plan] finalization: verify, plots/tables, replicate statistics, transport audit, baseline comparison, sealed manifest"
   if (( REPEATS < 3 )); then
     echo "[plan] NOTE: REPEATS=$REPEATS gives no usable 95% interval; the paper design uses 3"
@@ -266,9 +272,9 @@ fi
 require_local_connectx_ip "$HEAD_IP" "paper campaign head role" || exit 1
 acquire_campaign_lock || exit 1
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$CAMPAIGN_RESULTS_DIR" "$CAMPAIGN_LOGS_DIR"
 export CAMPAIGN_PATH_PREPARED=1
-LOG="$OUT_DIR/run_job_$(date +%Y%m%d-%H%M%S).log"
+LOG="$CAMPAIGN_LOGS_DIR/run_job_$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
 
 log() { echo "[job $(date '+%F %T')] $*"; }
@@ -299,6 +305,9 @@ handle_signal() {
   fi
   # Fallback if a forcibly killed model wrapper could not run its own trap.
   docker exec "$VLLM_CONTAINER" pkill -f "vllm serve" >/dev/null 2>&1 || true
+  if ! wait_for_resources_idle required; then
+    log "shared resources may still be active after interruption"
+  fi
   exit "$status"
 }
 
@@ -317,7 +326,14 @@ leg() {
   local name="$1"; shift
   log "=== leg: $name ==="
   if run_child "$@"; then log "leg OK: $name"; else
-    log "leg FAILED (rc=$?): $name -- continuing"; FAILED+=("$name")
+    local status=$?
+    log "leg FAILED (rc=$status): $name"
+    if ! wait_for_resources_idle required; then
+      log "shared resources are not idle after $name; stopping the campaign"
+      exit 1
+    fi
+    log "shared resources are idle; continuing to the next independent leg"
+    FAILED+=("$name")
   fi
 }
 
@@ -333,11 +349,7 @@ ray_ok() {
 # A stale server collides with the first launch and breaks the idle-GPU
 # precondition of the interconnect microbenchmarks.
 no_stale_server() {
-  if docker exec "$VLLM_CONTAINER" pgrep -f "vllm serve" >/dev/null 2>&1; then
-    log "a vLLM server is already running in $VLLM_CONTAINER; stop it first:"
-    log "  docker exec $VLLM_CONTAINER pkill -f 'vllm serve'"
-    return 1
-  fi
+  wait_for_resources_idle required
 }
 
 source_tree_ok() {
@@ -384,7 +396,7 @@ sendrecv_once() {
   local artifact_id artifact want="roce"
   [[ "$NCCL_IB_DISABLE" == "1" ]] && want="tcp"
   artifact_id="$(scripts/interconnect_extra_bench.sh --fingerprint-only)" || return 1
-  for artifact in "$OUT_DIR"/interconnect_extra_"$artifact_id"_*.csv; do
+  for artifact in "$CAMPAIGN_RESULTS_DIR"/interconnect_extra_"$artifact_id"_*.csv; do
     [[ -e "$artifact" ]] || continue
     if "$PYTHON" scripts/validate_microbench.py interconnect "$artifact" \
         --expected-transport "$want"; then
@@ -401,7 +413,7 @@ canary_identity() {
     # A successful canary is reusable only for the exact client, cluster,
     # serving policy, and network policy that passed it. The Git commit alone
     # does not identify environment-supplied launch options or live hardware.
-    sha256sum "$OUT_DIR/client_environment.json"
+    sha256sum "$CAMPAIGN_RESULTS_DIR/client_environment.json"
     printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" "$RAY_VERSION" \
       "$CLUSTER_RUNTIME_FINGERPRINT" "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" \
       "$NCCL_IB_DISABLE" "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" \
@@ -413,13 +425,11 @@ canary_identity() {
   } | sha256sum | awk '{print $1}'
 }
 
-fetch_group() {
+acquire_group() {
   local labels="$1" needs_dual="$2"
+  env MODEL_LABELS="$labels" scripts/predownload.sh all || return 1
   if [[ "$needs_dual" == "1" ]]; then
-    env MODEL_LABELS="$labels" scripts/predownload.sh all || return 1
     env MODEL_LABELS="$labels" scripts/mirror_worker_cache.sh all || return 1
-  else
-    log "single-node group $labels uses pinned-revision vLLM JIT acquisition"
   fi
 }
 
@@ -459,17 +469,22 @@ canary_pass() {
     IFS='|' read -r labels needs_dual steps <<<"$entry"
     ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
     log "--- canary: $labels ---"
-    if ! run_child fetch_group "$labels" "$needs_dual"; then
-      failures+=("$labels: fetch/mirror")
+    if ! run_child acquire_group "$labels" "$needs_dual"; then
+      failures+=("$labels: acquire/mirror")
     else
       IFS=';' read -ra step_list <<<"$steps"
       for step in "${step_list[@]}"; do
         IFS=':' read -r rep config label <<<"$step"
         [[ "$rep" == "1" ]] || continue
         ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
-        if ! run_child env CANARY_ONLY=1 SKIP_DONE=0 MODEL_LABELS="$label" \
+        if ! run_child env RUN_JOB_CACHE_READY=1 CANARY_ONLY=1 \
+            SKIP_DONE=0 MODEL_LABELS="$label" \
             scripts/run_models.sh "$config"; then
           failures+=("$label/$config")
+          if ! wait_for_resources_idle required; then
+            log "shared resources are not idle after canary $label/$config; stopping the canary pass"
+            exit 1
+          fi
         fi
       done
     fi
@@ -491,8 +506,8 @@ canary_pass() {
     log "ALLOW_CANARY_FAILURES=1: measuring the models that passed"
     return 0
   fi
-  canary_identity > "$OUT_DIR/.canary_passed"
-  log "canary pass OK; marker $OUT_DIR/.canary_passed"
+  canary_identity > "$CAMPAIGN_RESULTS_DIR/.canary_passed"
+  log "canary pass OK; marker $CAMPAIGN_RESULTS_DIR/.canary_passed"
 }
 
 measure_group() {
@@ -509,8 +524,8 @@ measure_group() {
     log "$labels: resume status validation failed; aborting because campaign state is not trustworthy"
     exit 1
   fi
-  if ! run_child fetch_group "$labels" "$needs_dual"; then
-    FAILED+=("$labels: fetch/mirror")
+  if ! run_child acquire_group "$labels" "$needs_dual"; then
+    FAILED+=("$labels: acquire/mirror")
     if [[ "$PURGE_WEIGHTS" == "1" ]]; then
       if run_child purge_group "$labels"; then
         :
@@ -527,7 +542,8 @@ measure_group() {
     IFS=':' read -r rep config label <<<"$step"
     ray_ok || { log "Ray cluster lost during measurements"; exit 1; }
     leg "$label $config replicate $rep/$REPEATS" \
-      env REPEATS="$REPEATS" ONLY_REPEAT="$rep" MODEL_LABELS="$label" \
+      env RUN_JOB_CACHE_READY=1 REPEATS="$REPEATS" ONLY_REPEAT="$rep" \
+          MODEL_LABELS="$label" \
           CONCURRENCIES="$CONCURRENCIES" EXPECTED_CONCURRENCIES="$CONCURRENCIES" \
           scripts/run_models.sh "$config" --skip-done
   done
@@ -554,7 +570,7 @@ print_plan
 prep "clean committed benchmark source tree" source_tree_ok
 prep "isolated locked client environment" \
   "$PYTHON" scripts/check_environment.py \
-    --manifest "$OUT_DIR/client_environment.json"
+    --manifest "$CAMPAIGN_RESULTS_DIR/client_environment.json"
 prep "valid complete campaign definition" \
   "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" \
     --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" \
@@ -568,8 +584,8 @@ leg  "send/recv interconnect microbench"      sendrecv_once
 case "$CANARY_FIRST" in
   1) canary_pass ;;
   auto)
-    if [[ -f "$OUT_DIR/.canary_passed" ]] \
-        && [[ "$(cat "$OUT_DIR/.canary_passed")" == "$(canary_identity)" ]]; then
+    if [[ -f "$CAMPAIGN_RESULTS_DIR/.canary_passed" ]] \
+        && [[ "$(cat "$CAMPAIGN_RESULTS_DIR/.canary_passed")" == "$(canary_identity)" ]]; then
       log "canary pass already succeeded for this commit/matrix/image; skipping"
     else
       canary_pass
@@ -577,6 +593,11 @@ case "$CANARY_FIRST" in
   0) log "CANARY_FIRST=0: no canary pass (every launch still checks the stream contract)" ;;
 esac
 if [[ "$STOP_AFTER_CANARY" == "1" ]]; then
+  if (( ${#FAILED[@]} )); then
+    log "preflight finished WITH FAILURES:"
+    printf '  - %s\n' "${FAILED[@]}"
+    exit 1
+  fi
   log "STOP_AFTER_CANARY=1: stopping before measurement"
   exit 0
 fi
@@ -609,47 +630,47 @@ prep "complete result grid + artifact verification" \
   "$PYTHON" scripts/validate_campaign.py verify "${VERIFY_ARGS[@]}"
 
 leg "primary result figures + summary table" \
-  "$PYTHON" plotting/plot_results.py --index "$OUT_DIR/index.csv" --out "$OUT_DIR/figs" \
+  "$PYTHON" plotting/plot_results.py --index "$CAMPAIGN_RESULTS_DIR/index.csv" --out "$CAMPAIGN_FIGURES_DIR" \
     --format both --table
 
 # Written under figs/ so the sealed manifest covers them.
-mkdir -p "$OUT_DIR/figs/stats"
+mkdir -p "$CAMPAIGN_FIGURES_DIR/stats"
 leg "interconnect figure (all-reduce and send/recv by transport)" \
-  "$PYTHON" plotting/plot_interconnect.py "$OUT_DIR" --out "$OUT_DIR/figs/stats"
+  "$PYTHON" plotting/plot_interconnect.py "$OUT_DIR" --out "$CAMPAIGN_FIGURES_DIR/stats"
 leg "cross-model trend figures" \
-  "$PYTHON" plotting/plot_trends.py --index "$OUT_DIR/index.csv" \
-    --out "$OUT_DIR/figs/trends" --format both --models "$MODELS_YAML"
+  "$PYTHON" plotting/plot_trends.py --index "$CAMPAIGN_RESULTS_DIR/index.csv" \
+    --out "$CAMPAIGN_FIGURES_DIR/trends" --format both --models "$MODELS_YAML"
 leg "replicate statistics" \
-  "$PYTHON" scripts/variance_report.py --index "$OUT_DIR/index.csv" \
-    --md "$OUT_DIR/figs/stats/replicate_stats.md" \
-    --tex "$OUT_DIR/figs/stats/replicate_stats.tex"
+  "$PYTHON" scripts/variance_report.py --index "$CAMPAIGN_RESULTS_DIR/index.csv" \
+    --md "$CAMPAIGN_FIGURES_DIR/stats/replicate_stats.md" \
+    --tex "$CAMPAIGN_FIGURES_DIR/stats/replicate_stats.tex"
 leg "NCCL transport audit" \
   "$PYTHON" scripts/audit_nccl_transport.py "$OUT_DIR" \
-    --md "$OUT_DIR/figs/stats/nccl_transport_audit.md"
+    --md "$CAMPAIGN_FIGURES_DIR/stats/nccl_transport_audit.md"
 # Same-model comparisons: over TCP (PMBS26, Llama ladder + Nemotron Super) and
 # over RDMA (October pilot, the carried-over Qwen3-Next pair).
 if [[ -f baselines/pmbs26-tcp/index.csv ]]; then
   leg "comparison with the PMBS26 TCP baseline" \
-    "$PYTHON" scripts/compare_campaigns.py --new "$OUT_DIR/index.csv" \
+    "$PYTHON" scripts/compare_campaigns.py --new "$CAMPAIGN_RESULTS_DIR/index.csv" \
       --baseline baselines/pmbs26-tcp/index.csv \
-      --md "$OUT_DIR/figs/stats/compare_vs_pmbs26_tcp.md"
+      --md "$CAMPAIGN_FIGURES_DIR/stats/compare_vs_pmbs26_tcp.md"
 fi
 if [[ -f baselines/rdma-pilot-2026-10/index.csv ]]; then
   leg "comparison with the October RDMA pilot" \
-    "$PYTHON" scripts/compare_campaigns.py --new "$OUT_DIR/index.csv" \
+    "$PYTHON" scripts/compare_campaigns.py --new "$CAMPAIGN_RESULTS_DIR/index.csv" \
       --baseline baselines/rdma-pilot-2026-10/index.csv \
-      --md "$OUT_DIR/figs/stats/compare_vs_rdma_pilot.md"
+      --md "$CAMPAIGN_FIGURES_DIR/stats/compare_vs_rdma_pilot.md"
 fi
 
 prep "pre-seal clean committed benchmark source tree" source_tree_ok
 
 prep "sealed final artifact manifest" \
   "$PYTHON" scripts/validate_campaign.py verify "${VERIFY_ARGS[@]}" \
-    --manifest "$OUT_DIR/campaign_manifest.json"
+    --manifest "$CAMPAIGN_RESULTS_DIR/campaign_manifest.json"
 
 if (( ${#FAILED[@]} )); then
   log "campaign sealed; optional reports failed:"
   printf '  - %s\n' "${FAILED[@]}"
   exit 1
 fi
-log "campaign complete: $OUT_DIR/index.csv, figures and statistics in $OUT_DIR/figs/"
+log "campaign complete: $CAMPAIGN_RESULTS_DIR/index.csv, figures and statistics in $CAMPAIGN_FIGURES_DIR/"

@@ -278,6 +278,36 @@ class TransportAuditTests(unittest.TestCase):
         with mock.patch("sys.stdout", io.StringIO()):
             return audit_nccl_transport.main([str(out), "--md", str(out / "a.md")])
 
+    def test_new_layout_reads_policies_and_logs_from_separate_directories(
+        self: TransportAuditTests,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            campaign = Path(temporary) / "campaign"
+            results = campaign / "results"
+            logs = campaign / "logs"
+            results.mkdir(parents=True)
+            logs.mkdir()
+            policy: dict[str, str] = {
+                "config": "tp2",
+                "serving_fingerprint": self.FP,
+                "nccl_ib_disable": "0",
+            }
+            (results / f"serving_policy_m_tp2_{self.FP}.json").write_text(
+                json.dumps(policy)
+            )
+            server_log = logs / (
+                f"server_m_tp2_{self.FP[:16]}_20261016T000000Z_pid1.log"
+            )
+            server_log.write_text("via NET/IB/0\n")
+            report_path = results / "audit.md"
+            with mock.patch("sys.stdout", io.StringIO()):
+                status: int = audit_nccl_transport.main(
+                    [str(campaign), "--md", str(report_path)]
+                )
+
+            self.assertEqual(status, 0)
+            self.assertIn("| ok |", report_path.read_text())
+
     def test_rdma_launch_is_verified_with_devices_and_gdr(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = self._campaign(tmp, [

@@ -25,6 +25,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+acquire_resource_lock || exit 1
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 PYTHON="${PYTHON:-python3}"
@@ -92,6 +93,12 @@ if [[ "$PURGE_WORKER" == "1" ]]; then
     exit 1
   fi
   args+=(--worker "$HOEDUS_IP")
+fi
+
+if [[ "$PURGE_WORKER" == "1" ]]; then
+  wait_for_resources_idle required || exit 1
+else
+  wait_for_resources_idle auto || exit 1
 fi
 
 echo "[purge] ${#REPOS[@]} repo(s) for '${MODEL_LABELS:-none}'" \

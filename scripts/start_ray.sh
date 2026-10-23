@@ -19,6 +19,12 @@ source "$HERE/connectx_env.sh"
 
 ROLE="${1:-head}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+acquire_resource_lock || exit 1
+if [[ "$ROLE" == "stop" ]]; then
+  wait_for_resources_idle auto serving || exit 1
+else
+  wait_for_resources_idle auto || exit 1
+fi
 
 maybe_drop_caches() {
   if [[ "${DROP_CACHES:-0}" == "1" ]]; then

@@ -14,7 +14,7 @@ number of completions, and head-node-only power on dual-node runs.
 
 Usage:
     python plot_results.py --index results/benchmark-2026-10-22
-    python plot_results.py --index results/benchmark-2026-10-22/index.csv
+    python plot_results.py --index results/benchmark-2026-10-22/results/index.csv
     python plot_results.py                       # uses the UTC-dated default
     python plot_results.py --format png          # png only, for quick viewing
     python plot_results.py --serif               # Times-like body font for IEEE
