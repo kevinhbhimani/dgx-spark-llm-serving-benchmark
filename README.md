@@ -170,6 +170,9 @@ bench/
   server_info.py   served-model capacity and launch configuration capture
   runner.py        closed-loop and open-loop load generation
   metrics.py       percentile aggregation, throughput, goodput, energy
+  provenance.py    source, environment, experiment, and deployment fingerprints
+  release_contracts.py serving-policy and result-release validation
+  artifacts.py     index schema, row validation, and artifact publication
   run_benchmark.py command line entry for one measurement point
 configs/
   smoke.yaml       short connectivity test
@@ -179,6 +182,12 @@ baselines/         earlier campaigns kept for comparison (see baselines/README.m
 scripts/
   check_environment.py         validate the isolated, fully locked client
   validate_campaign.py         plan/verify the exact publication result grid
+  validate_microbench.py       validate interconnect artifacts
+  campaign/
+    plan.py                    validate campaign YAML and build the expected grid
+    manifest.py                hash artifacts and write the sealed manifest
+  contracts/
+    dependency_lock.py         exact dependency pins and normalized package names
   load_env.sh                 source a repo-local .env for script entrypoints
   connectx_env.sh             shared ConnectX and container settings; loads .env
   verify_connectx.sh          route and latency sanity checks
@@ -213,6 +222,15 @@ tests/                        standard-library regression tests for release path
 requirements.txt              Python client and plotting dependencies
 requirements.lock             exact direct and transitive release environment
 ```
+
+`bench.run_benchmark` sequences each measurement. `bench.artifacts` validates
+and publishes index rows. `bench.provenance` computes source and runtime
+fingerprints. `bench.release_contracts` supplies the serving-policy and result
+checks used during both measurement and campaign verification. The campaign
+CLI delegates YAML and grid validation to `scripts.campaign.plan`, artifact
+sealing to `scripts.campaign.manifest`, and dependency pins to
+`scripts.contracts.dependency_lock`. Direct command paths and result paths are
+unchanged.
 
 ## Prerequisites
 
