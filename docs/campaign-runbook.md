@@ -81,6 +81,14 @@ before running the campaign. `scripts/run_job.sh` stops if benchmark sources
 or inputs under its protected paths have uncommitted, staged, or untracked
 changes.
 
+The benchmark source fingerprint covers Python modules under `bench/`, the
+planning and manifest modules in `scripts/campaign/`, the dependency-lock
+module in `scripts/contracts/`, and its existing script inputs. The campaign
+manifest lists Python modules recursively under `scripts/`.
+New measurements after a source refactor require a fresh `OUT_DIR`. Existing
+partial campaigns retain their recorded fingerprint and must be completed or
+verified with the source revision that produced their rows.
+
 ## Prepare the two nodes
 
 1. Complete [cluster setup](cluster-setup.md) on both nodes. Confirm the four

@@ -517,6 +517,26 @@ class PlanTests(unittest.TestCase):
                 validator.load_campaign(models, experiment)
 
 
+class SharedLockContractTests(unittest.TestCase):
+    def test_campaign_lock_diagnostics_match_existing_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "requirements.lock"
+            cases = (
+                ("invalid pin\n", f"{path}:1 is not an exact name==version pin"),
+                (
+                    "Foo.Bar==1\nfoo-bar==2\n",
+                    f"{path}:2 repeats distribution 'foo-bar'",
+                ),
+                ("# no pins\n", f"dependency lock has no pins: {path}"),
+            )
+            for contents, message in cases:
+                with self.subTest(contents=contents):
+                    path.write_text(contents)
+                    with self.assertRaises(validator.CampaignValidationError) as caught:
+                        validator._locked_distributions_from_file(path)
+                    self.assertEqual(str(caught.exception), message)
+
+
 class AllreduceCsvTests(unittest.TestCase):
     @staticmethod
     def _write_csv(path, *, small_bw="0.000", extra_rows=()):
@@ -598,7 +618,7 @@ class VerifyTests(unittest.TestCase):
                     fixture.models, fixture.experiment, fixture.results, [1], 1
                 )
 
-    def test_verify_checks_artifacts_and_atomically_writes_hash_manifest(self):
+    def test_verify_checks_artifacts_and_atomically_writes_hash_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = CampaignFixture(Path(tmp))
             fixture.add_point()
@@ -632,6 +652,17 @@ class VerifyTests(unittest.TestCase):
             self.assertEqual(
                 [item["path"] for item in payload["artifacts"]["environment"]],
                 [fixture.environment_path.name],
+            )
+            source_paths = {item["path"] for item in payload["artifacts"]["source"]}
+            self.assertTrue(
+                {
+                    "bench/artifacts.py",
+                    "bench/provenance.py",
+                    "bench/release_contracts.py",
+                    "scripts/campaign/manifest.py",
+                    "scripts/campaign/plan.py",
+                    "scripts/contracts/dependency_lock.py",
+                }.issubset(source_paths)
             )
             self.assertNotIn(
                 unrelated_policy.name,
@@ -744,7 +775,7 @@ class VerifyTests(unittest.TestCase):
             fixture.add_point()
             # Simulate verifying from a HEAD that advanced past the run's commit
             # (results committed incrementally) while the source is unchanged.
-            with mock.patch("bench.run_benchmark._git_commit", return_value="b" * 40):
+            with mock.patch("bench.provenance.git_commit", return_value="b" * 40):
                 with self.assertRaises(validator.CampaignValidationError) as ctx:
                     validator.verify_campaign(
                         fixture.models, fixture.experiment, fixture.results, [1], 1

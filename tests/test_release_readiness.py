@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from bench import provenance
 from bench.config import ExperimentConfig
 from bench.monitors import VLLMMetricsScraper, WorkerPowerSampler
 from bench.run_benchmark import (
@@ -16,6 +17,7 @@ from bench.run_benchmark import (
     _load_serving_policy,
     _model_slug,
     _validate_result_quality,
+    client_environment,
     client_environment_fingerprint,
     config_file_fingerprint,
     deployment_fingerprint,
@@ -123,6 +125,19 @@ class ConfigurationReadinessTests(unittest.TestCase):
 
 
 class ClientEnvironmentTests(unittest.TestCase):
+    def test_distribution_names_use_shared_normalization(self):
+        distribution = SimpleNamespace(
+            metadata={"Name": "Foo_Bar"}, version="2.0"
+        )
+        with mock.patch(
+            "bench.provenance.importlib.metadata.distributions",
+            return_value=[distribution],
+        ), mock.patch(
+            "bench.provenance.importlib.metadata.version", return_value="1.0"
+        ):
+            environment = client_environment()
+        self.assertEqual(environment["installed_distributions"], ["foo-bar==2.0"])
+
     def test_snapshot_is_captured_once_and_that_exact_object_is_hashed(self):
         environment = {
             "python_version": "3.12.3",
@@ -160,6 +175,32 @@ class ClientEnvironmentTests(unittest.TestCase):
         ) as capture:
             self.assertEqual(client_environment_fingerprint(), expected)
         capture.assert_called_once_with()
+
+
+class SourceFingerprintTests(unittest.TestCase):
+    def test_new_contract_modules_change_the_source_fingerprint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bench = root / "bench"
+            scripts = root / "scripts"
+            bench.mkdir()
+            scripts.mkdir()
+            sources = (
+                bench / "release_contracts.py",
+                scripts / "contracts/dependency_lock.py",
+                scripts / "campaign/plan.py",
+                scripts / "campaign/manifest.py",
+            )
+            for source in sources:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("before\n")
+            with mock.patch.object(
+                provenance, "__file__", str(bench / "provenance.py")
+            ):
+                for source in sources:
+                    before = provenance.source_fingerprint()
+                    source.write_text("after\n")
+                    self.assertNotEqual(before, provenance.source_fingerprint())
 
 
 class ResultQualityTests(unittest.TestCase):
