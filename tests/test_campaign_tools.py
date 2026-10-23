@@ -19,7 +19,7 @@ import audit_nccl_transport  # noqa: E402
 import campaign_schedule  # noqa: E402
 import compare_campaigns  # noqa: E402
 import hf_snapshot_size  # noqa: E402
-import purge_model_cache  # noqa: E402
+import purge_model_cache_container  # noqa: E402
 
 
 def _entry(label, name, configs):
@@ -107,7 +107,7 @@ class PurgeModelCacheTests(unittest.TestCase):
     def test_deletes_only_the_named_repo_and_counts_blob_bytes(
         self: PurgeModelCacheTests,
     ) -> None:
-        report = purge_model_cache.purge_node(
+        report = purge_model_cache_container.purge_node(
             ["org/gone", "org/absent"], False, False, prune_garbage=False
         )
 
@@ -119,7 +119,7 @@ class PurgeModelCacheTests(unittest.TestCase):
         self.assertEqual([r["status"] for r in report["repos"]], ["deleted", "absent"])
 
     def test_dry_run_deletes_nothing(self: PurgeModelCacheTests) -> None:
-        report = purge_model_cache.purge_node(
+        report = purge_model_cache_container.purge_node(
             ["org/gone"], False, True, prune_garbage=False
         )
         self.assertTrue((self.hub / "models--org--gone").exists())
@@ -131,20 +131,20 @@ class PurgeModelCacheTests(unittest.TestCase):
         for bad in ("../etc", "org/../x", "org", "/abs/path", "org/a/b"):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
-                    purge_model_cache.repo_dir(bad)
+                    purge_model_cache_container.repo_dir(bad)
         outside = Path(self.tmp.name) / "outside"
         outside.mkdir()
         (self.hub / "models--org--link").symlink_to(outside)
-        report = purge_model_cache.purge_node(
+        report = purge_model_cache_container.purge_node(
             ["org/link"], False, False, prune_garbage=False
         )
         self.assertIn("symlinked", report["error"])
         self.assertTrue(outside.exists())
 
     def test_busy_node_refuses(self: PurgeModelCacheTests) -> None:
-        with mock.patch.object(purge_model_cache, "busy_processes",
+        with mock.patch.object(purge_model_cache_container, "busy_processes",
                                return_value=["42: vllm serve x"]):
-            report = purge_model_cache.purge_node(
+            report = purge_model_cache_container.purge_node(
                 ["org/gone"], False, False, prune_garbage=False
             )
         self.assertIn("serving processes", report["error"])
@@ -154,14 +154,14 @@ class PurgeModelCacheTests(unittest.TestCase):
         self: PurgeModelCacheTests,
     ) -> None:
         with (
-            mock.patch.object(purge_model_cache, "scan_cache_dir") as scan,
+            mock.patch.object(purge_model_cache_container, "scan_cache_dir") as scan,
             mock.patch.object(
-                purge_model_cache,
+                purge_model_cache_container,
                 "prune_cache_garbage",
                 return_value=("pruned detached revisions", 2048),
             ) as prune,
         ):
-            report = purge_model_cache.purge_node([], False, False)
+            report = purge_model_cache_container.purge_node([], False, False)
 
         scan.assert_not_called()
         prune.assert_called_once_with(False)
@@ -171,8 +171,10 @@ class PurgeModelCacheTests(unittest.TestCase):
     def test_cache_garbage_pruning_can_be_disabled(
         self: PurgeModelCacheTests,
     ) -> None:
-        with mock.patch.object(purge_model_cache, "prune_cache_garbage") as prune:
-            report = purge_model_cache.purge_node(
+        with mock.patch.object(
+            purge_model_cache_container, "prune_cache_garbage"
+        ) as prune:
+            report = purge_model_cache_container.purge_node(
                 [], False, False, prune_garbage=False
             )
 
@@ -186,7 +188,7 @@ class PurgeModelCacheTests(unittest.TestCase):
         lock_file = lock_directory / "active.lock"
         lock_file.write_text("")
 
-        purge_model_cache.purge_node(
+        purge_model_cache_container.purge_node(
             ["org/gone"], False, False, prune_garbage=False
         )
 
@@ -203,15 +205,21 @@ class PurgeModelCacheTests(unittest.TestCase):
         for arguments, expected_prune in cases:
             with self.subTest(arguments=arguments):
                 with (
-                    mock.patch.object(purge_model_cache, "busy_processes", return_value=[]),
                     mock.patch.object(
-                        purge_model_cache,
+                        purge_model_cache_container,
+                        "busy_processes",
+                        return_value=[],
+                    ),
+                    mock.patch.object(
+                        purge_model_cache_container,
                         "purge_node",
                         return_value={"repos": [], "freed_bytes": 0, "dry_run": False},
                     ) as purge,
-                    mock.patch.object(purge_model_cache, "show", return_value=True),
+                    mock.patch.object(
+                        purge_model_cache_container, "show", return_value=True
+                    ),
                 ):
-                    self.assertEqual(purge_model_cache.main(arguments), 0)
+                    self.assertEqual(purge_model_cache_container.main(arguments), 0)
 
                 self.assertEqual(
                     purge.call_args.args,

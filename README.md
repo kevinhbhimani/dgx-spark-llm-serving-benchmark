@@ -206,7 +206,8 @@ scripts/
   predownload.sh              acquire pinned snapshots into the head cache
   hf_snapshot_size.py         exact bytes a pinned snapshot still needs
   mirror_worker_cache.sh      copy pinned snapshots to the worker over Ray
-  purge_model_cache.sh        delete finished models and prune cache garbage by default
+  purge_model_cache.sh            operator entry point; selects repos and manages Docker/Ray
+  purge_model_cache_container.py  cache implementation; runs in head container and Ray worker task
   variance_report.py          replicate statistics and pairwise Welch intervals
   audit_nccl_transport.py     which NCCL transport each dual launch used
   compare_campaigns.py        compare a campaign with a baseline index
