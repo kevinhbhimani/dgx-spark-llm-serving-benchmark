@@ -234,4 +234,4 @@ if (( ${#POINT_FAILURES[@]} )); then
   exit 1
 fi
 
-echo "[sweep] done, see $OUT_DIR/index.csv"
+echo "[sweep] done, see $CAMPAIGN_RESULTS_DIR/index.csv"

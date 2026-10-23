@@ -29,7 +29,7 @@ both scripts read an index identically.
 
 Usage:
     python plot_trends.py --index results/benchmark-2026-10-22
-    python plot_trends.py --index results/benchmark-2026-10-22/index.csv
+    python plot_trends.py --index results/benchmark-2026-10-22/results/index.csv
     python plot_trends.py --allow-incomplete   # mid-campaign diagnostics
 
 Model metadata (dense/MoE, precision, NVIDIA-optimized, parameter counts) comes

@@ -17,7 +17,8 @@
 #   NCCL_IB_DISABLE=1 scripts/start_ray.sh head   # and on Hoedus
 #   scripts/interconnect_extra_bench.sh                      # -> transport=tcp
 #
-# Writes $OUT_DIR/interconnect_extra_<timestamp>.csv beside the serving results.
+# Writes result CSVs under $OUT_DIR/results/ and diagnostic streams under
+# $OUT_DIR/logs/.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
@@ -49,17 +50,13 @@ if [[ "${1:-}" == "--fingerprint-only" ]]; then
   exit 0
 fi
 
-if docker exec "$VLLM_CONTAINER" pgrep -f "vllm serve" >/dev/null 2>&1; then
-  echo "[microbench] a vLLM server is running in $VLLM_CONTAINER; stop it" \
-       "first, the GPU must be idle for a clean interconnect reading" >&2
-  exit 1
-fi
+wait_for_resources_idle required || exit 1
 
-mkdir -p "$OUT_DIR"
-OUT="$OUT_DIR/interconnect_extra_${ARTIFACT_FINGERPRINT}_$(date +%Y%m%d-%H%M%S).csv"
+mkdir -p "$CAMPAIGN_RESULTS_DIR" "$CAMPAIGN_LOGS_DIR"
+OUT="$CAMPAIGN_RESULTS_DIR/interconnect_extra_${ARTIFACT_FINGERPRINT}_$(date +%Y%m%d-%H%M%S).csv"
 TMP="$OUT.tmp.$$"
-RAW="${OUT%.csv}_raw.log"
-DIAG="${OUT%.csv}_nccl.log"
+RAW="$CAMPAIGN_LOGS_DIR/$(basename "${OUT%.csv}")_raw.log"
+DIAG="$CAMPAIGN_LOGS_DIR/$(basename "${OUT%.csv}")_nccl.log"
 trap 'rm -f "$TMP"' EXIT
 # The driver env below is for ray.init on the head. The transport column is
 # not read from this environment: each Ray worker enables NCCL_DEBUG=INFO for

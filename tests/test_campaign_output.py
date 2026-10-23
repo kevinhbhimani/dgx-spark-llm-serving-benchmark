@@ -8,11 +8,15 @@ from pathlib import Path
 
 from campaign_output import (
     campaign_metadata,
+    campaign_logs_dir,
+    campaign_results_dir,
     fingerprint_identity,
     prepare_implicit_campaign,
     campaign_root_from_input,
     resolve_campaign_dir,
     resolve_campaign_output_path,
+    resolve_campaign_logs_dir,
+    resolve_campaign_results_dir,
     resolve_index_path,
 )
 
@@ -63,6 +67,7 @@ class CampaignOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = resolve_campaign_dir(cwd=temporary)
             self.assertFalse(prepare_implicit_campaign(output, identity))
+            self.assertTrue((output / "results" / "campaign_run.json").is_file())
             self.assertTrue(prepare_implicit_campaign(output, identity))
             with self.assertRaisesRegex(ValueError, "not a compatible resume"):
                 prepare_implicit_campaign(
@@ -79,22 +84,49 @@ class CampaignOutputTests(unittest.TestCase):
 
     def test_plotting_accepts_directory_and_legacy_index_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            campaign = Path(temporary) / "legacy-results"
+            campaign = Path(temporary) / "new-campaign"
             campaign.mkdir()
-            index = campaign / "index.csv"
+            index = campaign / "results" / "index.csv"
+            index.parent.mkdir()
+            index.touch()
             self.assertEqual(resolve_index_path(campaign), index)
             self.assertEqual(resolve_index_path(index), index)
+            self.assertEqual(campaign_root_from_input(index), campaign)
             self.assertEqual(
                 resolve_campaign_output_path("figs/stats", index),
                 campaign / "figs/stats",
             )
 
+            legacy_campaign = Path(temporary) / "legacy-campaign"
+            legacy_campaign.mkdir()
+            legacy_index = legacy_campaign / "index.csv"
+            legacy_index.touch()
+            self.assertEqual(resolve_index_path(legacy_campaign), legacy_index)
+            self.assertEqual(
+                resolve_campaign_results_dir(legacy_campaign), legacy_campaign
+            )
+            self.assertEqual(
+                resolve_campaign_logs_dir(legacy_campaign), legacy_campaign
+            )
+
+    def test_campaign_output_directories_are_beneath_campaign_root(
+        self: CampaignOutputTests,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            campaign = Path(temporary) / "campaign"
+
+            self.assertEqual(campaign_results_dir(campaign), campaign / "results")
+            self.assertEqual(campaign_logs_dir(campaign), campaign / "logs")
+            self.assertEqual(resolve_campaign_results_dir(campaign), campaign / "results")
+            self.assertEqual(resolve_campaign_logs_dir(campaign), campaign / "logs")
+
     def test_plotting_paths_are_independent_of_current_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             campaign = root / "campaign"
-            campaign.mkdir()
-            index = campaign / "index.csv"
+            index = campaign / "results" / "index.csv"
+            index.parent.mkdir(parents=True)
+            index.touch()
             other = root / "other"
             other.mkdir()
             original_cwd = Path.cwd()
@@ -103,7 +135,8 @@ class CampaignOutputTests(unittest.TestCase):
                 self.assertEqual(resolve_index_path(index), index)
                 self.assertEqual(campaign_root_from_input(index), campaign)
                 self.assertEqual(
-                    resolve_campaign_output_path(None, index), campaign / "figs"
+                    resolve_campaign_output_path(None, index),
+                    campaign / "figs",
                 )
             finally:
                 os.chdir(original_cwd)

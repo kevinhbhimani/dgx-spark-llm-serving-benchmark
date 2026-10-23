@@ -31,7 +31,11 @@ from matplotlib.ticker import FuncFormatter, NullFormatter
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import campaign_root_from_input, resolve_campaign_output_path
+from campaign_output import (
+    campaign_root_from_input,
+    resolve_campaign_output_path,
+    resolve_campaign_results_dir,
+)
 from plot_results import COL_W, save, set_rc
 
 # Okabe-Ito pair (CVD-safe); same hues as the PMBS26 interconnect figure.
@@ -151,11 +155,15 @@ def fig_interconnect(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("dirs", nargs="+", help="result directories holding interconnect_extra_*.csv")
-    ap.add_argument("--out", help="output directory (default: first campaign/figs/stats)")
+    ap.add_argument(
+        "--out", help="output directory (default: first campaign/figs/stats)"
+    )
     ap.add_argument("--format", default="both", choices=["pdf", "png", "both"])
     ap.add_argument("--serif", action="store_true")
     args = ap.parse_args()
-    args.dirs = [str(campaign_root_from_input(directory)) for directory in args.dirs]
+    campaign_roots = [campaign_root_from_input(directory) for directory in args.dirs]
+    args.dirs = [str(resolve_campaign_results_dir(directory))
+                 for directory in campaign_roots]
     args.out = str(resolve_campaign_output_path(
         args.out, args.dirs[0], default_subdir="figs/stats"
     ))

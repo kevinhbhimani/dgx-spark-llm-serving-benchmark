@@ -33,7 +33,7 @@
 #                   node (Hoedus) has no DNS to huggingface.co, so an online launch
 #                   burns minutes on doomed metadata retries before falling back to
 #                   cache. Set HF_HUB_OFFLINE=0 only to pull a not-yet-cached model
-#                   (predownload it first with scripts/predownload.sh).
+#                   (acquire it first with scripts/predownload.sh).
 #   SINGLE_CONTAINER  where `single` runs. "standalone" (default) starts its own
 #                   container named $VLLM_CONTAINER, which replaces a running Ray
 #                   head. "ray" execs the TP=1 PP=1 server into the running Ray
@@ -48,6 +48,7 @@ CONFIG="${1:-single}"          # single, tp2, pp2
 MODEL="${MODEL:-Qwen/Qwen3-8B}"
 REVISION="${REVISION:-}"
 PORT="${PORT:-8000}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:$PORT}"
 # The benchmark client always runs on the head, so the API listens on loopback
 # only; HOST=0.0.0.0 exposes it for a remote client.
 HOST="${HOST:-127.0.0.1}"
@@ -127,7 +128,66 @@ fi
 if [[ -n "$TRUST_REMOTE_CODE" ]]; then common+=( --trust-remote-code ); fi
 
 require_local_connectx_ip "$HEAD_IP" "serving head role" || exit 1
+acquire_resource_lock || exit 1
+if [[ "$CONFIG" == "single" ]]; then
+  wait_for_resources_idle auto || exit 1
+else
+  wait_for_resources_idle required || exit 1
+fi
 echo "[launch] $CONFIG  model=$MODEL  image=$VLLM_IMAGE  iface=$CX_IFACE  head=$HEAD_IP"
+
+# A direct launcher holds the shared lock through startup, then releases it
+# once the API is ready so a separate benchmark client can use the server. A
+# caller such as run_models.sh already owns the lock and keeps it through the
+# full experiment.
+run_server_command() {
+  if [[ "${RESOURCE_LOCK_INHERITED:-0}" == "1" ]]; then
+    "$@"
+    return $?
+  fi
+
+  local timeout="${LAUNCH_READY_TIMEOUT:-${READY_TIMEOUT:-1800}}"
+  local waited=0 server_pid=0 server_status=0
+  if [[ ! "$timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[launch] LAUNCH_READY_TIMEOUT must be a positive integer" >&2
+    return 2
+  fi
+  "$@" &
+  server_pid=$!
+  echo "[launch] waiting for $BASE_URL/v1/models before releasing the resource lock"
+  while (( waited < timeout )); do
+    if curl -sf --max-time 1 "$BASE_URL/v1/models" >/dev/null 2>&1; then
+      flock -u "$CAMPAIGN_LOCK_FD"
+      export CAMPAIGN_LOCK_HELD=0
+      echo "[launch] API ready; released the resource lock for benchmark clients"
+      wait "$server_pid" || server_status=$?
+      return "$server_status"
+    fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      wait "$server_pid" || server_status=$?
+      if (( server_status == 0 )); then
+        echo "[launch] server command exited before the API became ready" >&2
+        return 1
+      fi
+      return "$server_status"
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+
+  echo "[launch] timed out after ${timeout}s waiting for the API; stopping the launch" >&2
+  if [[ "$CONFIG" == "single" && "$SINGLE_CONTAINER" == "standalone" ]]; then
+    docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
+  else
+    docker exec "$VLLM_CONTAINER" pkill -f "vllm serve" >/dev/null 2>&1 || true
+  fi
+  kill -TERM "$server_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+  local worker_scope=auto
+  [[ "$CONFIG" != "single" ]] && worker_scope=required
+  wait_for_resources_idle "$worker_scope" serving || true
+  return 1
+}
 
 # Optionally flush stale page cache before large model loads.
 # Stale cache causes false OOM on Grace unified memory; requires sudo.
@@ -399,7 +459,7 @@ case "$CONFIG" in
       if [[ "$HF_HUB_OFFLINE" != "1" && -n "${HF_TOKEN:-}" ]]; then
         hf_offline_env+=( -e HF_TOKEN )
       fi
-      docker exec --user "$HF_CACHE_UID:$HF_CACHE_GID" -e HOME=/tmp \
+      run_server_command docker exec --user "$HF_CACHE_UID:$HF_CACHE_GID" -e HOME=/tmp \
         "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
         -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
         "$VLLM_CONTAINER" /bin/bash -lc \
@@ -425,7 +485,7 @@ case "$CONFIG" in
     # (scripts/run_models.sh). Single mode does not use the Ray container, so
     # reusing $VLLM_CONTAINER here is safe; clear any stale one first.
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
-    docker run --rm --name "$VLLM_CONTAINER" --user "$HF_CACHE_UID:$HF_CACHE_GID" \
+    run_server_command docker run --rm --name "$VLLM_CONTAINER" --user "$HF_CACHE_UID:$HF_CACHE_GID" \
       --gpus all --network host --ipc=host \
       "${container_dns_args[@]}" \
       -e HOME=/tmp -v "$HF_CACHE":/hf-cache \
@@ -439,7 +499,7 @@ case "$CONFIG" in
     _require_ray
     _check_cluster_cache
     _check_cluster_memory
-    docker exec "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
+    run_server_command docker exec "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
       -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
       -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
       "$VLLM_CONTAINER" \
@@ -452,7 +512,7 @@ case "$CONFIG" in
     _require_ray
     _check_cluster_cache
     _check_cluster_memory
-    docker exec "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
+    run_server_command docker exec "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
       -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
       "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \

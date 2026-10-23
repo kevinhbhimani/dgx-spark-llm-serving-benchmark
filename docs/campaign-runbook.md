@@ -42,15 +42,18 @@ campaign identity matches; otherwise the job stops before hardware work.
 The default target is 80%. Set `GPU_UTIL` in Diya's environment to override it
 for planning, validation, memory preflight, and every serving launch. Export
 the override in the shell that runs the campaign, or include it in each
-command. The single-node hardware smoke test uses the separate
-`SMOKE_GPU_UTIL` setting.
+command. The single-node hardware smoke test defaults to the same 0.80 target
+and accepts `SMOKE_GPU_UTIL` when run on its own. The master preflight passes
+the campaign's resolved `GPU_UTIL` value to the smoke test.
 
 Set `OUT_DIR` to name a campaign or resume an existing campaign. The path can
 be `results/rdma-v4-paper-2026-10-22` for a new campaign or an existing legacy
 directory such as `results-rdma-v4-paper`. Do not change it when resuming.
 Campaign manifests record the campaign name, date when present in the
-directory name, and absolute path. Plotting accepts the campaign directory or
-its `index.csv`; default figures and reports go under that campaign's `figs/`.
+directory name, and absolute path. New campaigns put result artifacts under
+`OUT_DIR/results/`, figures and reports under `OUT_DIR/figs/`, and logs under
+`OUT_DIR/logs/`. Plotting accepts the campaign directory or its
+`results/index.csv`; default figures and reports go under `OUT_DIR/figs/`.
 
 ## Where to run commands
 
@@ -62,7 +65,7 @@ its `index.csv`; default figures and reports go under that campaign's `figs/`.
 | `scripts/start_ray.sh head` / `worker` | Diya / Hoedus, respectively | Starts Ray on both nodes |
 | Ray status, RDMA microbenchmarks, canary, and full campaign | Diya only | Ray uses Hoedus for distributed benchmarks and dual-node serving |
 | `scripts/hardware_smoke.sh` | Diya only | Single-node diagnostic using Diya's GPU |
-| `scripts/predownload.sh` | Diya only | Acquires pinned snapshots for dual-node serving or offline cache warming |
+| `scripts/predownload.sh` | Diya only | Acquires selected pinned snapshots before single- or dual-node runs |
 | `scripts/purge_model_cache.sh` | Diya only | Purges both caches while Ray is active; otherwise purges only Diya |
 | `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each node |
 | Perftest suite | Diya client and Hoedus host | Both nodes use separate client and server commands |
@@ -148,10 +151,13 @@ while deleting the snapshots selected by `MODEL_LABELS`. The Python command
 accepts `--no-prune-cache-garbage` for the same opt-out.
 
 Do not run `scripts/predownload.sh all` before the full campaign. That command
-fetches every selected snapshot to Diya's cache. `scripts/run_job.sh` fetches
-one model at a time, mirrors it when a dual-node configuration needs it, and
-purges it after its final measurement. The purge also prunes cache garbage by
-default. Set `PURGE_CACHE_GARBAGE=0` to disable that pruning.
+fetches every selected snapshot to Diya's cache. `scripts/run_job.sh` acquires
+one model group immediately before its canary or measurement runs, mirrors it
+when a dual-node configuration needs it, and applies the campaign's existing
+purge behavior after the group's scheduled runs. The canary always purges each
+group; the measurement pass purges groups when `PURGE_WEIGHTS=1`. The purge
+also prunes cache garbage by default. Set `PURGE_CACHE_GARBAGE=0` to disable
+that pruning.
 
 ## Set up the benchmark client on Diya
 
@@ -222,11 +228,73 @@ scripts/hardware_smoke.sh
 ```
 
 The smoke test writes to `results/smoke-<UTC-date>` by default. It uses its own
-container and port and defaults to `SMOKE_GPU_UTIL=0.10`. Its generated
+container and port and defaults to `SMOKE_GPU_UTIL=0.80`. Its generated
 one-model YAML uses that value as the diagnostic run's global cap. It does not
 replace the campaign canary.
 
+## Resource locking and idle checks
+
+Campaign, launcher, cache, and microbenchmark scripts take a host resource lock
+at `/tmp/dgx-spark-resources_<hostname>.lock`. The lock serializes these
+scripts on that host across output directories and container names. Set
+`RESOURCE_LOCK_FILE` or `CAMPAIGN_LOCK_FILE` to the same path on a filesystem
+mounted by both nodes and supporting `flock` to use one lock across hosts. The
+default `/tmp` lock is local to each host.
+
+Resource checks inspect host processes and running Docker containers. When Ray
+is active, checks also inspect every active Ray node. Dual-node launch and
+microbenchmark commands require both configured nodes to be available. A
+resource check waits up to `RESOURCE_WAIT_TIMEOUT_SECONDS` seconds, default
+1800. A lock wait lasts up to `RESOURCE_LOCK_WAIT_SECONDS` seconds, default
+3600. Set `RESOURCE_WAIT_INTERVAL_SECONDS` to change the idle-check interval;
+the default is 5 seconds.
+
+An experiment failure can continue to the next independent experiment after
+the serving processes stop and the endpoint is unavailable. A cleanup failure
+or an unconfirmed resource check stops later launches.
+
 ## Run the full canary preflight
+
+For one end-to-end readiness check, set the campaign output name and run this
+on Diya after starting Ray on Diya and Hoedus:
+
+```bash
+OUT_DIR=xyz scripts/preflight.sh
+```
+
+The bare name resolves to `results/xyz`. Campaign results go under
+`results/xyz/results/`; campaign logs go under `results/xyz/logs/`. Each
+preflight run gets a unique top-level subdirectory:
+
+```text
+results/xyz/
+  results/                  campaign measurement outputs
+  figs/                     campaign figures, tables, and reports
+  logs/                     server and job logs
+  preflight/<run-id>/       all artifacts from one preflight run
+    logs/                    preflight stage logs
+    hardware-smoke/          smoke results and logs
+    campaign/                campaign canary results and logs
+```
+
+The preflight checks that the campaign results and logs directories can create,
+write, read, and remove a file before running the hardware stages. The smoke
+uses the campaign's resolved `GPU_UTIL` value, which defaults to `0.80`.
+
+The script runs the plan-only client and campaign checks, ConnectX verification,
+the single-node serving smoke, and the campaign preflight with a forced canary.
+The campaign preflight includes the live all-reduce RDMA gate and send/recv
+check. Each stage prints PASS or FAIL and saves its output under a unique
+preflight directory. The script continues through independent
+stages, reports a final summary, and exits nonzero if any stage fails.
+
+At exit, it purges every model and tokenizer repo listed in
+`configs/models.yaml` from the Hugging Face caches on both nodes, including
+cache garbage. If the two-node purge fails, it retries Diya's cache and still
+reports overall failure because Hoedus cleanup could not be confirmed. The
+script does not delete unrelated Hugging Face model repos. The campaign
+preflight requires benchmark sources and inputs to be committed; the smoke
+stage also requires an available single-node model and GPU.
 
 Use a new output directory for this campaign:
 
@@ -246,13 +314,13 @@ the 8-byte collective. A TCP fallback or slow link stops the campaign before
 the canary and measurements. A send/recv failure is logged and does not block
 later campaign work.
 
-The canary acquires single-node-only models through vLLM and fetches model
-groups that need `tp2` or `pp2` before mirroring them. It attempts one launch
-for each model/configuration pair it can fetch, checks the streaming response
-and tokenizer, and purges each model afterward. It logs pair failures and
-continues through later groups. By default, the canary exits with an error
-after those checks and stops before measurements if any pair fails. The
-command writes
+The canary acquires every selected model group on the head using the same
+pinned-snapshot step. It mirrors groups that need `tp2` or `pp2` to the worker.
+It attempts one launch for each model/configuration pair it can acquire, checks
+the streaming response and tokenizer, and purges each model afterward. It logs
+pair failures and continues through later groups. By default, the canary exits
+with an error after those checks and stops before measurements if any pair
+fails. The command writes
 `results/rdma-v4-paper-2026-10-22/.canary_passed`
 only when the canary passes.
 
@@ -285,20 +353,20 @@ The default matrix contains 19 checkpoints, 53 model/configuration curves,
 time is about 265 sequential hours before extensions, downloads, and model
 loads.
 
-`run_job.sh` acquires and measures one model group at a time. Single-node-only
-groups use vLLM JIT. Groups that include `tp2` or `pp2` use head-side snapshot
-acquisition, worker mirroring, and a two-node cache check before serving. The
-job purges each group's weights from both caches. Single-node launches run
+`run_job.sh` acquires and measures one model group at a time. Every group uses
+the same head-side snapshot acquisition; groups that include `tp2` or `pp2`
+also mirror to the worker and check both caches before serving. The job purges
+each group's weights from both caches. Single-node launches run
 inside the Ray head container so the Ray
-cluster remains active. The campaign writes logs, per-launch policies,
-`index.csv`, plots, statistics, transport audit, and `campaign_manifest.json`
-under `OUT_DIR`.
+cluster remains active. The campaign writes per-launch policies, `index.csv`,
+plots, statistics, transport audit, and `campaign_manifest.json` under
+`OUT_DIR/results/`. Server and job logs are under `OUT_DIR/logs/`.
 
 Detach from the session with `Ctrl-b`, then `d`. Reattach from Diya with
 `tmux attach -t rdma-v4`. Follow the campaign log from another Diya shell:
 
 ```bash
-tail -f results/rdma-v4-paper-2026-10-22/run_job_*.log
+tail -f results/rdma-v4-paper-2026-10-22/logs/run_job_*.log
 ```
 
 If the process stops or the connection closes, start Ray again if needed and
@@ -318,8 +386,9 @@ reports a nonzero status and can be resumed with the same `OUT_DIR`.
 
 After completion, `scripts/run_job.sh` verifies the result grid, generates
 figures and statistics, and writes the campaign manifest. Check
-`results/rdma-v4-paper-2026-10-22/campaign_manifest.json` and
-`results/rdma-v4-paper-2026-10-22/index.csv`. Stop Ray on each node after the campaign:
+`results/rdma-v4-paper-2026-10-22/results/campaign_manifest.json` and
+`results/rdma-v4-paper-2026-10-22/results/index.csv`. Stop Ray on each node
+after the campaign:
 
 ```bash
 scripts/start_ray.sh stop

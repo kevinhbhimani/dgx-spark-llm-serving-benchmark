@@ -13,6 +13,8 @@ from typing import Any, Sequence
 
 
 DEFAULT_CAMPAIGN_NAME = "benchmark"
+RESULTS_DIRECTORY = "results"
+LOGS_DIRECTORY = "logs"
 IDENTITY_FILENAME = "campaign_run.json"
 DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})$")
 
@@ -35,14 +37,18 @@ def resolve_campaign_dir(
     """Resolve an explicit output path or the default UTC-dated campaign path."""
     if out_dir:
         base = Path(cwd) if cwd is not None else Path.cwd()
-        target = Path(out_dir).expanduser()
+        raw_target: str = os.fspath(out_dir)
+        target = Path(raw_target).expanduser()
         if not target.is_absolute():
-            target = base / target
+            if os.sep not in raw_target and raw_target not in {".", ".."}:
+                target = base / RESULTS_DIRECTORY / target
+            else:
+                target = base / target
     else:
         base = Path(cwd) if cwd is not None else Path(__file__).resolve().parent
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", default_name):
             raise ValueError(f"invalid default campaign name: {default_name!r}")
-        target = base / "results" / f"{default_name}-{utc_date(now)}"
+        target = base / RESULTS_DIRECTORY / f"{default_name}-{utc_date(now)}"
     return target.resolve()
 
 
@@ -64,14 +70,83 @@ def campaign_metadata(out_dir: str | os.PathLike[str]) -> dict[str, str | None]:
     }
 
 
+def campaign_results_dir(out_dir: str | os.PathLike[str]) -> Path:
+    """Return the results directory for a campaign root."""
+    return Path(out_dir).expanduser().resolve() / RESULTS_DIRECTORY
+
+
+def campaign_logs_dir(out_dir: str | os.PathLike[str]) -> Path:
+    """Return the logs directory for a campaign root."""
+    return Path(out_dir).expanduser().resolve() / LOGS_DIRECTORY
+
+
+def _has_legacy_campaign_artifacts(directory: Path) -> bool:
+    """Return whether campaign artifacts still exist directly under the root."""
+    patterns: tuple[str, ...] = (
+        "index.csv",
+        "campaign_run.json",
+        "campaign_manifest.json",
+        "client_environment.json",
+        "serving_policy_*.json",
+        "*.summary.json",
+        "*.raw.jsonl",
+        "*.power.jsonl",
+        "*.vllm_metrics.jsonl",
+        "server_*.log",
+        "run_job_*.log",
+        "allreduce_ray_*.csv",
+        "allreduce_ray_*_raw.log",
+        "allreduce_ray_*_nccl.log",
+        "interconnect_extra_*.csv",
+        "interconnect_extra_*_raw.log",
+        "interconnect_extra_*_nccl.log",
+        ".canary_passed",
+    )
+    return any(
+        path.is_file()
+        for pattern in patterns
+        for path in directory.glob(pattern)
+    )
+
+
+def resolve_campaign_results_dir(out_dir: str | os.PathLike[str]) -> Path:
+    """Resolve new results paths while retaining support for older campaigns."""
+    directory = Path(out_dir).expanduser().resolve()
+    nested_results = directory / RESULTS_DIRECTORY
+    if (nested_results / "index.csv").is_file():
+        return nested_results
+    if _has_legacy_campaign_artifacts(directory):
+        return directory
+    return nested_results
+
+
+def resolve_campaign_logs_dir(out_dir: str | os.PathLike[str]) -> Path:
+    """Resolve the logs directory for new and legacy campaign layouts."""
+    directory = Path(out_dir).expanduser().resolve()
+    nested_results = directory / RESULTS_DIRECTORY
+    if (nested_results / "index.csv").is_file() or (
+        nested_results / IDENTITY_FILENAME
+    ).is_file():
+        return campaign_logs_dir(directory)
+    if _has_legacy_campaign_artifacts(directory):
+        return directory
+    if (directory / LOGS_DIRECTORY).is_dir():
+        return directory / LOGS_DIRECTORY
+    return campaign_logs_dir(directory)
+
+
 def campaign_root_from_input(path: str | os.PathLike[str]) -> Path:
     """Resolve a campaign directory or an index path to its directory."""
     candidate = Path(path).expanduser()
     if not candidate.is_absolute():
         candidate = Path.cwd() / candidate
     candidate = candidate.resolve()
+    if candidate.is_dir() and candidate.name == RESULTS_DIRECTORY:
+        return candidate.parent
     if candidate.is_dir() or candidate.suffix.lower() != ".csv":
         return candidate
+    if candidate.parent.name == RESULTS_DIRECTORY:
+        return candidate.parent.parent
     return candidate.parent
 
 
@@ -82,13 +157,24 @@ def resolve_index_path(
 ) -> Path:
     """Resolve an index file or campaign directory to its index.csv path."""
     if index_path is None:
-        return resolve_campaign_dir(default_name=default_name) / "index.csv"
+        campaign_dir = resolve_campaign_dir(default_name=default_name)
+        return resolve_campaign_results_dir(campaign_dir) / "index.csv"
     candidate = Path(index_path).expanduser()
     if not candidate.is_absolute():
         candidate = Path.cwd() / candidate
     candidate = candidate.resolve()
     if candidate.is_dir() or candidate.suffix.lower() != ".csv":
-        return candidate / "index.csv"
+        nested_index = candidate / RESULTS_DIRECTORY / "index.csv"
+        legacy_index = candidate / "index.csv"
+        if nested_index.is_file():
+            return nested_index
+        if legacy_index.is_file():
+            return legacy_index
+        if candidate.name == RESULTS_DIRECTORY:
+            return legacy_index
+        if _has_legacy_campaign_artifacts(candidate):
+            return legacy_index
+        return nested_index
     return candidate
 
 
@@ -98,8 +184,8 @@ def resolve_campaign_output_path(
     *,
     default_subdir: str = "figs",
 ) -> Path:
-    """Place a default or relative report path within the selected campaign."""
-    campaign_dir = resolve_index_path(index_path).parent
+    """Place a default or relative report path within the selected campaign root."""
+    campaign_dir = campaign_root_from_input(resolve_index_path(index_path))
     if output_path is None:
         return (campaign_dir / default_subdir).resolve()
     output = Path(output_path).expanduser()
@@ -134,7 +220,9 @@ def fingerprint_identity(files: Sequence[str], values: Sequence[str]) -> dict[st
 
 
 def _read_existing_identity(directory: Path) -> dict[str, Any] | None:
-    marker = directory / IDENTITY_FILENAME
+    marker = directory / RESULTS_DIRECTORY / IDENTITY_FILENAME
+    if not marker.is_file():
+        marker = directory / IDENTITY_FILENAME
     if not marker.is_file() or marker.is_symlink():
         return None
     try:
@@ -156,7 +244,9 @@ def _read_existing_identity(directory: Path) -> dict[str, Any] | None:
     canonical = json.dumps(identity_payload, sort_keys=True, separators=(",", ":"))
     if hashlib.sha256(canonical.encode()).hexdigest() != identity["sha256"]:
         return None
-    index = directory / "index.csv"
+    index = directory / RESULTS_DIRECTORY / "index.csv"
+    if not index.exists() and marker.parent == directory:
+        index = directory / "index.csv"
     if index.exists() and (not index.is_file() or index.is_symlink()):
         return None
     return identity
@@ -190,6 +280,8 @@ def prepare_implicit_campaign(
 
     try:
         directory.mkdir(parents=True, exist_ok=False)
+        result_directory = campaign_results_dir(directory)
+        result_directory.mkdir()
     except FileExistsError:
         existing_identity = _read_existing_identity(directory)
         if existing_identity == identity:
@@ -202,7 +294,7 @@ def prepare_implicit_campaign(
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "identity": identity,
     }
-    marker = directory / IDENTITY_FILENAME
+    marker = campaign_results_dir(directory) / IDENTITY_FILENAME
     try:
         descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except FileExistsError:
@@ -228,6 +320,12 @@ def _parser() -> argparse.ArgumentParser:
     resolve.add_argument("--out-dir")
     resolve.add_argument("--default-name", default=DEFAULT_CAMPAIGN_NAME)
 
+    results = commands.add_parser("results-dir", help="resolve a campaign results directory")
+    results.add_argument("--out-dir", required=True)
+
+    logs = commands.add_parser("logs-dir", help="resolve a campaign logs directory")
+    logs.add_argument("--out-dir", required=True)
+
     identity = commands.add_parser("identity", help="fingerprint campaign inputs")
     identity.add_argument("--file", action="append", default=[])
     identity.add_argument("--value", action="append", default=[])
@@ -244,6 +342,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "resolve":
             print(resolve_campaign_dir(args.out_dir, default_name=args.default_name))
+        elif args.command == "results-dir":
+            print(resolve_campaign_results_dir(args.out_dir))
+        elif args.command == "logs-dir":
+            print(resolve_campaign_logs_dir(args.out_dir))
         elif args.command == "identity":
             print(json.dumps(fingerprint_identity(args.file, args.value), sort_keys=True))
         else:

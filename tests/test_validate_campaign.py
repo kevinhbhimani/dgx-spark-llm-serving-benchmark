@@ -414,6 +414,26 @@ class CampaignFixture:
                 )
         return path
 
+    def move_to_campaign_subdirectories(
+        self: CampaignFixture,
+    ) -> tuple[Path, Path]:
+        campaign_root = self.root / "campaign"
+        result_directory = campaign_root / "results"
+        log_directory = campaign_root / "logs"
+        result_directory.mkdir(parents=True)
+        log_directory.mkdir()
+        for artifact in self.results.iterdir():
+            destination = (
+                log_directory if artifact.suffix == ".log" else result_directory
+            )
+            artifact.replace(destination / artifact.name)
+        self.results.rmdir()
+        self.results = result_directory
+        self.environment_path = result_directory / "client_environment.json"
+        if self.policy_path is not None:
+            self.policy_path = result_directory / self.policy_path.name
+        return campaign_root, log_directory
+
 
 class PlanTests(unittest.TestCase):
     def test_plan_validates_and_counts_the_cross_product(self):
@@ -534,6 +554,35 @@ class AllreduceCsvTests(unittest.TestCase):
 
 
 class VerifyTests(unittest.TestCase):
+    def test_verify_new_campaign_layout_seals_result_and_log_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point()
+            campaign_root, log_directory = fixture.move_to_campaign_subdirectories()
+            manifest = fixture.results / "campaign_manifest.json"
+
+            report = validator.verify_campaign(
+                fixture.models,
+                fixture.experiment,
+                campaign_root,
+                [1],
+                1,
+                manifest,
+            )
+            payload = json.loads(manifest.read_text())
+
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(
+                payload["campaign"]["resolved_out_dir"], str(campaign_root.resolve())
+            )
+            self.assertEqual(
+                payload["artifacts"]["index"][0]["path"], "results/index.csv"
+            )
+            self.assertEqual(
+                payload["artifacts"]["log"][0]["path"],
+                f"logs/{next(log_directory.glob('server_*.log')).name}",
+            )
+
     def test_live_gpu_memory_fraction_over_budget_is_rejected(
         self: VerifyTests,
     ) -> None:

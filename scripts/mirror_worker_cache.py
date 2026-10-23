@@ -75,7 +75,8 @@ def snapshot_manifest(repo: str, revision: str) -> tuple[dict[str, int], dict[st
         raise RuntimeError(f"cache blob directory escapes {HUB}")
     if not os.path.isdir(snapshot):
         raise FileNotFoundError(
-            f"{repo}@{revision} is not in the head cache; run predownload first"
+            f"{repo}@{revision} is not in the head cache; acquire the pinned "
+            "snapshot first"
         )
 
     files: dict[str, int] = {}

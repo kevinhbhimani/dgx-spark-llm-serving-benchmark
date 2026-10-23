@@ -23,6 +23,11 @@ campaign_resolve_out_dir() {
       --out-dir "$OUT_DIR")" || return 1
   fi
   export OUT_DIR
+  CAMPAIGN_RESULTS_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" \
+    results-dir --out-dir "$OUT_DIR")" || return 1
+  CAMPAIGN_LOGS_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" \
+    logs-dir --out-dir "$OUT_DIR")" || return 1
+  export CAMPAIGN_RESULTS_DIR CAMPAIGN_LOGS_DIR
 }
 
 campaign_reject_existing_implicit_out_dir() {

@@ -95,7 +95,7 @@ export MODEL=Qwen/Qwen3-8B
 export REVISION=b968826d9c46dd6066d109eabc6255188de91218
 # export HF_TOKEN=...    # only needed for gated Hugging Face models
 # HF_HUB_OFFLINE=0 permits this exploratory launch to fetch that exact revision.
-# run_job.sh fetches each pinned model on demand before serving it.
+# Full campaigns acquire each pinned model group just before serving it.
 HF_HUB_OFFLINE=0 scripts/launch_server.sh single
 ```
 
@@ -108,10 +108,12 @@ The launcher defaults to `--generation-config vllm`, so model-repository
 request settings. Override `GENERATION_CONFIG` only when that difference is
 intentional.
 
-Serving otherwise defaults to `HF_HUB_OFFLINE=1`. `scripts/run_job.sh` fetches
-one pinned model at a time, mirrors dual-node weights, runs the model, and
-purges its cache before moving to the next model. `scripts/run_models.sh` can
-also reuse models fetched separately with `scripts/predownload.sh`.
+Serving otherwise defaults to `HF_HUB_OFFLINE=1`. `scripts/run_job.sh` acquires
+the selected pinned model group immediately before its canary or measurement
+runs. Direct `scripts/run_models.sh` calls acquire one selected model before
+launch. Both use the same head-node acquisition; dual-node runs mirror to the
+worker. `run_job.sh` acquires once per model group and applies the campaign's
+existing purge behavior.
 
 4. In another terminal, run a short smoke test:
 
@@ -132,8 +134,6 @@ checking connectivity and output files, not for paper-quality measurements.
 
 ```bash
 export MODEL_LABELS=llama3.1-8b
-scripts/predownload.sh single
-CHECK_ONLY=1 scripts/predownload.sh single
 CANARY_ONLY=1 scripts/run_models.sh single
 CONCURRENCIES="1 2 4 8 16 32 64 128" REPEATS=1 \
 scripts/run_models.sh single
@@ -182,6 +182,7 @@ scripts/
   load_env.sh                 source a repo-local .env for script entrypoints
   connectx_env.sh             shared ConnectX and container settings; loads .env
   verify_connectx.sh          route and latency sanity checks
+  preflight.sh                sequential readiness checks, forced canary, and cache purge
   start_ray.sh                start or stop the Ray container for dual-node runs
   cluster_runtime_fingerprint.py verify identical dual-node software/hardware
   launch_server.sh            start vLLM in single, tp2, or pp2 mode
@@ -193,7 +194,7 @@ scripts/
   run_job.sh                  resumable unattended campaign, one model at a time
   campaign_schedule.py        per-model replicate schedule for run_job.sh
   models_for_config.py        select models.yaml entries for a serving config
-  predownload.sh              fetch pinned snapshots into the head cache
+  predownload.sh              acquire pinned snapshots into the head cache
   hf_snapshot_size.py         exact bytes a pinned snapshot still needs
   mirror_worker_cache.sh      copy pinned snapshots to the worker over Ray
   purge_model_cache.sh        delete finished models and prune cache garbage by default
@@ -458,7 +459,7 @@ export PYTHONNOUSERSITE=1
 `CONTAINER_DNS` affects container DNS only, not host resolution. Leave it empty
 when Docker's host-derived resolver works; an explicit public resolver may be
 blocked on managed networks. Offline serving still performs no Hub lookup.
-`DOWNLOAD_DNS` is useful when the predownload container needs a resolver
+`DOWNLOAD_DNS` is useful when the model-acquisition container needs a resolver
 different from the serving/Ray containers.
 
 Do not put an arbitrary `SERVING_FINGERPRINT` in `.env` to satisfy the full
@@ -610,17 +611,14 @@ scripts/start_ray.sh worker
 `DROP_CACHES=1` is an optional page-cache flush on the local node. It requires
 sudo. Omit it on systems where the benchmark account does not have sudo access.
 
-Direct `run_models.sh tp2` and `run_models.sh pp2` launches need pinned snapshots
-in both node caches. Single-node launches can acquire pinned revisions through
-vLLM when Hub access is enabled. The full matrix is about 1.07 TB, so select
-models with `MODEL_LABELS` for manual dual-node launches. `run_job.sh` fetches
-and mirrors one model group on demand, then purges it.
+Direct `run_models.sh` launches acquire each selected pinned snapshot on the
+head before launch and mirror it to the worker for tp2/pp2. The full matrix is
+about 1.07 TB, so select models with `MODEL_LABELS` for manual launches.
+`run_job.sh` acquires once per model group, mirrors when needed, and applies
+the campaign purge policy.
 
 ```bash
 export MODEL_LABELS="llama3.1-8b"
-scripts/predownload.sh all
-CHECK_ONLY=1 scripts/predownload.sh all
-scripts/mirror_worker_cache.sh all
 ```
 
 4. Back on the head node, launch and strictly probe each tensor-parallel model,
@@ -740,17 +738,15 @@ streaming probe with delta token IDs, matching final usage,
 pass. The wrapper then runs the concurrency sweep tagged with the model label
 and tears the server down before the next model. Each launch writes a new,
 never-overwritten log named
-`OUT_DIR/server_<label>_<config>_<fingerprint-prefix>_<UTC>_pid<PID>.log` and an
-immutable `OUT_DIR/serving_policy_<label>_<config>_<fingerprint>.json`. The log
+`OUT_DIR/logs/server_<label>_<config>_<fingerprint-prefix>_<UTC>_pid<PID>.log`
+and an immutable
+`OUT_DIR/results/serving_policy_<label>_<config>_<fingerprint>.json`. The log
 is passed to the benchmark so exact per-worker memory, max-concurrency, and
 other capacity figures are captured; the policy makes the launch inputs and
 runtime identity independently inspectable.
 
 ```bash
-# Optional single-node cache warmup. A single-node launch can also acquire the
-# pinned revision through vLLM when the cache is cold and Hub access is enabled.
-scripts/predownload.sh all
-CHECK_ONLY=1 scripts/predownload.sh all
+# run_models.sh acquires each selected model immediately before launch.
 
 # Launch/probe/tear down every single-node model without starting a sweep.
 CANARY_ONLY=1 scripts/run_models.sh single
@@ -764,12 +760,8 @@ CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh single
 # only the vLLM serve process between models and leaves the Ray cluster up.
 scripts/start_ray.sh head                      # on Diya
 scripts/start_ray.sh worker                    # on Hoedus
-# Each node has its OWN HF cache, and the worker can neither reach
-# huggingface.co nor be SSH'd into. Acquire exact revisions on Diya, then mirror
-# them to Hoedus over the cluster network. The mirror streams from Diya to
-# Hoedus over a Ray-managed TCP connection. Existing worker files are skipped.
-MODEL_LABELS='llama3.3-70b-fp8' scripts/predownload.sh all
-MODEL_LABELS='llama3.3-70b-fp8' scripts/mirror_worker_cache.sh all
+# Each node has its own HF cache, and the worker cannot reach huggingface.co.
+# run_models.sh acquires on Diya and mirrors to Hoedus automatically.
 CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed launch
 CANARY_ONLY=1 scripts/run_models.sh pp2
 scripts/run_models.sh tp2
@@ -785,7 +777,7 @@ MODEL_LABELS=llama3.1-8b scripts/purge_model_cache.sh
 scripts/start_ray.sh stop                      # on each node when finished
 
 # Rerun a sweep that failed partway without repeating finished work. Consults
-# OUT_DIR/index.csv and skips only structurally complete, compatible
+# OUT_DIR/results/index.csv and skips only structurally complete, compatible
 # (repeat, concurrency) windows for the same model, config, methodology, YAML,
 # harness, client runtime,
 # serving policy, and observed live deployment. A fully covered model never
@@ -806,18 +798,21 @@ Ray, or a failed cache purge stops the campaign. Rerun the same `OUT_DIR` with
 
 ### Final unattended campaign
 
-`OUT_DIR` is the complete campaign output path. With no `OUT_DIR`,
-`run_job.sh` resolves `results/benchmark-<UTC-date>` once and passes the
-absolute path to every child process. `PLAN_ONLY=1` prints that path without
-creating it. A default path collision resumes only when the campaign identity
-matches. Otherwise, the job stops before hardware work. Set a dated path such
-as `OUT_DIR=results/rdma-v4-paper-2026-10-22` to name a campaign. Explicit
-legacy paths remain available for existing campaigns and resume.
+`OUT_DIR` selects the campaign output path. A bare name such as
+`OUT_DIR=rdma-v4-paper` resolves to `results/rdma-v4-paper`. A relative path
+with a directory component, such as `OUT_DIR=results/rdma-v4-paper-2026-10-22`,
+and an absolute path are used as given. With no `OUT_DIR`, `run_job.sh` resolves
+`results/benchmark-<UTC-date>` once and passes the absolute path to every child
+process. `PLAN_ONLY=1` prints that path without creating it. A default path
+collision resumes only when the campaign identity matches. Otherwise, the job
+stops before hardware work. Explicit legacy paths remain available for existing
+campaigns and resume.
 
-Plotting accepts a campaign directory or an explicit `index.csv` path. When
-`--out` is omitted, figures and tables go under the selected campaign's
-`figs/` directory. The campaign manifest records the campaign name, date when
-present in the directory name, and resolved absolute path.
+New campaigns store result artifacts in `OUT_DIR/results/`, figures and tables
+in `OUT_DIR/figs/`, and logs in `OUT_DIR/logs/`. Plotting accepts a campaign
+directory or an explicit `index.csv` path. When `--out` is omitted, figures and
+tables go under `OUT_DIR/figs/`. The campaign manifest records the campaign
+name, date when present in the directory name, and resolved absolute path.
 
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
@@ -855,24 +850,26 @@ runtime identity, and records the Ray all-reduce gate and the send/recv
 microbenchmark while the GPUs are idle. It then works through
 `configs/models.yaml` one model at a time:
 
-1. **acquire** the current model through pinned-revision vLLM JIT when the
-   group is single-node only; otherwise fetch its pinned snapshot with
-   `predownload.sh` in one-label mode;
+1. **acquire** the current model group's pinned snapshot on the head with
+   `predownload.sh` for its selected labels, immediately before its canary or
+   measurement runs;
 2. **mirror** the snapshot to the worker cache if the model runs tp2/pp2;
 3. **measure** every config it lists in 3 replicates, rotating the config
    order between replicates (see below);
 4. **purge** the snapshot, and vLLM's compile cache, from both nodes.
 
-Peak cache use is therefore the largest single model (~163 GB for Qwen3-Next
-80B BF16), not the whole matrix (~1.07 TB). `PURGE_WEIGHTS=0` keeps everything.
+With the default `PURGE_WEIGHTS=1`, peak cache use is the largest single model
+(~163 GB for Qwen3-Next 80B BF16), not the whole matrix (~1.07 TB). The canary
+always purges each group; `PURGE_WEIGHTS=0` keeps weights after measurement.
 Single-node launches run inside the Ray head container
 (`SINGLE_CONTAINER=ray`), so the cluster survives them and the old
 "single last" ordering is gone.
 
-Before the first measurement, a **canary pass** acquires each model through
-single-node JIT or the dual-node cache flow, launches it once under every
-config with the strict stream contract and the client tokenizer preflight, and
-purges it again. It collects every failure and stops
+Before the first measurement, a **canary pass** acquires each model group on
+the head using the same pinned-snapshot step for single- and dual-node runs,
+mirrors it to the worker when needed, launches it once under every config with
+the strict stream contract and the client tokenizer preflight, and purges it
+again. It collects every failure and stops
 the job before any measurement if one failed, so an unsupported architecture or
 an image problem shows up within hours, not on day 10. The pass costs one extra
 download of the matrix plus 53 launches, and it is skipped automatically once
@@ -894,17 +891,19 @@ source, client environment, or serving policy, the sweep fails before another
 expensive point and tells you to choose a fresh `OUT_DIR`.
 
 Run only one campaign against this physical head/container pair at a time. The
-orchestrators take a nonblocking campaign lock and fail if another sweep or
-all-reduce job is already active. Keep the committed source and YAML unchanged
+orchestrators and cache utilities share a host resource lock, so acquisitions,
+mirrors, purges, and measurements cannot overlap. A competing operation waits
+for the configured lock timeout. Keep the committed source and YAML unchanged
 until the campaign is complete.
 
-`scripts/predownload.sh` is the explicit cache-warming and dual-node acquisition
-path. It uses the same pinned image, cache mount, model ids, and revisions as
+`scripts/predownload.sh` is the pinned-snapshot acquisition command used by
+`run_job.sh` per model group and by direct `run_models.sh` launches per model.
+It uses the same pinned image, cache mount, model ids, and revisions as
 serving. It sizes each pinned revision from the Hub's per-file
 listing (`scripts/hf_snapshot_size.py`), net of blobs already in the cache, and
 exits on an API failure before the first download. `CHECK_ONLY=1` uses Hugging
 Face local-only resolution and fails on a missing or partial snapshot; it never
-substitutes a newer cached revision. `MODEL_LABELS` restricts predownload,
+substitutes a newer cached revision. `MODEL_LABELS` restricts acquisition,
 mirror, purge, and `run_models.sh` to the listed labels.
 
 `run_job.sh` verifies the exact rectangle before plotting and again afterward,
@@ -918,8 +917,12 @@ python scripts/validate_campaign.py verify \
   --out-dir "$OUT_DIR" \
   --concurrencies 1 2 4 8 16 32 64 128 \
   --repeats 3 \
-  --manifest "$OUT_DIR/campaign_manifest.json"
+  --manifest "$OUT_DIR/results/campaign_manifest.json"
 ```
+
+New campaigns keep measurement artifacts in `OUT_DIR/results/`, figures and
+reports in `OUT_DIR/figs/`, and diagnostic logs in `OUT_DIR/logs/`. Existing
+campaigns with a root-level `index.csv` remain readable and resumable.
 
 The verifier requires exactly the planned rows and repeat IDs, validates the
 indexed artifact sizes and SHA-256 digests, provenance consistency, request and
@@ -1001,17 +1004,20 @@ single-repeat level, at the price of noisier p99 values at mid load.
 Raw telemetry (`*.raw.jsonl`, `*.power.jsonl`, `*.vllm_metrics.jsonl`) is
 ~14 MB per measurement window, ~16 GB for a full replicated campaign, so
 `.gitignore` keeps it, the server logs, and the job logs out of git. Commit
-`index.csv`, `*.summary.json`, the `serving_policy_*.json` files, the
-interconnect CSVs, `client_environment.json`, `campaign_manifest.json`, and
-`figs/`. Archive the raw data outside the repository:
+`OUT_DIR/results/index.csv`, `OUT_DIR/results/*.summary.json`, the
+`OUT_DIR/results/serving_policy_*.json` files, the interconnect CSVs,
+`OUT_DIR/results/client_environment.json`, `OUT_DIR/results/campaign_manifest.json`,
+and `OUT_DIR/figs/`. Archive the raw data outside the repository:
 
 ```bash
-scripts/pack_raw.sh results          # -> ../dgx-spark-raw/results-raw-<date>.tar.zst
+scripts/pack_raw.sh results/xyz      # -> ../dgx-spark-raw/xyz-raw-<date>.tar.zst
 ```
 
-The archive ships a `SHA256SUMS` file; extracting it back into the result
-directory restores everything `validate_campaign.py verify` hashes. Raw files
-that were committed before this policy (under `baselines/`) remain tracked.
+The archive scans recursively, including raw telemetry and logs under
+`OUT_DIR/preflight/`. It ships a `SHA256SUMS` file; extracting it back into the
+result directory restores everything `validate_campaign.py verify` hashes.
+Raw files that were committed before this policy (under `baselines/`) remain
+tracked.
 
 ### Baselines and comparisons
 
@@ -1137,19 +1143,21 @@ Every measurement point writes these files under `out_dir`:
   and serving-policy artifact. All point artifacts are fsynced and atomically
   renamed before the index row can make that point resumable.
 
-Campaign-level files in `OUT_DIR` include immutable `serving_policy_*.json`
-launch records, unique `server_*.log` files, the fingerprinted
-`allreduce_ray_*.csv`, the `interconnect_extra_*.csv` send/recv benchmark,
-`client_environment.json`, figures and tables under `OUT_DIR/figs/` (replicate
-statistics, the NCCL transport audit, and baseline comparisons under
-`figs/stats/`), and the final `campaign_manifest.json`. The manifest is the
+Campaign result files are under `OUT_DIR/results/`: immutable
+`serving_policy_*.json` launch records, the fingerprinted `allreduce_ray_*.csv`,
+the `interconnect_extra_*.csv` send/recv benchmark, `client_environment.json`,
+and the final `campaign_manifest.json`. Figures and tables are under
+`OUT_DIR/figs/`, including replicate statistics, the NCCL transport audit, and
+baseline comparisons under `OUT_DIR/figs/stats/`. Diagnostic logs are under
+`OUT_DIR/logs/`, including server launch logs and the run log. The manifest is the
 paper bundle's integrity inventory; rerun the verifier after any intentional
 figure regeneration. Raw telemetry and logs stay out of git; see
 [Raw data and the repository](#raw-data-and-the-repository).
 
 When several models were run into one `index.csv` (see Benchmarking Multiple
 Models), `plot_results.py` writes a cross-model `model_comparison` figure and a
-`capacity_table`, then a full per-model figure set under `figs/<model_label>/`.
+`capacity_table`, then a full per-model figure set under
+`OUT_DIR/figs/<model_label>/`.
 Restrict to one model with `--model <label>`.
 
 The run tag has this shape:
@@ -1453,10 +1461,10 @@ using temperature to interpret a hardware failure.
   `python scripts/check_environment.py` with `PYTHONNOUSERSITE=1`.
 - `Connection refused` or model resolution fails: confirm vLLM is running and
   `curl http://127.0.0.1:8000/v1/models` works from the benchmark client.
-- A dual-node cache check reports a missing revision: run
+- A direct `launch_server.sh` dual-node launch reports a missing revision: run
   `scripts/predownload.sh <config>` while Hub access is available, then mirror
-  the checked snapshot to the worker. The launch checks both nodes before
-  distributed serving.
+  the checked snapshot to the worker. `run_models.sh` performs these steps for
+  its selected model automatically.
 - `/v1/models` works but the readiness probe fails: inspect the server log and
   try the same two-token streaming completion manually. The benchmark requires
   vLLM's delta `token_ids`, final usage, `finish_reason: length`, and `[DONE]`;
@@ -1498,7 +1506,7 @@ using temperature to interpret a hardware failure.
   compilation, and is the uniform default for all configs.
 - `run_models.sh` skips a model with a timeout or "launcher exited": that model
   failed to come up (often OOM). Check the newest matching
-  `OUT_DIR/server_<label>_<config>_*.log` (logs are never overwritten);
+  `OUT_DIR/logs/server_<label>_<config>_*.log` (logs are never overwritten);
   set a lower `GPU_UTIL` for the campaign, add a `quant`, or move it to the
   dual-node configs if it does not fit on one GB10. The
   orchestrator continues to the next model rather than aborting the whole
@@ -1522,9 +1530,9 @@ using temperature to interpret a hardware failure.
 - `tp2`/`pp2` launch dies with `HFValidationError: Repo id must be in the form
   ...` quoting a `/hf-cache/hub/...` path, raised by a
   `RayWorkerWrapper` at the worker's IP: the model's weights are not in the
-  worker node's HF cache (each node has its own; `predownload.sh` only warms
-  the node it runs on). Run `scripts/mirror_worker_cache.sh tp2|pp2|all` from
-  the head and relaunch.
+  worker node's HF cache (each node has its own; acquisition runs on the head).
+  `run_models.sh` mirrors automatically; a direct `launch_server.sh` requires
+  `scripts/mirror_worker_cache.sh tp2|pp2|all` from the head before relaunch.
 - `tp2`/`pp2` launch passes the cache preflight but hangs during model load
   with no engine output: NCCL cannot finish the RDMA handshake. Run
   `ibdev2netdev` on both nodes and confirm one UP device per port. Run

@@ -23,7 +23,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import resolve_campaign_dir
+from campaign_output import resolve_campaign_dir, resolve_campaign_results_dir
 
 from .config import ExperimentConfig
 from .workload import Workload
@@ -1325,9 +1325,10 @@ def main():
     if args.base_url:
         cfg.base_url = args.base_url
     if args.out_dir is not None:
-        cfg.out_dir = str(resolve_campaign_dir(args.out_dir))
+        campaign_dir = resolve_campaign_dir(args.out_dir)
     else:
-        cfg.out_dir = str(resolve_campaign_dir(os.environ.get("OUT_DIR")))
+        campaign_dir = resolve_campaign_dir(os.environ.get("OUT_DIR"))
+    cfg.out_dir = str(resolve_campaign_results_dir(campaign_dir))
     if args.power_backend:
         cfg.power_backend = args.power_backend
     if args.worker_power_container:

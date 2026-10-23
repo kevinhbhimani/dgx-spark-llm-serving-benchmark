@@ -170,7 +170,7 @@ models:
 
   # ---- 7. gpt-oss-120b: MoE, alternating sliding-window attention, MXFP4 -----
   # Native MXFP4 checkpoint. The repo also carries original/ and metal/ copies
-  # (195.8 GB total); predownload.sh skips both.
+  # (195.8 GB total); the snapshot acquisition command skips both.
   - name: openai/gpt-oss-120b                         # 65.3 GB
     label: gpt-oss-120b
     revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a

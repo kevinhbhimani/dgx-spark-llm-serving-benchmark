@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Download model weights into the head node's Hugging Face cache so a later
-# `vllm serve` does not spend its readiness budget pulling weights.
+# Acquire pinned model snapshots in the head node's Hugging Face cache just
+# before the selected run, so `vllm serve` does not spend its readiness budget
+# pulling weights. The campaign uses this same step for single- and dual-node
+# model groups, then mirrors the snapshot to the worker when needed.
 #
 # Why: scripts/run_models.sh gives each server READY_TIMEOUT seconds (default
 # 1800) to come up, then tears it down. On a cold cache the largest checkpoints
@@ -22,9 +24,9 @@
 # vLLM loads the safetensors. The disk check sizes exactly those files with
 # scripts/hf_snapshot_size.py, net of blobs already in the cache.
 #
-# The campaign (scripts/run_job.sh) calls this one model at a time with
-# MODEL_LABELS and purges each model after measuring it, so the cache never
-# has to hold the whole matrix.
+# scripts/run_job.sh calls this once per model group; direct run_models.sh calls
+# it for the selected model before launch. The campaign always purges canary
+# groups and applies PURGE_WEIGHTS to measurement cleanup.
 #
 # Downloads are pinned to the revisions in models.yaml and are idempotent and
 # resumable. CHECK_ONLY=1 performs the same local-only completeness validation
@@ -42,6 +44,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_IMAGE, HF_CACHE, HF_TOKEN, and .env
+acquire_resource_lock || exit 1
+wait_for_resources_idle auto || exit 1
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2|all) ;; *)

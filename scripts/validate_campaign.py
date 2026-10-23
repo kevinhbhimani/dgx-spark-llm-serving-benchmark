@@ -33,7 +33,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import campaign_metadata, resolve_campaign_dir
+from campaign_output import (
+    campaign_metadata,
+    resolve_campaign_dir,
+    resolve_campaign_logs_dir,
+    resolve_campaign_results_dir,
+)
 
 
 ALLOWED_CONFIGS = frozenset({"single", "tp2", "pp2"})
@@ -1051,7 +1056,7 @@ def _validate_summary(
     row_number: int,
     benchmark,
     base_config,
-    out_dir: Path,
+    logs_dir: Path,
     serving_policy: Mapping[str, object],
 ) -> Path:
     context = f"summary for index row {row_number}"
@@ -1166,7 +1171,9 @@ def _validate_summary(
         raise CampaignValidationError(
             f"{context} has invalid server_log={server_log_value!r}"
         )
-    server_log = _require_nonempty_file(out_dir / server_log_name, "server log artifact")
+    server_log = _require_nonempty_file(
+        logs_dir / server_log_name, "server log artifact"
+    )
 
     provenance_config = SimpleNamespace(
         require_provenance=True,
@@ -1396,7 +1403,9 @@ def verify_campaign(
     repeat_count = _positive_integer(repeats, "repeats")
     grid = build_expected_grid(campaign.models, loads, repeat_count)
     expected = {point.key: point for point in grid}
-    output = Path(out_dir)
+    campaign_root = Path(out_dir).expanduser().resolve()
+    output = resolve_campaign_results_dir(campaign_root)
+    logs_directory = resolve_campaign_logs_dir(campaign_root)
     index_path = _require_nonempty_file(output / "index.csv", "index artifact")
 
     benchmark = _benchmark_module()
@@ -1697,7 +1706,7 @@ def verify_campaign(
             row_number,
             benchmark,
             base_config,
-            output,
+            logs_directory,
             serving_policy,
         )
         launch_identity = (point.model_label, point.config_label, point.repeat_id)
@@ -1732,7 +1741,7 @@ def verify_campaign(
             dual_runtime, dual_policy
         )
         matching_allreduce = sorted(
-            output.glob(f"allreduce_ray_{allreduce_id}_*.csv")
+        output.glob(f"allreduce_ray_{allreduce_id}_*.csv")
         )
         allreduce_errors: list[str] = []
         for candidate in matching_allreduce:
@@ -1783,8 +1792,8 @@ def verify_campaign(
         log
         for csv_path in valid_allreduce
         for log in (
-            csv_path.with_name(f"{csv_path.stem}_raw.log"),
-            csv_path.with_name(f"{csv_path.stem}_nccl.log"),
+            logs_directory / f"{csv_path.stem}_raw.log",
+            logs_directory / f"{csv_path.stem}_nccl.log",
         )
         if log.is_file()
     )
@@ -1800,8 +1809,8 @@ def verify_campaign(
         "allreduce_log": allreduce_logs,
         "interconnect_extra": sorted(output.glob("interconnect_extra_*.csv")),
         "interconnect_log": sorted(
-            list(output.glob("interconnect_extra_*_raw.log"))
-            + list(output.glob("interconnect_extra_*_nccl.log"))
+            list(logs_directory.glob("interconnect_extra_*_raw.log"))
+            + list(logs_directory.glob("interconnect_extra_*_nccl.log"))
         ),
         "config": config_paths,
         "lock": lock_paths,
@@ -1822,7 +1831,7 @@ def verify_campaign(
             )
         manifest = _build_manifest(
             campaign=campaign,
-            out_dir=output,
+            out_dir=campaign_root,
             concurrencies=loads,
             repeats=repeat_count,
             expected_count=len(expected),
@@ -1940,7 +1949,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.manifest:
                 manifest_path = Path(args.manifest).expanduser()
                 if not manifest_path.is_absolute():
-                    manifest_path = Path(out_dir) / manifest_path
+                    manifest_path = (
+                        resolve_campaign_results_dir(out_dir) / manifest_path
+                    )
                 args.manifest = str(manifest_path.resolve())
             result = verify_campaign(
                 args.models_path,
