@@ -16,7 +16,7 @@ CACHE_MARKERS = (
     "predownload.sh",
     "mirror_worker_cache.py",
     "mirror_worker_cache.sh",
-    "purge_model_cache.py",
+    "purge_model_cache_container.py",
     "purge_model_cache.sh",
     "hf cache prune",
 )
