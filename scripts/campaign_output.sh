@@ -17,7 +17,7 @@ campaign_resolve_out_dir() {
       --out-dir "$OUT_DIR")" || return 1
   elif [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
     OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" resolve \
-      --default-name "$default_name")" || return 1
+      --next-available --default-name "$default_name")" || return 1
   else
     OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" resolve \
       --out-dir "$OUT_DIR")" || return 1

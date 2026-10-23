@@ -379,7 +379,7 @@ class ConnectXPreflightTests(unittest.TestCase):
         docker_calls = self.calls.read_text().splitlines()
         self.assertIn("ps --format {{.Names}}", docker_calls)
         self.assertIn("inspect -f {{.State.Running}} vllm-spark", docker_calls)
-        self.assertIn("top vllm-spark -eo args", docker_calls)
+        self.assertIn("top vllm-spark -eo pid,args", docker_calls)
         self.assertTrue(any("ray status" in call for call in docker_calls))
         self.assertTrue(any("--worker" in call for call in docker_calls))
         self.assertFalse(any(call.startswith(("rm ", "run ")) for call in docker_calls))

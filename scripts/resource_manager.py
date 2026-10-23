@@ -81,7 +81,7 @@ def docker_container_processes(mode: str) -> list[str]:
     for name in containers:
         try:
             result = subprocess.run(
-                ["docker", "top", name, "-eo", "args"],
+                ["docker", "top", name, "-eo", "pid,args"],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -102,7 +102,15 @@ def docker_container_processes(mode: str) -> list[str]:
                 ) from inspect_exc
             if name not in current_containers:
                 continue
-            raise RuntimeError(f"cannot inspect processes in container {name}: {exc}") from exc
+            failure_detail = ""
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip()
+                failure_detail = f" (exit {exc.returncode})"
+                if stderr:
+                    failure_detail += f": {stderr}"
+            raise RuntimeError(
+                f"cannot inspect processes in container {name}{failure_detail}"
+            ) from exc
         for line in result.stdout.splitlines()[1:]:
             if any(marker in line for marker in markers):
                 found.append(f"container {name}: {line[:200]}")

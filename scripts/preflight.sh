@@ -20,7 +20,8 @@ if [[ -n "$REQUESTED_OUT_DIR" ]]; then
   OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve \
     --out-dir "$REQUESTED_OUT_DIR")" || exit 1
 else
-  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve)" || exit 1
+  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve \
+    --next-available)" || exit 1
 fi
 export OUT_DIR
 CAMPAIGN_RESULTS_DIR="$("$PYTHON" "$HERE/campaign_output.py" \

@@ -34,10 +34,11 @@ unless a step names a different node or directory.
 default `0.80` target. Use the same value when resuming so validation expects
 the target recorded by each serving policy. Use a new `OUT_DIR` when changing
 `GPU_UTIL`. If `OUT_DIR` is unset,
-`scripts/run_job.sh` resolves `results/benchmark-<UTC-date>` once and passes
-that absolute path to its child processes. `PLAN_ONLY=1` prints the resolved
-path without creating it. An existing implicit path resumes only when its
-campaign identity matches; otherwise the job stops before hardware work.
+`scripts/run_job.sh` resolves the next unused path beginning with
+`results/benchmark-<UTC-date>` and passes that absolute path to its child
+processes. Later paths use suffixes such as `-001` and `-002`. `PLAN_ONLY=1`
+prints the selected path without creating it. Set `OUT_DIR` to an existing path
+to resume a campaign.
 
 The default target is 80%. Set `GPU_UTIL` in Diya's environment to override it
 for planning, validation, memory preflight, and every serving launch. Export

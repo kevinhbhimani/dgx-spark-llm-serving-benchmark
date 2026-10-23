@@ -374,7 +374,9 @@ fields:
   optional full-checkpoint weight/KV estimates. It is false by default so smoke
   and release runs do not depend on post-measurement network metadata lookups.
 - Campaign output paths are selected with `OUT_DIR`, not in the experiment
-  YAML. If unset, campaign tools use `results/benchmark-<UTC-date>`.
+  YAML. New benchmark runs without `OUT_DIR` select the next available
+  `results/benchmark-<UTC-date>` path, adding `-001`, `-002`, and later suffixes
+  when earlier paths exist.
 - `run_note`: free-form note preserved in the resolved configuration block.
 
 Each full result records methodology `steady-exact-v4`, the YAML and harness
@@ -821,11 +823,11 @@ Ray, or a failed cache purge stops the campaign. Rerun the same `OUT_DIR` with
 `OUT_DIR=rdma-v4-paper` resolves to `results/rdma-v4-paper`. A relative path
 with a directory component, such as `OUT_DIR=results/rdma-v4-paper-2026-10-22`,
 and an absolute path are used as given. With no `OUT_DIR`, `run_job.sh` resolves
-`results/benchmark-<UTC-date>` once and passes the absolute path to every child
-process. `PLAN_ONLY=1` prints that path without creating it. A default path
-collision resumes only when the campaign identity matches. Otherwise, the job
-stops before hardware work. Explicit legacy paths remain available for existing
-campaigns and resume.
+the next unused path beginning with `results/benchmark-<UTC-date>` and passes
+the absolute path to every child process. Later paths use suffixes such as
+`-001` and `-002`. `PLAN_ONLY=1` prints the selected path without creating it.
+Set `OUT_DIR` to an existing path to resume a campaign. Explicit legacy paths
+remain available for existing campaigns and resume.
 
 New campaigns store result artifacts in `OUT_DIR/results/`, figures and tables
 in `OUT_DIR/figs/`, and logs in `OUT_DIR/logs/`. Plotting accepts a campaign
