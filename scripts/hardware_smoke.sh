@@ -17,7 +17,8 @@
 #      llama3.1-8b-nvfp4,
 #      any label in configs/models.yaml that can run single), SMOKE_GPU_UTIL
 #      (default 0.80), SMOKE_CONCURRENCIES (default "1 4"), PORT (default
-#      8100), VLLM_CONTAINER (default vllm-spark-smoke), PYTHON, DROP_CACHES
+#      8100), SMOKE_VLLM_CONTAINER (default vllm-spark-smoke), PYTHON,
+#      DROP_CACHES
 #      (passed to the launcher), KEEP_WEIGHTS=1 (skip the final purge).
 #
 # The canary sends one short request, so it cannot catch a model that fails
@@ -36,7 +37,6 @@ campaign_reject_existing_implicit_out_dir || exit 1
 CAMPAIGN_FIGURES_DIR="$OUT_DIR/figs"
 export PORT="${PORT:-8100}"
 export BASE_URL="${BASE_URL:-http://127.0.0.1:$PORT}"
-export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark-smoke}"
 export SINGLE_CONTAINER=standalone
 SMOKE_LABEL="${SMOKE_LABEL:-llama3.1-8b-nvfp4}"
 SMOKE_GPU_UTIL="${SMOKE_GPU_UTIL:-0.80}"
@@ -53,8 +53,47 @@ fi
 export PYTHON PYTHONNOUSERSITE=1
 
 source scripts/connectx_env.sh
+CAMPAIGN_VLLM_CONTAINER="$VLLM_CONTAINER"
+SMOKE_VLLM_CONTAINER="${SMOKE_VLLM_CONTAINER:-vllm-spark-smoke}"
+if [[ "$SMOKE_VLLM_CONTAINER" == "$CAMPAIGN_VLLM_CONTAINER" ]]; then
+  echo "[smoke] SMOKE_VLLM_CONTAINER must differ from the Ray container ($CAMPAIGN_VLLM_CONTAINER)" >&2
+  exit 2
+fi
+
+remove_smoke_container() {
+  local container_listing container_id container_name
+  if ! container_listing="$(docker ps --all --format '{{.ID}} {{.Names}}')"; then
+    echo "[smoke] ERROR: cannot list Docker containers for cleanup" >&2
+    return 1
+  fi
+  while read -r container_id container_name; do
+    if [[ "$container_name" == "$SMOKE_VLLM_CONTAINER" ]]; then
+      if ! docker rm --force "$container_id" >/dev/null; then
+        echo "[smoke] ERROR: could not remove temporary container $SMOKE_VLLM_CONTAINER" >&2
+        return 1
+      fi
+      echo "[smoke] removed temporary container $SMOKE_VLLM_CONTAINER"
+    fi
+  done <<<"$container_listing"
+}
+
+finish_smoke() {
+  local original_exit_status=$?
+  trap - EXIT
+  if ! remove_smoke_container; then
+    original_exit_status=1
+  fi
+  exit "$original_exit_status"
+}
+
 acquire_resource_lock || exit 1
+remove_smoke_container || exit 1
 wait_for_resources_idle auto || exit 1
+export VLLM_CONTAINER="$SMOKE_VLLM_CONTAINER"
+trap finish_smoke EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+echo "[smoke] temporary serving container: $VLLM_CONTAINER"
 
 mkdir -p "$CAMPAIGN_RESULTS_DIR"
 if [[ -e "$CAMPAIGN_RESULTS_DIR/index.csv" ]]; then
