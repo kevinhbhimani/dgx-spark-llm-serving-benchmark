@@ -8,15 +8,17 @@ pipe-delimited line per selected model:
     tokenizer_revision|trust_remote_code|max_num_seqs
 
 The trust_remote_code field is emitted as "1" when truthy, else empty.
-gpu_util may be a scalar (applies to every config) or a mapping keyed by
-config, e.g. {single: 0.90, tp2: 0.85}; a config absent from the mapping
-emits empty and falls back to launch_server.sh's per-config default.
+Every selected model receives one shared GPU_UTIL value when set, or the
+run-wide gpu_util_default otherwise. Per-model gpu_util values are rejected so
+memory settings cannot vary within a campaign.
 
 Empty fields are printed as empty strings, so the caller can decide defaults.
 
 Usage:  python scripts/models_for_config.py configs/models.yaml single
 """
 from __future__ import annotations
+import math
+import os
 import sys
 import yaml
 
@@ -29,8 +31,30 @@ def main() -> int:
     with open(path) as f:
         doc = yaml.safe_load(f) or {}
     models = doc.get("models", [])
+    gpu_util_override = os.environ.get("GPU_UTIL")
+    gpu_util_default = (
+        gpu_util_override
+        if gpu_util_override is not None
+        else doc.get("gpu_util_default", 0.80)
+    )
+    gpu_util_source = (
+        "GPU_UTIL" if gpu_util_override is not None else "gpu_util_default"
+    )
     if not isinstance(models, list):
         sys.stderr.write(f"{path}: 'models' must be a list\n")
+        return 2
+    if isinstance(gpu_util_default, bool):
+        sys.stderr.write(f"{path}: '{gpu_util_source}' must be numeric\n")
+        return 2
+    try:
+        gpu_util_default = float(gpu_util_default)
+    except (TypeError, ValueError):
+        sys.stderr.write(f"{path}: '{gpu_util_source}' must be numeric\n")
+        return 2
+    if not math.isfinite(gpu_util_default) or not 0 < gpu_util_default <= 1:
+        sys.stderr.write(
+            f"{path}: '{gpu_util_source}' must satisfy 0 < value <= 1\n"
+        )
         return 2
 
     seen_labels = set()
@@ -39,6 +63,13 @@ def main() -> int:
         if not isinstance(m, dict):
             sys.stderr.write(f"{path}: each model entry must be a mapping "
                              f"(offending entry: {m!r})\n")
+            return 2
+        if "gpu_util" in m:
+            sys.stderr.write(
+                f"{path}: model {m.get('label') or m.get('name')!r} sets "
+                "per-model 'gpu_util'; set the run-wide 'gpu_util_default' "
+                "instead\n"
+            )
             return 2
         configs = m.get("configs", [])
         if not isinstance(configs, list):
@@ -57,14 +88,11 @@ def main() -> int:
             sys.stderr.write(f"{path}: duplicate label '{label}'\n")
             return 2
         seen_labels.add(label)
-        gpu_util = m.get("gpu_util", "")
-        if isinstance(gpu_util, dict):
-            gpu_util = gpu_util.get(want, "")
         # a pipe in any field would corrupt the shell split; reject early
         fields = [label, name,
                   str(m.get("revision", "") or ""),
                   str(m.get("max_model_len", "") or ""),
-                  str(gpu_util or ""),
+                  str(gpu_util_default),
                   str(m.get("quant", "") or ""),
                   str(m.get("tokenizer", "") or ""),
                   str(m.get("tokenizer_revision", "") or ""),

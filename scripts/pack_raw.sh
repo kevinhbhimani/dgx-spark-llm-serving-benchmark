@@ -5,12 +5,11 @@
 #   scripts/pack_raw.sh results                  # -> ../dgx-spark-raw/<name>.tar.zst
 #   DEST=/mnt/archive scripts/pack_raw.sh baselines/pmbs26-tcp
 #
-# Git keeps only the small artifacts (index.csv, *.summary.json, serving
-# policies, interconnect CSVs, figures, the sealed manifest); .gitignore keeps
-# raw request records, power samples, vLLM metric samples, and server/job logs
-# out of commits. Those files are what `validate_campaign.py verify` hashes, so
-# the archive carries a SHA256SUMS file: after extracting it into the result
-# directory, `sha256sum -c` and verify both pass again.
+# Git keeps only the small campaign artifacts; .gitignore keeps raw request
+# records, power samples, vLLM metric samples, and logs out of commits. The
+# archive carries a SHA256SUMS file for every archived file; it includes the
+# campaign artifacts needed by `validate_campaign.py verify` and preflight
+# telemetry and logs under OUT_DIR/preflight/.
 #
 # Env: DEST (default ../dgx-spark-raw next to the repository).
 set -euo pipefail
@@ -24,9 +23,9 @@ mkdir -p "$DEST"
 name="$(basename "$SRC")-raw-$(date +%Y%m%d)"
 list="$(mktemp)"
 trap 'rm -f "$list"' EXIT
-( cd "$SRC" && find . -maxdepth 1 -type f \
+( cd "$SRC" && find . -type f \
     \( -name '*.raw.jsonl' -o -name '*.power.jsonl' -o -name '*.vllm_metrics.jsonl' \
-       -o -name 'server_*.log' -o -name 'run_job_*.log' -o -name '*_raw.log' \) \
+       -o -name '*.log' \) \
     -printf '%P\n' | sort ) > "$list"
 count="$(wc -l < "$list")"
 if (( count == 0 )); then

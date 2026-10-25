@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the PMBS26 paper figures and summary table from results/index.csv.
+"""Generate PMBS26 figures and tables from a campaign index.
 
 Reads the benchmark sweep index, groups rows by configuration label (single,
 tp2, pp2), and writes vector PDF figures plus PNG previews. Figures are sized
@@ -13,8 +13,9 @@ bite this workload hardest: measurement windows too short to collect a trustable
 number of completions, and head-node-only power on dual-node runs.
 
 Usage:
-    python plot_results.py --index results/index.csv --out figs
-    python plot_results.py                       # uses the defaults above
+    python plot_results.py --index results/benchmark-2026-10-22
+    python plot_results.py --index results/benchmark-2026-10-22/results/index.csv
+    python plot_results.py                       # uses the UTC-dated default
     python plot_results.py --format png          # png only, for quick viewing
     python plot_results.py --serif               # Times-like body font for IEEE
 
@@ -25,6 +26,7 @@ import argparse
 import math
 import os
 import sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -32,6 +34,11 @@ matplotlib.use("Agg")                      # headless, safe over ssh
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, NullFormatter
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from campaign_output import resolve_campaign_output_path, resolve_index_path
 
 
 # Below this many successful requests started in the measurement window,
@@ -177,6 +184,8 @@ def window_col(df: pd.DataFrame) -> str:
 
 
 def load_index(path: str) -> pd.DataFrame:
+    index_path = resolve_index_path(path)
+    path = str(index_path)
     if not os.path.exists(path):
         sys.exit(f"index not found: {path}")
     try:
@@ -189,6 +198,16 @@ def load_index(path: str) -> pd.DataFrame:
         )
     df.columns = [c.strip() for c in df.columns]
     df = df.loc[:, ~df.columns.str.startswith("Unnamed")]   # drop trailing blanks
+    if "raw_path" in df.columns:
+        def resolve_raw_path(value: object) -> object:
+            if pd.isna(value) or not str(value).strip():
+                return value
+            raw_path = Path(str(value)).expanduser()
+            if not raw_path.is_absolute():
+                raw_path = index_path.parent / raw_path
+            return str(raw_path.resolve())
+
+        df["raw_path"] = df["raw_path"].map(resolve_raw_path)
     for c in NUMERIC_COLS:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -1439,8 +1458,8 @@ def make_config_figures(df, out, fmts) -> None:
 def main() -> None:
     global MIN_SAMPLES, MIN_P99_SAMPLES
     ap = argparse.ArgumentParser(description="Plot PMBS26 figures from index.csv")
-    ap.add_argument("--index", default="results/index.csv")
-    ap.add_argument("--out", default="figs")
+    ap.add_argument("--index", help="campaign directory or index.csv path")
+    ap.add_argument("--out", help="output directory (default: campaign/figs)")
     ap.add_argument("--format", default="pdf", choices=["pdf", "png", "both"])
     ap.add_argument("--dpi", type=int, default=200)
     ap.add_argument("--serif", action="store_true",
@@ -1462,6 +1481,10 @@ def main() -> None:
                     help="requests below this make p99 unreliable "
                          "(default: %(default)s)")
     args = ap.parse_args()
+
+    index_path = resolve_index_path(args.index)
+    args.index = str(index_path)
+    args.out = str(resolve_campaign_output_path(args.out, index_path))
 
     MIN_SAMPLES = args.min_samples
     MIN_P99_SAMPLES = args.min_p99_samples

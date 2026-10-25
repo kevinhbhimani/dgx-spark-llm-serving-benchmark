@@ -1,0 +1,16 @@
+# Derived vLLM image with Ray baked in for offline DGX Spark runs.
+#
+# scripts/start_ray.sh installs Ray at container start with
+#   pip install -q 'ray[default]==<RAY_VERSION>'
+# which needs a package index. Baking Ray here makes that step a satisfied
+# no-op, so the container starts with no network access. PIP_NO_INDEX=1 makes a
+# pip call that still needs an index fail immediately instead of waiting for a
+# network timeout.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG RAY_VERSION=2.53.0
+
+RUN pip install --no-cache-dir "ray[default]==${RAY_VERSION}"
+
+ENV PIP_NO_INDEX=1

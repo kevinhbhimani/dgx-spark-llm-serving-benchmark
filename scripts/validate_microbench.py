@@ -12,12 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.campaign.plan import (  # noqa: E402
+    CampaignValidationError,
+    nonnegative_float,
+    positive_float,
+    positive_integer,
+)
 from scripts.validate_campaign import (  # noqa: E402
     ALLREDUCE_SIZES,
-    CampaignValidationError,
-    _nonnegative_float,
-    _positive_float,
-    _positive_integer,
     validate_allreduce_csv,
 )
 
@@ -57,13 +59,13 @@ def validate_interconnect_csv(
             raise CampaignValidationError(
                 f"{context} transport {transport!r} differs from expected {expected_transport!r}"
             )
-        sizes[collective].append(_positive_integer(row["bytes"], f"{context} bytes"))
-        average = _positive_float(row["avg_s"], f"{context} avg_s")
-        minimum = _positive_float(row["min_s"], f"{context} min_s")
+        sizes[collective].append(positive_integer(row["bytes"], f"{context} bytes"))
+        average = positive_float(row["avg_s"], f"{context} avg_s")
+        minimum = positive_float(row["min_s"], f"{context} min_s")
         if minimum > average:
             raise CampaignValidationError(f"{context} min_s exceeds avg_s")
         for field in ("algbw_GBps", "busbw_GBps"):
-            _nonnegative_float(row[field], f"{context} {field}")
+            nonnegative_float(row[field], f"{context} {field}")
     if len(transports) != 1:
         raise CampaignValidationError(f"interconnect artifact {source} must use one verified transport")
     for collective, observed in sizes.items():
