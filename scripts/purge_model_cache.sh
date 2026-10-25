@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Delete finished models' pinned snapshots from the head and worker HF caches.
+# Operator entry point for model cache cleanup.
+# Selects repos from MODELS_YAML and runs the container-side Python implementation.
 #
 #   MODEL_LABELS="qwen3.6-27b" scripts/purge_model_cache.sh
 #   DRY_RUN=1 MODEL_LABELS="qwen3.6-27b qwen3.6-27b-fp8" scripts/purge_model_cache.sh
@@ -15,28 +16,33 @@
 # Without a running Ray cluster only the head cache is purged, through a
 # throwaway container.
 #
-# Env: MODEL_LABELS (required), MODELS_YAML, PYTHON,
+# Env: MODEL_LABELS (optional; selects pinned model snapshots), MODELS_YAML, PYTHON,
 #      PURGE_WORKER (1 also purges the worker; default 1 when Ray is up),
 #      PURGE_COMPILE_CACHE (1 also clears vLLM's torch.compile cache, default 0),
+#      PURGE_CACHE_GARBAGE (prunes detached revisions, incomplete files, and
+#                           unreferenced shared blobs; default 1, set to 0 to
+#                           pass --no-prune-cache-garbage),
 #      DRY_RUN=1 (report what would be deleted).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+acquire_resource_lock || exit 1
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 PYTHON="${PYTHON:-python3}"
 MODEL_LABELS="${MODEL_LABELS:-}"
 DRY_RUN="${DRY_RUN:-0}"
 PURGE_COMPILE_CACHE="${PURGE_COMPILE_CACHE:-0}"
+PURGE_CACHE_GARBAGE="${PURGE_CACHE_GARBAGE:-1}"
 
-if [[ -z "${MODEL_LABELS// /}" ]]; then
-  echo "[purge] MODEL_LABELS is required; refusing to guess what to delete" >&2
-  exit 2
-fi
-for flag_name in DRY_RUN PURGE_COMPILE_CACHE; do
+for flag_name in DRY_RUN PURGE_COMPILE_CACHE PURGE_CACHE_GARBAGE; do
   [[ "${!flag_name}" == "0" || "${!flag_name}" == "1" ]] || {
     echo "[purge] $flag_name must be 0 or 1" >&2; exit 2; }
 done
+if [[ -z "${MODEL_LABELS// /}" && "$PURGE_CACHE_GARBAGE" != "1" ]]; then
+  echo "[purge] set MODEL_LABELS when PURGE_CACHE_GARBAGE=0" >&2
+  exit 2
+fi
 
 # Command substitution (not process substitution) so an unknown label fails
 # the script instead of reading as "nothing to purge".
@@ -66,11 +72,12 @@ PY
 )"; then
   exit 2
 fi
-if [[ -z "$repo_text" ]]; then
+if [[ -z "$repo_text" && "$PURGE_CACHE_GARBAGE" != "1" ]]; then
   echo "[purge] nothing to purge: every repo of '$MODEL_LABELS' is still used elsewhere"
   exit 0
 fi
-mapfile -t REPOS <<<"$repo_text"
+REPOS=()
+if [[ -n "$repo_text" ]]; then mapfile -t REPOS <<<"$repo_text"; fi
 
 ray_up=0
 if docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
@@ -80,6 +87,7 @@ PURGE_WORKER="${PURGE_WORKER:-$ray_up}"
 args=()
 [[ "$DRY_RUN" == "1" ]] && args+=(--dry-run)
 [[ "$PURGE_COMPILE_CACHE" == "1" ]] && args+=(--compile-cache)
+[[ "$PURGE_CACHE_GARBAGE" == "0" ]] && args+=(--no-prune-cache-garbage)
 if [[ "$PURGE_WORKER" == "1" ]]; then
   if [[ "$ray_up" != "1" ]]; then
     echo "[purge] PURGE_WORKER=1 needs the Ray cluster; start it or set PURGE_WORKER=0" >&2
@@ -88,13 +96,27 @@ if [[ "$PURGE_WORKER" == "1" ]]; then
   args+=(--worker "$HOEDUS_IP")
 fi
 
-echo "[purge] ${#REPOS[@]} repo(s) for '$MODEL_LABELS'" \
+if [[ "$PURGE_WORKER" == "1" ]]; then
+  wait_for_resources_idle required || exit 1
+else
+  wait_for_resources_idle auto || exit 1
+fi
+
+echo "[purge] ${#REPOS[@]} repo(s) for '${MODEL_LABELS:-none}'" \
      "(worker: $([[ "$PURGE_WORKER" == "1" ]] && echo "$HOEDUS_IP" || echo no))"
 if [[ "$ray_up" == "1" ]]; then
-  docker cp "$HERE/purge_model_cache.py" "$VLLM_CONTAINER":/tmp/purge_model_cache.py
-  docker exec "$VLLM_CONTAINER" \
-    python3 -u /tmp/purge_model_cache.py "${args[@]}" "${REPOS[@]}"
+  docker cp "$HERE/purge_model_cache_container.py" \
+    "$VLLM_CONTAINER":/tmp/purge_model_cache_container.py
+  docker exec -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
+    -e HF_MODULES_CACHE=/hf-cache/modules \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
+    "$VLLM_CONTAINER" \
+    python3 -u /tmp/purge_model_cache_container.py "${args[@]}" "${REPOS[@]}"
 else
-  docker run --rm -i -v "$HF_CACHE":/root/.cache/huggingface "$VLLM_IMAGE" \
-    python3 -u - "${args[@]}" "${REPOS[@]}" < "$HERE/purge_model_cache.py"
+  docker run --rm -i -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
+    -e HF_MODULES_CACHE=/hf-cache/modules \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
+    -v "$HF_CACHE":/hf-cache "$VLLM_IMAGE" \
+    python3 -u - "${args[@]}" "${REPOS[@]}" \
+      < "$HERE/purge_model_cache_container.py"
 fi

@@ -293,6 +293,23 @@ class RepeatAggregationTests(unittest.TestCase):
 
 
 class PlotInputHardeningTests(unittest.TestCase):
+    def test_campaign_index_and_raw_artifacts_resolve_from_results_directory(
+        self: "PlotInputHardeningTests",
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            campaign = Path(temporary) / "campaign"
+            results = campaign / "results"
+            results.mkdir(parents=True)
+            raw_artifact = results / "run.raw.jsonl"
+            raw_artifact.write_text("{}\n")
+            pd.DataFrame([{
+                "config_label": "single", "raw_path": raw_artifact.name,
+            }]).to_csv(results / "index.csv", index=False)
+
+            loaded: pd.DataFrame = plot_results.load_index(str(campaign))
+
+        self.assertEqual(loaded.iloc[0]["raw_path"], str(raw_artifact.resolve()))
+
     def test_mixed_model_labels_fall_back_per_row_without_dropping_rows(self):
         frame = pd.DataFrame([
             {

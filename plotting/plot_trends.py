@@ -28,7 +28,8 @@ collapsing, and rectangle/identity guards are imported from plot_results so
 both scripts read an index identically.
 
 Usage:
-    python plot_trends.py --index results/index.csv --out figs
+    python plot_trends.py --index results/benchmark-2026-10-22
+    python plot_trends.py --index results/benchmark-2026-10-22/results/index.csv
     python plot_trends.py --allow-incomplete   # mid-campaign diagnostics
 
 Model metadata (dense/MoE, precision, NVIDIA-optimized, parameter counts) comes
@@ -58,6 +59,7 @@ from plot_results import (
     collapse_repeats, configs_present, draw_band, group, has,
     head_only_power, load_index, models_present, save, set_load_axis, set_rc,
 )
+from campaign_output import resolve_campaign_output_path, resolve_index_path
 
 # ---- model metadata ----------------------------------------------------------
 # Keyed by model_label (configs/models.yaml). params_b/active_b are nominal
@@ -916,7 +918,7 @@ def bucket_medians(df: pd.DataFrame, results_dir: str,
     for _, r in sub.iterrows():
         path = str(r["raw_path"])
         if not os.path.isabs(path):
-            path = os.path.join(results_dir, os.path.basename(path))
+            path = os.path.join(results_dir, path)
         if not os.path.exists(path):
             missing += 1
             continue
@@ -1144,8 +1146,8 @@ def fig_prefill_scaling(df, out, fmts, results_dir):
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Plot cross-model trend figures from a multi-model index")
-    ap.add_argument("--index", default="results/index.csv")
-    ap.add_argument("--out", default="figs")
+    ap.add_argument("--index", help="campaign directory or index.csv path")
+    ap.add_argument("--out", help="output directory (default: campaign/figs)")
     ap.add_argument("--format", default="pdf", choices=["pdf", "png", "both"])
     ap.add_argument("--dpi", type=int, default=200)
     ap.add_argument("--serif", action="store_true",
@@ -1159,6 +1161,10 @@ def main() -> None:
         help="models.yaml whose meta blocks and dense_moe_pairs describe the "
              "index's models (default: configs/models.yaml)")
     args = ap.parse_args()
+
+    index_path = resolve_index_path(args.index)
+    args.index = str(index_path)
+    args.out = str(resolve_campaign_output_path(args.out, index_path))
 
     if os.path.exists(args.models):
         meta, pairs = load_models_meta(args.models)

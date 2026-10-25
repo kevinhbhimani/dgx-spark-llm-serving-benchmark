@@ -2,729 +2,77 @@
 from __future__ import annotations
 import argparse
 import asyncio
-import csv
-from decimal import Decimal, InvalidOperation
-import fcntl
-import hashlib
-import importlib.metadata
 import json
 import math
 import os
 from pathlib import Path
-import platform
 import re
-import site
-import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from campaign_output import (
+    next_available_campaign_dir,
+    resolve_campaign_dir,
+    resolve_campaign_results_dir,
+)
 
 from .config import ExperimentConfig
 from .workload import Workload
 from .runner import run_phase
 from .monitors import PowerSampler, VLLMMetricsScraper, WorkerPowerSampler
-from .metrics import aggregate
-from . import server_info
+from .metrics import aggregate, temperature_summary
+from . import server_info  # Keep the existing deployment collector patch point.
+from .hf_cache import configure_hf_cache
+from .artifacts import (
+    INDEX_FIELDS,
+    append_index as _append_index,
+    artifact_metadata as _artifact_metadata,
+    atomic_write as _atomic_write,
+    parse_expected_concurrencies as _parse_expected_concurrencies,
+    validate_index_schema,
+)
+from .provenance import (
+    METHODOLOGY_VERSION,
+    client_environment,
+    collect_deployment_info,
+    config_file_fingerprint,
+    deployment_fingerprint,
+    deployment_state,
+    experiment_fingerprint as _experiment_fingerprint,
+    git_commit as _git_commit,
+    sha256_json as _sha256_json,
+    source_fingerprint as _source_fingerprint,
+)
+from .release_contracts import (
+    load_serving_policy as _load_serving_policy,
+    validate_observability as _validate_observability,
+    validate_provenance as _validate_provenance,
+    validate_result_quality as _validate_result_quality,
+)
 
 
-# v4: the closed-loop window may extend under the minimum-sample rule
-# (min_window_requests), and the index records the configured window beside
-# the actual one. Replicates are independent server launches.
-METHODOLOGY_VERSION = "steady-exact-v4"
-
-
-INDEX_FIELDS = [
-    "run_tag",
-    "raw_path",
-    "raw_sha256",
-    "raw_bytes",
-    "summary_path",
-    "summary_sha256",
-    "summary_bytes",
-    "power_samples_path",
-    "power_samples_sha256",
-    "power_samples_bytes",
-    "vllm_samples_path",
-    "vllm_samples_sha256",
-    "vllm_samples_bytes",
-    "serving_policy_path",
-    "serving_policy_sha256",
-    "serving_policy_bytes",
-    "methodology_version",
-    "config_file_sha256",
-    "trace_sha256",
-    "experiment_fingerprint",
-    "harness_source_sha256",
-    "client_environment_sha256",
-    "harness_git_commit",
-    "serving_fingerprint",
-    "deployment_fingerprint",
-    "model_revision",
-    "tokenizer",
-    "tokenizer_revision",
-    "vllm_image",
-    "dtype",
-    "quantization",
-    "tensor_parallel_size",
-    "pipeline_parallel_size",
-    "prefix_caching",
-    "generation_config",
-    "runtime_fingerprint",
-    "repeat_id",
-    "repeat_count",
-    "config_label",
-    "model_label",
-    "model",
-    "mode",
-    "concurrency",
-    "expected_concurrencies",
-    "target_qps",
-    "measure_s",
-    "configured_measure_s",
-    "measure_extension_s",
-    "warmup_s",
-    "configured_warmup_s",
-    "warmup_extension_s",
-    "cooldown_s",
-    "load_extension_s",
-    "drain_s",
-    "requests_started",
-    "requests_completed",
-    "requests_failed",
-    "requests_completed_in_window",
-    "requests_started_and_completed_in_window",
-    "avg_input_tokens",
-    "avg_requested_output_tokens",
-    "total_output_tokens",
-    "req_thru_rps",
-    "tok_thru_tps",
-    "tok_thru_completed_tps",
-    "goodput_rps",
-    "goodput_itl2_rps",
-    "ttft_p50",
-    "ttft_p99",
-    "itl_p50",
-    "itl_p99",
-    "mean_itl_p50",
-    "e2e_p50",
-    "e2e_p99",
-    "kv_cache_usage_mean",
-    "kv_cache_usage_max",
-    "requests_running_mean",
-    "requests_running_max",
-    "requests_waiting_mean",
-    "requests_waiting_max",
-    # server-side counters over the window (robust to a short measurement window)
-    "server_prompt_tokens",
-    "server_generation_tokens",
-    "server_prompt_tokens_cached",
-    "server_gen_tps",
-    "server_prompt_tps",
-    "server_metric_samples",
-    "server_metric_sample_span_s",
-    "server_metric_max_gap_s",
-    "kv_metric_samples",
-    "kv_metric_sample_span_s",
-    "kv_metric_max_gap_s",
-    "num_preemptions",
-    # served-model capacity and launch configuration (constant per server)
-    "max_model_len",
-    "kv_cache_dtype",
-    "gpu_memory_utilization",
-    "block_size",
-    "gpu_blocks",
-    "total_kv_tokens",
-    "total_kv_tokens_source",
-    "hybrid_cache",
-    "weight_gb",
-    "kv_cache_gb",
-    "worker_weight_gb",
-    "worker_kv_cache_gb",
-    "max_concurrency",
-    "vllm_version",
-    # energy. mean_power_w totals every sampled node; the head/worker split and
-    # power_nodes make dual-node rows self-describing (power_nodes=1 on a tp2/pp2
-    # row means the worker sampler failed and the energy is head-only again).
-    "mean_power_w",
-    "mean_power_w_head",
-    "mean_power_w_worker",
-    "power_nodes",
-    "power_scope",
-    "power_samples_head",
-    "power_samples_worker",
-    "power_max_gap_s_head",
-    "power_max_gap_s_worker",
-    "energy_per_token_j",
-    "tokens_per_watt",
-]
-
-
-def _sha256_json(value) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
-                         default=str).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _normalized_distribution_name(name: str) -> str:
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
-def client_environment() -> dict:
-    """Return the result-affecting client runtime in a stable form.
-
-    Source hashes alone do not protect a resumed campaign from tokenizer,
-    percentile, YAML, or streaming-client behavior changing after a package
-    upgrade. Missing packages are recorded explicitly instead of being omitted.
-    """
-    packages = (
-        "aiohttp", "numpy", "transformers", "tokenizers",
-        "huggingface-hub", "PyYAML", "pandas", "matplotlib",
-    )
-    versions = {}
-    for name in packages:
-        try:
-            versions[name] = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            versions[name] = "<missing>"
-    installed = {}
-    for dist in importlib.metadata.distributions():
-        name = dist.metadata.get("Name")
-        if name:
-            installed[_normalized_distribution_name(name)] = dist.version
-    return {
-        "python_implementation": platform.python_implementation(),
-        "python_version": platform.python_version(),
-        "platform": platform.platform(),
-        "machine": platform.machine(),
-        "virtual_environment": sys.prefix != sys.base_prefix,
-        "user_site_enabled": bool(site.ENABLE_USER_SITE),
-        "installed_distributions": [
-            f"{name}=={version}" for name, version in sorted(installed.items())
-        ],
-        **versions,
-    }
-
-
-def _capture_client_environment() -> tuple[dict, str]:
+def _capture_client_environment() -> tuple[dict[str, object], str]:
     """Capture one environment object and hash those exact contents."""
     environment = client_environment()
     return environment, _sha256_json(environment)
 
 
 def client_environment_fingerprint() -> str:
+    """Hash the current client environment captured by this runner."""
     return _capture_client_environment()[1]
 
 
-DEPLOYMENT_INFO_FIELDS = (
-    "vllm_version", "max_model_len", "block_size", "gpu_blocks",
-    "total_kv_tokens", "total_kv_tokens_source", "kv_cache_dtype",
-    "gpu_memory_utilization", "enable_prefix_caching", "hybrid_cache",
-    "worker_weight_gb", "worker_kv_cache_gb", "max_concurrency",
-)
-DEPLOYMENT_REQUIRED_FIELDS = (
-    "vllm_version", "max_model_len", "gpu_blocks", "total_kv_tokens",
-    "gpu_memory_utilization", "enable_prefix_caching",
-)
-
-
-def deployment_state(info: dict) -> dict:
-    """Return only stable, serving-relevant live capacity fields."""
-    missing = [name for name in DEPLOYMENT_REQUIRED_FIELDS
-               if info.get(name) in (None, "")]
-    if missing:
-        raise RuntimeError(
-            "live deployment metadata is incomplete: " + ", ".join(missing)
-        )
-    return {name: info.get(name) for name in DEPLOYMENT_INFO_FIELDS}
-
-
-def deployment_fingerprint(serving_fingerprint: str, info: dict) -> str:
-    """Hash launch policy plus the capacity/runtime observed after startup."""
-    return _sha256_json({
-        "serving_fingerprint": serving_fingerprint,
-        "deployment_state": deployment_state(info),
-    })
-
-
-_EXPERIMENT_FINGERPRINT_TRANSIENT_FIELDS = frozenset((
-    "repeat_id",
-    "repeat_count",
-    "server_log",
-    "deployment_fingerprint",
-))
-
-
-def _experiment_fingerprint(resolved_config: dict,
-                            harness_source_sha256: str) -> str:
-    """Hash measurement identity: what was requested, not what booted.
-
-    Live capacity is deliberately excluded. vLLM's memory profiling settles on
-    a slightly different KV block count on every launch, so folding it in here
-    would give repeats of one arm different experiment identities whenever they
-    span a server restart -- which every repeat does when repeats are collected
-    across launches on purpose. deployment_fingerprint() records that live
-    state separately, per row.
-    """
-    stable_config = {
-        key: value for key, value in resolved_config.items()
-        if key not in _EXPERIMENT_FINGERPRINT_TRANSIENT_FIELDS
-    }
-    return _sha256_json({
-        "methodology_version": METHODOLOGY_VERSION,
-        "harness_source_sha256": harness_source_sha256,
-        "resolved_config": stable_config,
-    })
-
-
-def collect_deployment_info(base_url: str, model: str, server_log: str,
-                            *, compute_from_hf: bool = False,
-                            trust_remote_code: bool = False,
-                            attempts: int = 3, delay_s: float = 1.0) -> dict:
-    """Collect live identity with retries and merge transiently missing fields."""
-    merged: dict = {}
-    for attempt in range(attempts):
-        current = server_info.collect(
-            base_url, model, server_log, compute_from_hf=compute_from_hf,
-            trust_remote_code=trust_remote_code,
-        )
-        merged.update({key: value for key, value in current.items()
-                       if value is not None})
-        if attempt + 1 < attempts:
-            time.sleep(delay_s)
-    deployment_state(merged)
-    return merged
-
-
-def config_file_fingerprint(path: str | None,
-                            overrides: dict | None = None) -> str:
-    """Hash the canonical effective campaign configuration.
-
-    Applying overrides to the parsed dataclass makes an explicit override equal
-    to the YAML value hash identically, while a genuinely different timing,
-    metadata, or power policy cannot be resumed into the base campaign.
-    """
-    cfg = ExperimentConfig.from_yaml(path) if path else ExperimentConfig()
-    effective_overrides = {
-        key: value for key, value in (overrides or {}).items()
-        if value is not None
-    }
-    for key, value in effective_overrides.items():
-        if not hasattr(cfg, key):
-            raise ValueError(f"unknown ExperimentConfig override {key!r}")
-        setattr(cfg, key, value)
-    cfg.validate()
-    return _sha256_json(cfg.to_dict())
-
-
-def _source_fingerprint() -> str:
-    """Hash measurement-affecting source files, including uncommitted edits."""
-    root = Path(__file__).resolve().parents[1]
-    paths = list((root / "bench").glob("*.py"))
-    paths += [root / "scripts" / name for name in (
-        "launch_server.sh", "start_ray.sh", "run_all.sh", "run_models.sh",
-        "models_for_config.py", "swept_concurrencies.py",
-        "cluster_runtime_fingerprint.py",
-    )]
-    h = hashlib.sha256()
-    for path in sorted((p for p in paths if p.exists()), key=lambda p: str(p)):
-        h.update(str(path.relative_to(root)).encode() + b"\0")
-        h.update(path.read_bytes() + b"\0")
-    return h.hexdigest()
-
-
-def _git_commit() -> str | None:
-    try:
-        root = Path(__file__).resolve().parents[1]
-        p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
-                           text=True, capture_output=True, timeout=5, check=True)
-        return p.stdout.strip() or None
-    except Exception:
-        return None
-
-
-_INDEX_COUNT_FIELDS = (
-    "requests_started", "requests_completed", "requests_failed",
-    "requests_completed_in_window",
-    "requests_started_and_completed_in_window", "total_output_tokens",
-    "server_metric_samples", "kv_metric_samples", "power_samples_head",
-    "power_samples_worker", "power_nodes",
-)
-_ARTIFACT_FIELDS = (
-    ("raw_path", "raw_sha256", "raw_bytes", True),
-    ("summary_path", "summary_sha256", "summary_bytes", True),
-    ("power_samples_path", "power_samples_sha256", "power_samples_bytes", False),
-    ("vllm_samples_path", "vllm_samples_sha256", "vllm_samples_bytes", False),
-    ("serving_policy_path", "serving_policy_sha256", "serving_policy_bytes", False),
-)
-
-
-def _parse_expected_concurrencies(value, context: str) -> tuple[int, ...]:
-    tokens = str(value or "").split()
-    if not tokens:
-        raise RuntimeError(f"{context} has no expected_concurrencies")
-    values = []
-    for token in tokens:
-        if not re.fullmatch(r"[1-9][0-9]*", token):
-            raise RuntimeError(
-                f"{context} has invalid expected concurrency {token!r}"
-            )
-        number = int(token)
-        if number in values:
-            raise RuntimeError(
-                f"{context} repeats expected concurrency {number}"
-            )
-        values.append(number)
-    return tuple(values)
-
-
-def _integral_field(row: dict, field: str, row_number: int, *,
-                    positive: bool = False, required: bool = True) -> int | None:
-    raw = row.get(field)
-    if raw in (None, ""):
-        if required:
-            raise RuntimeError(
-                f"index row {row_number} has no value for {field}"
-            )
-        return None
-    try:
-        number = Decimal(str(raw).strip())
-    except (InvalidOperation, ValueError):
-        number = Decimal("NaN")
-    integral = (number.is_finite()
-                and number == number.to_integral_value())
-    minimum_ok = (integral
-                  and (number > 0 if positive else number >= 0))
-    if not minimum_ok:
-        qualifier = "positive " if positive else "non-negative "
-        raise RuntimeError(
-            f"index row {row_number} has invalid {field}={raw!r}; "
-            f"expected a {qualifier}integer"
-        )
-    return int(number)
-
-
-def _validate_index_rows(rows: list[dict], idx: str) -> None:
-    required = (
-        "run_tag", "methodology_version", "config_file_sha256",
-        "experiment_fingerprint", "harness_source_sha256",
-        "client_environment_sha256", "deployment_fingerprint",
-        "config_label", "mode", "measure_s",
-    )
-    point_ids = set()
-    run_tags = set()
-    for row_number, row in enumerate(rows, start=2):
-        missing = [field for field in required if row.get(field) in (None, "")]
-        if not (row.get("model_label") or row.get("model")):
-            missing.append("model_label/model")
-        if missing:
-            raise RuntimeError(
-                f"index row {row_number} in {idx} is missing required values: "
-                + ", ".join(missing)
-            )
-        for path_field, hash_field, bytes_field, required_artifact in _ARTIFACT_FIELDS:
-            artifact_path = row.get(path_field) or ""
-            artifact_hash = row.get(hash_field) or ""
-            artifact_bytes = row.get(bytes_field)
-            if required_artifact and not artifact_path:
-                raise RuntimeError(
-                    f"index row {row_number} has no value for {path_field}"
-                )
-            if not artifact_path:
-                if artifact_hash or artifact_bytes not in (None, ""):
-                    raise RuntimeError(
-                        f"index row {row_number} has partial artifact metadata "
-                        f"for {path_field}"
-                    )
-                continue
-            if Path(artifact_path).name != artifact_path:
-                raise RuntimeError(
-                    f"index row {row_number} has unsafe artifact path "
-                    f"{artifact_path!r}"
-                )
-            if not re.fullmatch(r"[0-9a-f]{64}", artifact_hash):
-                raise RuntimeError(
-                    f"index row {row_number} has invalid {hash_field}"
-                )
-            expected_size = _integral_field(row, bytes_field, row_number)
-            artifact = Path(idx).parent / artifact_path
-            try:
-                if artifact.is_symlink() or not artifact.is_file():
-                    raise OSError("artifact is not a regular, non-symlink file")
-                actual_size = artifact.stat().st_size
-            except OSError as exc:
-                raise RuntimeError(
-                    f"index row {row_number} artifact is missing: {artifact}"
-                ) from exc
-            if actual_size != expected_size:
-                raise RuntimeError(
-                    f"index row {row_number} artifact size mismatch for "
-                    f"{artifact}: {actual_size} != {expected_size}"
-                )
-            # Policy files are tiny, immutable, and consulted during resume;
-            # verify their content on every schema check. The final campaign
-            # verifier streams and hashes every artifact, including large raw
-            # request traces, without making each point append quadratic.
-            if path_field == "serving_policy_path":
-                actual_hash = hashlib.sha256(artifact.read_bytes()).hexdigest()
-                if actual_hash != artifact_hash:
-                    raise RuntimeError(
-                        f"index row {row_number} artifact hash mismatch for "
-                        f"{artifact}"
-                    )
-        if row.get("serving_policy_path"):
-            policy_required = (
-                "model_revision", "tokenizer", "tokenizer_revision",
-                "vllm_image", "dtype", "tensor_parallel_size",
-                "pipeline_parallel_size", "prefix_caching",
-                "generation_config", "runtime_fingerprint",
-            )
-            missing_policy = [
-                field for field in policy_required
-                if row.get(field) in (None, "")
-            ]
-            if missing_policy:
-                raise RuntimeError(
-                    f"index row {row_number} is missing serving-policy "
-                    "values: " + ", ".join(missing_policy)
-                )
-            _integral_field(
-                row, "tensor_parallel_size", row_number, positive=True
-            )
-            _integral_field(
-                row, "pipeline_parallel_size", row_number, positive=True
-            )
-        repeat_id = _integral_field(
-            row, "repeat_id", row_number, positive=True
-        )
-        repeat_count = _integral_field(
-            row, "repeat_count", row_number, positive=True
-        )
-        if repeat_id > repeat_count:
-            raise RuntimeError(
-                f"index row {row_number} has repeat_id {repeat_id} greater "
-                f"than repeat_count {repeat_count}"
-            )
-        for field in _INDEX_COUNT_FIELDS:
-            _integral_field(
-                row, field, row_number,
-                required=field in {
-                    "requests_started", "requests_completed",
-                    "requests_failed", "requests_completed_in_window",
-                    "requests_started_and_completed_in_window",
-                    "total_output_tokens",
-                },
-            )
-        mode = row["mode"]
-        if mode == "closed":
-            load = _integral_field(
-                row, "concurrency", row_number, positive=True
-            )
-            expected_loads = _parse_expected_concurrencies(
-                row.get("expected_concurrencies"), f"index row {row_number}"
-            )
-            if load not in expected_loads:
-                raise RuntimeError(
-                    f"index row {row_number} concurrency {load} is outside "
-                    f"expected_concurrencies {expected_loads}"
-                )
-        elif mode == "open":
-            try:
-                load = float(row.get("target_qps"))
-            except (TypeError, ValueError):
-                load = float("nan")
-            if not math.isfinite(load) or load <= 0:
-                raise RuntimeError(
-                    f"index row {row_number} has invalid target_qps="
-                    f"{row.get('target_qps')!r}"
-                )
-        else:
-            raise RuntimeError(
-                f"index row {row_number} has invalid mode={mode!r}"
-            )
-        run_tag = row["run_tag"]
-        if run_tag in run_tags:
-            raise RuntimeError(f"index contains duplicate run_tag {run_tag!r}")
-        run_tags.add(run_tag)
-        model = row.get("model_label") or row.get("model")
-        point_id = (model, row["config_label"], mode, load, repeat_id)
-        if point_id in point_ids:
-            raise RuntimeError(
-                "index contains duplicate model/config/load/repeat identity: "
-                f"{point_id!r}"
-            )
-        point_ids.add(point_id)
-
-
-def validate_index_schema(out_dir: str) -> None:
-    """Validate the exact schema and every existing row before a costly run."""
-    idx = os.path.join(out_dir, "index.csv")
-    if not os.path.exists(idx) or os.path.getsize(idx) == 0:
-        return
-    with open(idx, "r", newline="") as handle:
-        reader = csv.reader(handle)
-        try:
-            header = next(reader)
-        except StopIteration:
-            return
-        if header != INDEX_FIELDS:
-            raise RuntimeError(
-                f"index schema mismatch in {idx}: its header does not match "
-                "this build's INDEX_FIELDS. Use a fresh OUT_DIR; appending "
-                "would silently misalign or mix methodologies."
-            )
-        rows = []
-        for row_number, values in enumerate(reader, start=2):
-            if len(values) != len(INDEX_FIELDS):
-                raise RuntimeError(
-                    f"index row {row_number} in {idx} has {len(values)} fields; "
-                    f"expected {len(INDEX_FIELDS)}"
-                )
-            rows.append(dict(zip(INDEX_FIELDS, values)))
-    _validate_index_rows(rows, idx)
-
-
-def _validate_observability(summary, cfg) -> None:
-    """Reject paper runs whose required monitor data is incomplete."""
-
-    def finite_number(value) -> bool:
-        return (not isinstance(value, bool)
-                and isinstance(value, (int, float))
-                and math.isfinite(value))
-
-    if cfg.require_power_data:
-        if cfg.power_backend == "none":
-            raise RuntimeError(
-                "require_power_data is true but power_backend is none"
-            )
-        energy = summary.get("energy") or {}
-        expected_nodes = 2 if cfg.config_label in {"tp2", "pp2"} else 1
-        if energy.get("power_nodes") != expected_nodes:
-            raise RuntimeError(
-                f"required power coverage is incomplete: expected "
-                f"{expected_nodes} node(s), got {energy.get('power_nodes', 0)}"
-            )
-
-        energy_per_token = energy.get("energy_per_token_j")
-        if not finite_number(energy_per_token) or energy_per_token <= 0:
-            raise RuntimeError(
-                "required power samples do not produce positive window energy"
-            )
-
-        allowed_power_gap = max(
-            5.0, 10.0 * cfg.power_interval_ms / 1000.0
-        )
-        gaps = [energy.get("power_max_gap_s_head")]
-        counts = [energy.get("power_samples_head")]
-        node_fields = ["mean_power_w_head"]
-        if expected_nodes == 2:
-            gaps.append(energy.get("power_max_gap_s_worker"))
-            counts.append(energy.get("power_samples_worker"))
-            node_fields.append("mean_power_w_worker")
-
-        if any(not finite_number(count) or count < 2 for count in counts):
-            raise RuntimeError(
-                "required power sampler has fewer than two window samples"
-            )
-        if any(not finite_number(gap) or gap > allowed_power_gap
-               for gap in gaps):
-            raise RuntimeError(
-                f"required power sampler gap exceeds {allowed_power_gap:g}s"
-            )
-        for field in node_fields:
-            mean_power = energy.get(field)
-            if not finite_number(mean_power) or mean_power <= 0:
-                raise RuntimeError(
-                    f"required power sampler reported invalid "
-                    f"{field}={mean_power!r}"
-                )
-
-    if cfg.require_vllm_metrics_data:
-        if not cfg.scrape_vllm_metrics:
-            raise RuntimeError(
-                "require_vllm_metrics_data is true but scraping is disabled"
-            )
-        metrics = summary.get("vllm_metrics") or {}
-        allowed_metric_gap = 5.0
-        min_span = max(
-            0.0, summary.get("measure_s", 0.0) - allowed_metric_gap
-        )
-
-        for name, stat in VLLMMetricsScraper.REQUIRED_RELEASE_STATS.items():
-            series = metrics.get(name) or {}
-            # Custom/test scraper adapters predating series identities are
-            # treated as one series; the built-in scraper always reports it.
-            if series.get("series_count", 1) != 1:
-                raise RuntimeError(
-                    f"required vLLM metric {name} has "
-                    f"{series.get('series_count', 0)} label series; release "
-                    "aggregation requires exactly one"
-                )
-            value = series.get(stat)
-            if not finite_number(value):
-                raise RuntimeError(
-                    f"required vLLM metric {name}.{stat} is missing or "
-                    "non-finite for the measurement window"
-                )
-            count = series.get("sample_count")
-            if not finite_number(count) or count < 2:
-                raise RuntimeError(
-                    f"required vLLM metric {name} has too few window samples"
-                )
-            gap = series.get("max_gap_s")
-            if not finite_number(gap) or gap > allowed_metric_gap:
-                raise RuntimeError(
-                    f"required vLLM metric {name} scrape gap exceeds 5s"
-                )
-            span = series.get("sample_span_s")
-            if not finite_number(span) or span < min_span:
-                raise RuntimeError(
-                    f"required vLLM metric {name} samples do not span the window"
-                )
-
-        generation = metrics["vllm:generation_tokens_total"]
-        if (summary.get("total_output_tokens", 0) > 0
-                and generation.get("delta", 0.0) <= 0):
-            raise RuntimeError(
-                "client received tokens but the server generation counter "
-                "did not advance"
-            )
-
-
-def _validate_result_quality(summary, cfg) -> None:
-    """Reject unusable release measurements before publishing any artifact."""
-    started = summary.get("requests_started")
-    completed = summary.get("requests_completed")
-    failed = summary.get("requests_failed")
-    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0
-           for value in (started, completed, failed)):
-        raise RuntimeError("request accounting contains invalid counts")
-    if started != completed + failed:
-        raise RuntimeError(
-            "request accounting mismatch: requests_started must equal "
-            "requests_completed + requests_failed"
-        )
-    if not cfg.require_zero_request_failures:
-        return
-    if failed:
-        raise RuntimeError(
-            f"release point has {failed} failed request(s); no row was published"
-        )
-    if summary.get("failed_requests_with_window_tokens", 0):
-        raise RuntimeError(
-            "release point includes window tokens from failed request(s); "
-            "no row was published"
-        )
-    if completed < cfg.min_successful_requests:
-        raise RuntimeError(
-            f"release point has {completed} successful request(s), fewer than "
-            f"min_successful_requests={cfg.min_successful_requests}"
-        )
-    if summary.get("total_output_tokens", 0) <= 0:
-        raise RuntimeError("release point received no output tokens in the window")
-
-
-def _preflight_observability(power, worker_power, vmetrics, cfg) -> None:
+def _preflight_observability(
+    power: PowerSampler,
+    worker_power: WorkerPowerSampler | None,
+    vmetrics: VLLMMetricsScraper | None,
+    cfg: ExperimentConfig,
+) -> None:
     """Fail in seconds when a required sampler is dead or misidentified."""
     if cfg.require_power_data:
         if not power.wait_for_samples(minimum=2, timeout_s=10.0):
@@ -761,7 +109,7 @@ def _preflight_observability(power, worker_power, vmetrics, cfg) -> None:
             )
 
 
-def _validate_monitor_config(cfg) -> None:
+def _validate_monitor_config(cfg: ExperimentConfig) -> None:
     """Reject impossible required-monitor policies before starting a phase."""
     if cfg.require_power_data and cfg.power_backend == "none":
         raise RuntimeError("require_power_data is true but power_backend is none")
@@ -778,57 +126,8 @@ def _validate_monitor_config(cfg) -> None:
             )
 
 
-def _validate_provenance(cfg) -> None:
-    """Require immutable model/server identity for release measurements."""
-    if not cfg.require_provenance:
-        return
-    commit = re.compile(r"[0-9a-fA-F]{40}")
-    digest = re.compile(r"[0-9a-fA-F]{64}")
-    problems = []
-    if not commit.fullmatch(cfg.model_revision or ""):
-        problems.append("model_revision must be an exact 40-hex commit")
-    if cfg.use_token_ids:
-        if not cfg.tokenizer:
-            problems.append("exact token prompts require a tokenizer")
-        if not commit.fullmatch(cfg.tokenizer_revision or ""):
-            problems.append("tokenizer_revision must be an exact 40-hex commit")
-    if not digest.fullmatch(cfg.serving_fingerprint or ""):
-        problems.append("serving_fingerprint must be a 64-hex policy hash")
-    if (cfg.deployment_fingerprint
-            and not digest.fullmatch(cfg.deployment_fingerprint)):
-        problems.append("deployment_fingerprint must be a 64-hex live-state hash")
-    if problems:
-        raise RuntimeError("required provenance is incomplete: " + "; ".join(problems))
-
-
-def _ensure_writable_hf_cache():
-    """Fall back to a client-local HF cache when the shared one is unwritable.
-
-    The serving container downloads models into the mounted HF cache as root,
-    leaving ~/.cache/huggingface root-owned on the host; the client's own
-    tokenizer/config downloads then die with PermissionError mid-sweep. When
-    the default hub cache is not writable (and the user has not pointed HF
-    elsewhere), redirect this process to a separate user-owned cache. It only
-    ever holds tokenizers and configs, a few MB per model.
-    """
-    if any(os.environ.get(v) for v in
-           ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME")):
-        return
-    hub = os.path.expanduser("~/.cache/huggingface/hub")
-    probe = hub
-    while probe != os.path.dirname(probe) and not os.path.exists(probe):
-        probe = os.path.dirname(probe)
-    if os.access(probe, os.W_OK):
-        return
-    alt = os.path.expanduser("~/.cache/huggingface-client/hub")
-    os.makedirs(alt, exist_ok=True)
-    os.environ["HF_HUB_CACHE"] = alt
-    print(f"[bench] shared HF cache {hub} is not writable (owned by the "
-          f"serving container's root user); using {alt} for client-side "
-          "tokenizer/config downloads")
-
-
-def _load_tokenizer(cfg):
+def _load_tokenizer(cfg: ExperimentConfig) -> object | None:
+    """Load the configured tokenizer when tokenization is enabled."""
     if not cfg.tokenizer:
         return None
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
@@ -839,7 +138,8 @@ def _load_tokenizer(cfg):
     return AutoTokenizer.from_pretrained(cfg.tokenizer, **kwargs)
 
 
-def _resolve_model(cfg):
+def _resolve_model(cfg: ExperimentConfig) -> str:
+    """Use the configured model or query the serving endpoint for its name."""
     if cfg.model:
         return cfg.model
     url = cfg.base_url.rstrip("/") + "/v1/models"
@@ -860,13 +160,14 @@ def _model_slug(model: str) -> str:
     return slug.strip("._-") or "model"
 
 
-def _json_safe(obj):
+def _json_safe(obj: Any) -> Any:
     """Replace NaN/Inf with None so the output files are strict JSON.
 
     json.dump writes bare ``NaN``, which Python reads back but jq, JavaScript,
     and most non-Python parsers reject; empty percentile sets and failed
     requests would otherwise poison every consumer of the release artifacts.
     """
+    # Artifacts contain heterogeneous nested JSON values of unknown depth.
     if isinstance(obj, float):
         return obj if math.isfinite(obj) else None
     if isinstance(obj, dict):
@@ -876,383 +177,8 @@ def _json_safe(obj):
     return obj
 
 
-def _atomic_write(path: str, data: bytes) -> None:
-    """Durably publish one artifact with write/fsync/replace semantics."""
-    directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(
-        prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory
-    )
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-
-
-def _artifact_metadata(name: str, data: bytes) -> dict:
-    return {
-        "path": name,
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "bytes": len(data),
-    }
-
-
-def _load_serving_policy(path: str | None, cfg) -> tuple[dict | None, dict | None]:
-    """Load and cross-check the immutable launch policy before measurement."""
-    if not path:
-        if cfg.require_provenance:
-            raise RuntimeError(
-                "release provenance requires --serving-policy-file"
-            )
-        return None, None
-
-    supplied = Path(path)
-    source = supplied.resolve()
-    output = Path(cfg.out_dir).resolve()
-    if source.parent != output:
-        raise RuntimeError(
-            "serving policy must be a direct child of the benchmark OUT_DIR"
-        )
-    if supplied.is_symlink() or source.is_symlink() or not source.is_file():
-        raise RuntimeError(
-            f"serving policy is not a regular, non-symlink file: {source}"
-        )
-    data = source.read_bytes()
-    if not data:
-        raise RuntimeError(f"serving policy is empty: {source}")
-
-    def reject_duplicate_keys(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate JSON key {key!r}")
-            result[key] = value
-        return result
-
-    try:
-        policy = json.loads(data, object_pairs_hook=reject_duplicate_keys)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        raise RuntimeError(f"invalid serving policy {source}: {exc}") from exc
-    if not isinstance(policy, dict):
-        raise RuntimeError(f"serving policy {source} must contain an object")
-
-    legacy_fields = (
-        "schema", "config", "image", "model", "revision", "tokenizer",
-        "tokenizer_revision", "dtype", "quant", "max_model_len",
-        "gpu_util", "prefix_caching", "generation_config",
-        "torchinductor_autograd_cache", "hf_hub_offline",
-        "trust_remote_code", "ray_version", "connectx_iface",
-        "nccl_ib_disable", "head_ip", "worker_ip", "power_backend",
-        "runtime_facts", "runtime_facts_sha256", "serving_fingerprint",
-    )
-    missing = [field for field in legacy_fields if field not in policy]
-    if missing:
-        raise RuntimeError(
-            f"serving policy {source} is missing: " + ", ".join(missing)
-        )
-    if policy["schema"] != "serving-v1":
-        raise RuntimeError(
-            f"unsupported serving policy schema {policy['schema']!r}"
-        )
-    fingerprint = str(policy["serving_fingerprint"])
-    runtime_hash = str(policy["runtime_facts_sha256"])
-    if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
-        raise RuntimeError("serving policy fingerprint is not a SHA-256 digest")
-    if not re.fullmatch(r"[0-9a-f]{64}", runtime_hash):
-        raise RuntimeError("serving runtime fingerprint is not a SHA-256 digest")
-    if not re.fullmatch(r".+@sha256:[0-9a-fA-F]{64}", str(policy["image"])):
-        raise RuntimeError("serving policy image is not pinned by digest")
-
-    runtime_canonical = json.dumps(
-        policy["runtime_facts"], sort_keys=True, separators=(",", ":")
-    ).encode()
-    if hashlib.sha256(runtime_canonical).hexdigest() != runtime_hash:
-        raise RuntimeError("serving policy runtime facts do not match their hash")
-    if str(policy.get("cluster_runtime")) != runtime_hash:
-        raise RuntimeError("serving policy cluster_runtime hash is inconsistent")
-
-    legacy_input = "".join((
-        f"schema={policy['schema']}\n",
-        f"config={policy['config']}\n",
-        f"image={policy['image']}\n",
-        f"model={policy['model']}\nrevision={policy['revision']}\n",
-        f"tokenizer={policy['tokenizer']}\n"
-        f"tokenizer_revision={policy['tokenizer_revision']}\n",
-        f"dtype={policy['dtype']}\nquant={policy['quant']}\n",
-        f"max_model_len={policy['max_model_len']}\n"
-        f"gpu_util={policy['gpu_util']}\n",
-        f"prefix_caching={policy['prefix_caching']}\n"
-        f"generation_config={policy['generation_config']}\n",
-        "torchinductor_autograd_cache="
-        f"{policy['torchinductor_autograd_cache']}\n"
-        f"hf_hub_offline={policy['hf_hub_offline']}\n",
-        f"trust_remote_code={policy['trust_remote_code']}\n"
-        f"ray_version={policy['ray_version']}\n",
-        f"connectx_iface={policy['connectx_iface']}\n"
-        f"nccl_ib_disable={policy['nccl_ib_disable']}\n",
-        f"head_ip={policy['head_ip']}\nworker_ip={policy['worker_ip']}\n"
-        f"power_backend={policy['power_backend']}\n",
-        f"cluster_runtime={runtime_hash}\n",
-    ))
-    max_num_seqs = policy.get("max_num_seqs", "")
-    if max_num_seqs != "":
-        if (not isinstance(max_num_seqs, str)
-                or re.fullmatch(r"[1-9][0-9]*", max_num_seqs) is None):
-            raise RuntimeError(
-                "serving policy max_num_seqs must be a positive integer string"
-            )
-        legacy_input += f"max_num_seqs={max_num_seqs}\n"
-    if hashlib.sha256(legacy_input.encode()).hexdigest() != fingerprint:
-        raise RuntimeError(
-            "serving policy fields do not reproduce serving_fingerprint"
-        )
-
-    expected = {
-        "config": cfg.config_label,
-        "model": cfg.model,
-        "revision": cfg.model_revision,
-        "tokenizer": cfg.tokenizer,
-        "tokenizer_revision": cfg.tokenizer_revision,
-        "serving_fingerprint": cfg.serving_fingerprint,
-    }
-    mismatches = [
-        f"{field}: {policy.get(field)!r} != {value!r}"
-        for field, value in expected.items()
-        if str(policy.get(field, "")) != str(value or "")
-    ]
-    policy_trust = str(policy["trust_remote_code"]).strip().lower()
-    policy_trust_bool = policy_trust in {"1", "true", "yes", "on"}
-    if policy_trust_bool != bool(cfg.trust_remote_code):
-        mismatches.append(
-            "trust_remote_code: "
-            f"{policy['trust_remote_code']!r} != {cfg.trust_remote_code!r}"
-        )
-    if mismatches:
-        raise RuntimeError(
-            "serving policy does not match benchmark arguments: "
-            + "; ".join(mismatches)
-        )
-    return policy, _artifact_metadata(source.name, data)
-
-
-def _commit_index_row(out_dir: str, idx: str, row: dict) -> None:
-    """Validate and atomically append one row while holding a writer lock.
-
-    The lock covers the read/validate/replace transaction, so two benchmark
-    processes cannot both read the same index and silently lose one append.
-    """
-    lock_path = os.path.join(out_dir, ".index.lock")
-    with open(lock_path, "a+") as lock_handle:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
-        try:
-            existing = []
-            if os.path.exists(idx) and os.path.getsize(idx) > 0:
-                validate_index_schema(out_dir)
-                with open(idx, "r", newline="") as handle:
-                    existing = list(csv.DictReader(handle))
-            candidate = existing + [row]
-            _validate_index_rows(candidate, idx)
-
-            # Rewrite in the same directory and atomically replace the index. A
-            # killed process can leave an unreferenced tmp file, never a partial CSV.
-            fd, tmp = tempfile.mkstemp(
-                prefix=".index.", suffix=".tmp", dir=out_dir, text=True
-            )
-            try:
-                with os.fdopen(fd, "w", newline="") as handle:
-                    writer = csv.DictWriter(
-                        handle, fieldnames=INDEX_FIELDS, extrasaction="ignore"
-                    )
-                    writer.writeheader()
-                    writer.writerows(candidate)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(tmp, idx)
-                directory_fd = os.open(out_dir, os.O_RDONLY | os.O_DIRECTORY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
-        finally:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-
-
-def _append_index(out_dir, s):
-    idx = os.path.join(out_dir, "index.csv")
-    vllm = s.get("vllm_metrics", {})
-    energy = s.get("energy", {})
-    info = s.get("server_info", {})
-    artifacts = s.get("artifacts", {})
-    policy = s.get("serving_policy") or {}
-    config = s.get("config") or {}
-    parallel_sizes = {
-        "single": (1, 1),
-        "tp2": (2, 1),
-        "pp2": (1, 2),
-    }
-    tensor_parallel_size, pipeline_parallel_size = parallel_sizes.get(
-        s.get("config_label"), (None, None)
-    )
-
-    def vmetric(name, stat):
-        return vllm.get(name, {}).get(stat)
-
-    def vcounter(name, stat="delta"):
-        return vllm.get(name, {}).get(stat)
-
-    def artifact(kind, field):
-        return (artifacts.get(kind) or {}).get(field)
-
-    gen_delta = vcounter("vllm:generation_tokens_total")
-    measure_s = s["measure_s"]
-    row = {
-        "run_tag": s["run_tag"],
-        "raw_path": artifact("raw", "path"),
-        "raw_sha256": artifact("raw", "sha256"),
-        "raw_bytes": artifact("raw", "bytes"),
-        "summary_path": artifact("summary", "path"),
-        "summary_sha256": artifact("summary", "sha256"),
-        "summary_bytes": artifact("summary", "bytes"),
-        "power_samples_path": artifact("power_samples", "path"),
-        "power_samples_sha256": artifact("power_samples", "sha256"),
-        "power_samples_bytes": artifact("power_samples", "bytes"),
-        "vllm_samples_path": artifact("vllm_samples", "path"),
-        "vllm_samples_sha256": artifact("vllm_samples", "sha256"),
-        "vllm_samples_bytes": artifact("vllm_samples", "bytes"),
-        "serving_policy_path": artifact("serving_policy", "path"),
-        "serving_policy_sha256": artifact("serving_policy", "sha256"),
-        "serving_policy_bytes": artifact("serving_policy", "bytes"),
-        "methodology_version": s.get("methodology_version"),
-        "config_file_sha256": s.get("config_file_sha256"),
-        "trace_sha256": s.get("trace_sha256"),
-        "experiment_fingerprint": s.get("experiment_fingerprint"),
-        "harness_source_sha256": s.get("harness_source_sha256"),
-        "client_environment_sha256": s.get("client_environment_sha256"),
-        "harness_git_commit": s.get("harness_git_commit"),
-        "serving_fingerprint": s.get("serving_fingerprint"),
-        "deployment_fingerprint": s.get("deployment_fingerprint"),
-        "model_revision": policy.get("revision", config.get("model_revision")),
-        "tokenizer": policy.get("tokenizer", config.get("tokenizer")),
-        "tokenizer_revision": policy.get(
-            "tokenizer_revision", config.get("tokenizer_revision")
-        ),
-        "vllm_image": policy.get("image"),
-        "dtype": policy.get("dtype"),
-        "quantization": policy.get("quant"),
-        "tensor_parallel_size": tensor_parallel_size,
-        "pipeline_parallel_size": pipeline_parallel_size,
-        "prefix_caching": policy.get("prefix_caching"),
-        "generation_config": policy.get("generation_config"),
-        "runtime_fingerprint": policy.get(
-            "runtime_facts_sha256", policy.get("cluster_runtime")
-        ),
-        "repeat_id": s.get("repeat_id"),
-        "repeat_count": s.get("repeat_count", s.get("repeat_id", 1)),
-        "config_label": s["config_label"],
-        "model_label": s.get("model_label", ""),
-        "model": s.get("model", ""),
-        "mode": s["mode"],
-        "concurrency": s["concurrency"],
-        "expected_concurrencies": (
-            s.get("expected_concurrencies") or str(s["concurrency"])
-        ),
-        "target_qps": s["target_qps"],
-        "measure_s": measure_s,
-        "configured_measure_s": s.get("configured_measure_s"),
-        "measure_extension_s": s.get("measure_extension_s"),
-        "warmup_s": s.get("warmup_s"),
-        "configured_warmup_s": s.get("configured_warmup_s"),
-        "warmup_extension_s": s.get("warmup_extension_s"),
-        "cooldown_s": s.get("cooldown_s"),
-        "load_extension_s": s.get("load_extension_s"),
-        "drain_s": s.get("drain_s"),
-        "requests_started": s["requests_started"],
-        "requests_completed": s["requests_completed"],
-        "requests_failed": s["requests_failed"],
-        "requests_completed_in_window": s.get("requests_completed_in_window"),
-        "requests_started_and_completed_in_window":
-            s.get("requests_started_and_completed_in_window"),
-        "avg_input_tokens": s.get("avg_input_tokens"),
-        "avg_requested_output_tokens": s.get("avg_requested_output_tokens"),
-        "total_output_tokens": s["total_output_tokens"],
-        "req_thru_rps": s["request_throughput_rps"],
-        "tok_thru_tps": s["output_token_throughput_tps"],
-        "tok_thru_completed_tps": s.get("completed_token_throughput_tps"),
-        "goodput_rps": s["goodput_rps"],
-        "goodput_itl2_rps": s["goodput_itl2_rps"],
-        "ttft_p50": s["ttft_s"]["p50"],
-        "ttft_p99": s["ttft_s"]["p99"],
-        "itl_p50": s["itl_s"]["p50"],
-        "itl_p99": s["itl_s"]["p99"],
-        "mean_itl_p50": s["mean_itl_s"]["p50"],
-        "e2e_p50": s["e2e_s"]["p50"],
-        "e2e_p99": s["e2e_s"]["p99"],
-        "kv_cache_usage_mean": vmetric("vllm:kv_cache_usage_perc", "mean"),
-        "kv_cache_usage_max": vmetric("vllm:kv_cache_usage_perc", "max"),
-        "requests_running_mean": vmetric("vllm:num_requests_running", "mean"),
-        "requests_running_max": vmetric("vllm:num_requests_running", "max"),
-        "requests_waiting_mean": vmetric("vllm:num_requests_waiting", "mean"),
-        "requests_waiting_max": vmetric("vllm:num_requests_waiting", "max"),
-        "server_prompt_tokens": vcounter("vllm:prompt_tokens_total"),
-        "server_generation_tokens": gen_delta,
-        "server_prompt_tokens_cached": vcounter("vllm:prompt_tokens_cached_total"),
-        "server_gen_tps": vcounter("vllm:generation_tokens_total",
-                                    "rate_per_s"),
-        "server_prompt_tps": vcounter("vllm:prompt_tokens_total",
-                                       "rate_per_s"),
-        "server_metric_samples": vcounter("vllm:generation_tokens_total",
-                                           "sample_count"),
-        "server_metric_sample_span_s": vcounter(
-            "vllm:generation_tokens_total", "sample_span_s"),
-        "server_metric_max_gap_s": vcounter("vllm:generation_tokens_total",
-                                             "max_gap_s"),
-        "kv_metric_samples": vmetric("vllm:kv_cache_usage_perc", "sample_count"),
-        "kv_metric_sample_span_s": vmetric(
-            "vllm:kv_cache_usage_perc", "sample_span_s"),
-        "kv_metric_max_gap_s": vmetric("vllm:kv_cache_usage_perc", "max_gap_s"),
-        "num_preemptions": vcounter("vllm:num_preemptions_total"),
-        "max_model_len": info.get("max_model_len"),
-        "kv_cache_dtype": info.get("kv_cache_dtype"),
-        "gpu_memory_utilization": info.get("gpu_memory_utilization"),
-        "block_size": info.get("block_size"),
-        "gpu_blocks": info.get("gpu_blocks"),
-        "total_kv_tokens": info.get("total_kv_tokens"),
-        "total_kv_tokens_source": info.get("total_kv_tokens_source"),
-        "hybrid_cache": info.get("hybrid_cache"),
-        "weight_gb": info.get("weight_gb"),
-        "kv_cache_gb": info.get("kv_cache_gb"),
-        "worker_weight_gb": info.get("worker_weight_gb"),
-        "worker_kv_cache_gb": info.get("worker_kv_cache_gb"),
-        "max_concurrency": info.get("max_concurrency"),
-        "vllm_version": info.get("vllm_version"),
-        "mean_power_w": energy.get("mean_power_w"),
-        "mean_power_w_head": energy.get("mean_power_w_head"),
-        "mean_power_w_worker": energy.get("mean_power_w_worker"),
-        "power_nodes": energy.get("power_nodes"),
-        "power_scope": energy.get("power_scope"),
-        "power_samples_head": energy.get("power_samples_head"),
-        "power_samples_worker": energy.get("power_samples_worker"),
-        "power_max_gap_s_head": energy.get("power_max_gap_s_head"),
-        "power_max_gap_s_worker": energy.get("power_max_gap_s_worker"),
-        "energy_per_token_j": energy.get("energy_per_token_j"),
-        "tokens_per_watt": energy.get("tokens_per_watt"),
-    }
-    _commit_index_row(out_dir, idx, row)
-
-
-def main():
+def main() -> None:
+    """Run one benchmark point from command-line arguments."""
     ap = argparse.ArgumentParser(description="LLM serving benchmark for DGX Spark")
     ap.add_argument("--config", help="YAML config path")
     ap.add_argument("--config-label")
@@ -1345,8 +271,13 @@ def main():
         cfg.cooldown_s = args.cooldown_s
     if args.base_url:
         cfg.base_url = args.base_url
-    if args.out_dir:
-        cfg.out_dir = args.out_dir
+    if args.out_dir is not None:
+        campaign_dir = resolve_campaign_dir(args.out_dir)
+    elif os.environ.get("OUT_DIR"):
+        campaign_dir = resolve_campaign_dir(os.environ["OUT_DIR"])
+    else:
+        campaign_dir = next_available_campaign_dir()
+    cfg.out_dir = str(resolve_campaign_results_dir(campaign_dir))
     if args.power_backend:
         cfg.power_backend = args.power_backend
     if args.worker_power_container:
@@ -1431,7 +362,7 @@ def main():
     )
     # Before the first transformers/huggingface_hub import reads the HF env.
     if cfg.tokenizer or cfg.collect_hf_metadata:
-        _ensure_writable_hf_cache()
+        configure_hf_cache()
     workload = Workload(cfg, _load_tokenizer(cfg))
 
     point = cfg.concurrency if cfg.mode == "closed" else cfg.qps
@@ -1523,6 +454,19 @@ def main():
     summary = aggregate(records, cfg, window_start, window_end,
                         power if cfg.power_backend != "none" else None, vmet,
                         worker_power=wpower)
+    summary["telemetry_schema_version"] = 2
+    summary["temperature"] = temperature_summary(
+        power,
+        wpower,
+        window_start,
+        window_end,
+        expected_nodes=2 if cfg.config_label in {"tp2", "pp2"} else 1,
+        head_node_ip=cfg.head_node_ip or os.environ.get("HEAD_IP") or None,
+        worker_node_ip=(wpower.identity_ip if wpower and wpower.identity_ip
+                        else cfg.worker_power_node_ip or None),
+        worker_ray_node_id=(wpower.identity_node_id if wpower and wpower.identity_node_id
+                            else None),
+    )
     _validate_observability(summary, cfg)
     _validate_result_quality(summary, cfg)
     summary["run_tag"] = tag
@@ -1582,18 +526,22 @@ def main():
     power_data = b""
     if cfg.power_backend != "none":
         power_name = f"{tag}.power.jsonl"
+        head_node_ip = cfg.head_node_ip or os.environ.get("HEAD_IP") or None
         power_rows = [
-            {"source": "head", "t_perf": t, "watts": watts}
-            for t, watts in power.samples()
+            {"source": "head", "node_ip": head_node_ip,
+             "telemetry_schema_version": 2, **record}
+            for record in power.sample_records()
         ]
         if wpower:
             power_rows.extend(
-                {"source": "worker", "t_perf": t, "watts": watts,
-                 "node_ip": wpower.identity_ip,
-                 "ray_node_id": wpower.identity_node_id}
-                for t, watts in wpower.samples()
+                {"source": "worker", "node_ip": wpower.identity_ip,
+                 "ray_node_id": wpower.identity_node_id,
+                 "telemetry_schema_version": 2, **record}
+                for record in wpower.sample_records()
             )
-        power_rows.sort(key=lambda row: (row["t_perf"], row["source"]))
+        power_rows.sort(key=lambda row: (
+            row["t_perf"], row["source"], row.get("gpu_index") or ""
+        ))
         power_data = "".join(
             json.dumps(_json_safe(row), sort_keys=True) + "\n"
             for row in power_rows
