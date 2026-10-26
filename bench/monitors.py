@@ -11,7 +11,33 @@ import re
 import time
 import threading
 import subprocess
+from typing import Any
 import urllib.request
+
+
+def _optional_float(value: str | float | None) -> float | None:
+    """Parse a finite sensor value, treating driver placeholders as missing."""
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _parse_nvidia_smi_row(line: str) -> dict[str, Any] | None:
+    """Parse one index, UUID, power, temperature query row."""
+    fields = [field.strip() for field in line.strip().split(",")]
+    if (len(fields) < 3 or not fields[0].isdigit()
+            or not fields[1] or fields[1].casefold() in {"n/a", "unknown"}):
+        return None
+    return {
+        "gpu_index": fields[0] or None,
+        "gpu_uuid": fields[1] or None,
+        "watts": _optional_float(fields[2]),
+        "temperature_c": _optional_float(fields[3]) if len(fields) > 3 else None,
+    }
 
 
 class PowerSampler:
@@ -21,6 +47,9 @@ class PowerSampler:
         self.sysfs_path = sysfs_path
         self.rails = rails or []
         self._samples = []          # list of (t_perf, watts)
+        self._temperature_samples = []
+        self._sample_records = []
+        self.temperature_backend = backend
         self._proc = None
         self._proc_lock = threading.Lock()
         self._thread = None
@@ -75,20 +104,42 @@ class PowerSampler:
                 except Exception:
                     pass
 
-    def _add(self, watts):
+    def _add(
+        self,
+        watts: str | float | None,
+        temperature_c: str | float | None = None,
+        gpu_index: str | None = None,
+        gpu_uuid: str | None = None,
+    ) -> bool:
         # Sensor backends occasionally report NaN/Inf while initializing.  A
         # non-finite point would poison the entire trapezoidal integral while
         # still looking like a present sample to observability checks.
-        watts = float(watts)
-        if math.isfinite(watts):
-            self._samples.append((time.perf_counter(), watts))
+        watts_value = _optional_float(watts)
+        temperature_value = _optional_float(temperature_c)
+        if watts_value is None and temperature_value is None:
+            return False
+        timestamp = time.perf_counter()
+        if watts_value is not None:
+            self._samples.append((timestamp, watts_value))
+        if temperature_value is not None:
+            self._temperature_samples.append(
+                (timestamp, temperature_value, gpu_index, gpu_uuid)
+            )
+        self._sample_records.append({
+            "t_perf": timestamp,
+            "watts": watts_value,
+            "temperature_c": temperature_value,
+            "gpu_index": gpu_index,
+            "gpu_uuid": gpu_uuid,
+        })
+        return True
 
     def _run_nvidia_smi(self):
         # One output line becomes one sample. On a multi-GPU node nvidia-smi
         # emits one line per GPU per tick, which this would average rather than
         # sum; correct on DGX Spark, where each node has a single GB10.
         ms = int(self.interval * 1000)
-        cmd = ["nvidia-smi", "--query-gpu=power.draw",
+        cmd = ["nvidia-smi", "--query-gpu=index,uuid,power.draw,temperature.gpu",
                "--format=csv,noheader,nounits", "-lms", str(ms)]
         proc = self._spawn_proc(cmd)
         if proc is None:
@@ -96,10 +147,10 @@ class PowerSampler:
         for line in proc.stdout:
             if self._stop.is_set():
                 break
-            try:
-                self._add(float(line.strip().split(",")[0]))
-            except ValueError:
+            sample = _parse_nvidia_smi_row(line)
+            if sample is None:
                 continue
+            self._add(**sample)
 
     def _run_sysfs(self):
         # power files report microwatts; change the divisor if your rail differs
@@ -171,6 +222,60 @@ class PowerSampler:
         """Return a stable copy for durable raw-observability artifacts."""
         return list(self._samples)
 
+    def sample_records(self) -> list[dict[str, Any]]:
+        """Return power and temperature observations with shared timestamps."""
+        return [dict(record) for record in self._sample_records]
+
+    def temperature_summary(self, t0: float, t1: float) -> dict[str, Any]:
+        """Summarize valid per-GPU temperature readings inside a window."""
+        if self.temperature_backend == "none":
+            status = "disabled"
+        elif self.temperature_backend != "nvidia_smi":
+            status = "unsupported_backend"
+        else:
+            status = "sampled" if any(
+                t0 <= timestamp <= t1
+                for timestamp, _, _, _ in self._temperature_samples
+            ) else "no_valid_samples"
+
+        grouped: dict[tuple[str | None, str | None], list[tuple[float, float]]] = {}
+        for timestamp, value, gpu_index, gpu_uuid in self._temperature_samples:
+            if t0 <= timestamp <= t1:
+                grouped.setdefault((gpu_index, gpu_uuid), []).append((timestamp, value))
+
+        gpu_summaries = []
+        gaps = []
+        values = []
+        for (gpu_index, gpu_uuid), points in sorted(
+            grouped.items(), key=lambda item: (item[0][0] or "", item[0][1] or "")
+        ):
+            points.sort()
+            gpu_values = [value for _, value in points]
+            gpu_gaps = [b[0] - a[0] for a, b in zip(points, points[1:])]
+            gaps.extend(gpu_gaps)
+            values.extend(gpu_values)
+            gpu_summaries.append({
+                "gpu_index": gpu_index,
+                "gpu_uuid": gpu_uuid,
+                "mean_c": sum(gpu_values) / len(gpu_values),
+                "max_c": max(gpu_values),
+                "sample_count": len(gpu_values),
+                "max_gap_s": max(gpu_gaps) if gpu_gaps else None,
+            })
+
+        return {
+            "source": "nvidia_smi" if self.temperature_backend == "nvidia_smi"
+            else self.temperature_backend,
+            "scope": "gpu",
+            "units": "C",
+            "status": status,
+            "mean_c": sum(values) / len(values) if values else None,
+            "max_c": max(values) if values else None,
+            "sample_count": len(values),
+            "max_gap_s": max(gaps) if gaps else None,
+            "gpus": gpu_summaries,
+        }
+
     def wait_for_samples(self, minimum=2, timeout_s=10.0):
         """Wait for live telemetry before committing to a long release point."""
         deadline = time.monotonic() + timeout_s
@@ -203,7 +308,7 @@ class PowerSampler:
 # there is no SSH path from head to worker), streams the worker GPU's power
 # draw one watts value per line, and exits when stdin reaches EOF.
 _WORKER_POWER_SCRIPT = r"""
-import subprocess, sys, threading, time
+import math, subprocess, sys, threading, time
 import ray
 
 ip, interval_ms = sys.argv[1], int(sys.argv[2])
@@ -224,22 +329,39 @@ class Reader:
         if self.stop_event.is_set():
             return
         self.proc = subprocess.Popen(
-            ["nvidia-smi", "--query-gpu=power.draw",
+            ["nvidia-smi", "--query-gpu=index,uuid,power.draw,temperature.gpu",
              "--format=csv,noheader,nounits", "-lms", str(ms)],
             stdout=subprocess.PIPE, text=True)
         try:
             for line in self.proc.stdout:
                 if self.stop_event.is_set():
                     break
+                fields = [field.strip() for field in line.strip().split(",")]
+                if (len(fields) < 4 or not fields[0].isdigit()
+                        or not fields[1]):
+                    continue
                 try:
-                    watts = float(line.strip().split(",")[0])
-                    self.sequence += 1
-                    # Keep the observation timestamp on the worker. Monotonic
-                    # clocks are not comparable across hosts, so read() computes
-                    # sample age before returning it to the head-side helper.
-                    self.latest = (self.sequence, time.monotonic(), watts)
+                    watts = float(fields[2])
+                    if not math.isfinite(watts):
+                        watts = None
                 except ValueError:
-                    pass
+                    watts = None
+                try:
+                    temperature_c = float(fields[3]) if len(fields) > 3 else None
+                    if temperature_c is not None and not math.isfinite(temperature_c):
+                        temperature_c = None
+                except ValueError:
+                    temperature_c = None
+                if watts is None and temperature_c is None:
+                    continue
+                self.sequence += 1
+                # Keep the observation timestamp on the worker. Monotonic
+                # clocks are not comparable across hosts, so read() computes
+                # sample age before returning it to the head-side helper.
+                self.latest = (
+                    self.sequence, time.monotonic(), watts, temperature_c,
+                    fields[0] or None, fields[1] or None,
+                )
         finally:
             if self.proc.poll() is None:
                 try:
@@ -252,8 +374,9 @@ class Reader:
     def read(self):
         if self.latest is None:
             return None
-        sequence, observed_at, watts = self.latest
-        return sequence, time.monotonic() - observed_at, watts
+        sequence, observed_at, watts, temperature_c, gpu_index, gpu_uuid = self.latest
+        return (sequence, time.monotonic() - observed_at, watts, temperature_c,
+                gpu_index, gpu_uuid)
 
     def identity(self):
         node_id = ray.get_runtime_context().get_node_id()
@@ -293,13 +416,15 @@ try:
         try:
             sample = ray.get(reader.read.remote(), timeout=2)
             if sample is not None:
-                sequence, age_s, watts = sample
+                sequence, age_s, watts, temperature_c, gpu_index, gpu_uuid = sample
                 # Emit each source observation once. If nvidia-smi exits or
                 # stalls, its cached last value cannot masquerade as fresh data.
                 if sequence > last_sequence:
                     last_sequence = sequence
                     if 0.0 <= age_s <= max_sample_age_s:
-                        print(sequence, age_s, watts, flush=True)
+                        values = (sequence, age_s, watts, temperature_c,
+                                  gpu_index, gpu_uuid)
+                        print("SAMPLE", *values, sep="\t", flush=True)
         except Exception:
             pass
         time.sleep(interval_ms / 1000.0)
@@ -331,6 +456,7 @@ class WorkerPowerSampler(PowerSampler):
 
     def __init__(self, container, node_ip, interval_ms=1000):
         super().__init__(backend="none", interval_ms=interval_ms)
+        self.temperature_backend = "nvidia_smi"
         self.container = container
         self.node_ip = node_ip
         self._last_sequence = 0
@@ -355,19 +481,37 @@ class WorkerPowerSampler(PowerSampler):
 
     def _consume_line(self, line):
         """Accept one fresh worker observation and reject replayed/stale data."""
-        parts = line.strip().split()
-        if len(parts) == 3 and parts[0] == "IDENTITY":
-            self.identity_ip = parts[1]
-            self.identity_node_id = parts[2]
+        if line.startswith("IDENTITY "):
+            identity = line.strip().split()
+            if len(identity) != 3:
+                return False
+            self.identity_ip = identity[1]
+            self.identity_node_id = identity[2]
             return True
-        if len(parts) != 3:
-            return False
-        try:
-            sequence = int(parts[0])
-            age_s = float(parts[1])
-            watts = float(parts[2])
-        except ValueError:
-            return False
+        parts = line.strip().split("\t")
+        if len(parts) == 7 and parts[0] == "SAMPLE":
+            try:
+                sequence = int(parts[1])
+                age_s = float(parts[2])
+            except ValueError:
+                return False
+            watts = _optional_float(parts[3])
+            temperature_c = _optional_float(parts[4])
+            gpu_index = None if parts[5] == "None" else parts[5]
+            gpu_uuid = None if parts[6] == "None" else parts[6]
+        else:
+            # Keep the prior helper protocol readable for diagnostic fixtures.
+            legacy_parts = line.strip().split()
+            if len(legacy_parts) != 3:
+                return False
+            try:
+                sequence = int(legacy_parts[0])
+                age_s = float(legacy_parts[1])
+            except ValueError:
+                return False
+            watts = _optional_float(legacy_parts[2])
+            temperature_c = None
+            gpu_index = gpu_uuid = None
         if sequence <= self._last_sequence:
             return False
         # Advance even for a stale observation so replaying it later cannot
@@ -376,8 +520,8 @@ class WorkerPowerSampler(PowerSampler):
         if not math.isfinite(age_s) or not 0.0 <= age_s <= self._max_sample_age_s:
             return False
         before = len(self._samples)
-        self._add(watts)
-        return len(self._samples) == before + 1
+        accepted = self._add(watts, temperature_c, gpu_index, gpu_uuid)
+        return accepted or len(self._samples) > before
 
     def wait_for_identity(self, timeout_s=10.0):
         deadline = time.monotonic() + timeout_s

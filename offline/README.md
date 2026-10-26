@@ -1,32 +1,28 @@
 # Offline bundle
 
-`build_bundle.sh` packages the current checkout for installation on a system
-without outbound network access. The bundle contains a platform-specific vLLM
-container image, the Python wheelhouse, the source tree, and the Hugging Face
-hub cache when that cache exists on the build host.
+Builds a self-contained bundle for a DGX Spark with no outbound network access.
+The bundle carries the container image, the pinned client wheelhouse, and the
+repository source. It excludes model weights unless `--include-models` is used.
 
 ## Bundle contents
 
 | File | Contents |
 | --- | --- |
-| `vllm-ray-image.tar.zst` or `.tar.gz` | vLLM base image with the locked Ray runtime installed |
-| `wheels/` | Wheels resolved from `requirements.lock` or `requirements.txt` for the target platform |
-| `dgx-spark-benchmark-src.tar.gz` | Current repository working tree, excluding Git metadata, result files, local virtual environments, and common local credential paths |
-| `model-cache.tar` | Hugging Face `hub/` cache from the build host, when available |
-| `install_offline.sh` | Target installer |
-| `SHA256SUMS` | SHA-256 checksums for bundle files |
-| `BUNDLE_INFO` | Image, platform, Python, requirements, and source revision metadata |
+| `vllm-ray-image.tar.zst` | vLLM image with Ray baked in |
+| `wheels/` | `requirements.lock` wheels for the target platform |
+| `dgx-spark-benchmark-src.tar.gz` | repository source |
+| `model-cache.tar` | Optional Hugging Face cache, included with `--include-models` |
+| `install_offline.sh` | installer for the Spark |
+| `SHA256SUMS` | checksums for every file above |
+| `BUNDLE_INFO` | image tag, base digest, Ray version, target platform |
 
-Model weights are included when the configured Hugging Face cache root contains
-`hub/`. The default source is `HF_CACHE/hub`. Set `MODEL_CACHE_DIR` when the
-cache uses another location. The bundle contains the `hub/` directory and does
-not contain the Hugging Face token file. An absent cache produces a bundle
-without model weights. The bundle includes files present in the cache and does
-not check that a model snapshot is complete.
+## Why the image is rebuilt
 
-The bundle contains the application container image and client Python wheels.
-The target system still requires Docker, NVIDIA Container Toolkit, a compatible
-NVIDIA driver, and the host RDMA packages used by the benchmark.
+`scripts/start_ray.sh` installs Ray at container start with
+`pip install -q 'ray[default]==2.53.0'`. That step needs a package index. The
+derived image bakes Ray in, so the step is a satisfied no-op. The image also
+sets `PIP_NO_INDEX=1`, so a pip call that needs an index fails immediately
+instead of waiting for a network timeout.
 
 ## Build
 
@@ -38,29 +34,36 @@ path from another working directory:
 offline/build_bundle.sh
 ```
 
-The default output is a new timestamped directory inside `offline/`. Pass an
-output path to choose another location. Existing output paths are rejected so
-previous bundles are preserved.
+Output directory: `offline/offline-bundle/`.
 
-The builder reads `VLLM_IMAGE`, `RAY_VERSION`, and `HF_CACHE` from
-`scripts/connectx_env.sh` when that file exists. It copies
-`scripts/ray-runtime-constraints.txt` when present and verifies that its pinned
-Ray version matches `RAY_VERSION`. The builder uses `requirements.lock` when
-present and falls back to `requirements.txt`. Set `VLLM_IMAGE` and
-`RAY_VERSION` in the environment when the checkout does not define them.
+Model weights are excluded by default. To include the Hugging Face cache, pass
+`--include-models`. The cache root must contain a non-empty `hub/` directory.
+Set `MODEL_CACHE_DIR` to select a cache on an external drive; otherwise the
+builder uses `HF_CACHE` from `scripts/connectx_env.sh`.
 
-The default target is `linux/arm64`. The default Python version is the
-build-host Python major and minor version. Set `TARGET_PYTHON` when the target
-system uses another version. Set `TARGET_PLATFORM=linux/amd64` to build for an
-x86-64 target. Set `TARGET_MANYLINUX` to the target system's minimum glibc
-compatibility tag when it differs from `manylinux_2_28`. `TARGET_ABIS` and
-`TARGET_PYTHON_IMPLEMENTATION` override the wheel ABI defaults.
+```bash
+MODEL_CACHE_DIR=/media/external-drive/huggingface \
+  offline/build_bundle.sh --include-models /media/external-drive/offline-bundle
+```
 
-The builder uses the selected Buildx builder and exports a single-platform
-Docker image archive. A local Buildx builder can use QEMU emulation for an
-arm64 target on x86-64. Docker Desktop includes emulation support. On Docker
-Engine, register QEMU when the selected Buildx builder does not provide an
-arm64 emulator:
+This writes the cache to `model-cache.tar` in the bundle and excludes the
+Hugging Face `.locks` directory. The builder archives files already in the
+cache and does not check that pinned model snapshots are complete. To carry
+model weights separately, leave off `--include-models` and keep the cache
+directory on the external drive.
+
+The build machine must be `aarch64` with Python 3.12, or use BuildKit
+emulation and cross-platform wheel download. `build_bundle.sh` compares the
+build machine to `TARGET_PLATFORM` and `TARGET_PYTHON` and passes `--platform`
+and `--python-version` to `pip download` when they differ.
+
+Overrides: `VLLM_IMAGE`, `RAY_VERSION`, `TARGET_PLATFORM`, `TARGET_PYTHON`,
+`DERIVED_IMAGE`, `ZSTD_LEVEL`, `MODEL_CACHE_DIR`.
+
+### Build on x86_64
+
+BuildKit executes the arm64 `RUN pip install` step through QEMU. Register the
+arm64 handler once:
 
 ```bash
 docker run --privileged --rm tonistiigi/binfmt --install arm64
@@ -133,10 +136,18 @@ Output: `results/allreduce_ray_<fingerprint>_<timestamp>.csv`.
 
 ### Model serving
 
-The bundle restores cached Hugging Face model snapshots when the build host had
-them. If the bundle has no `model-cache.tar`, stage the pinned snapshots into
-`HF_CACHE` before serving. Model downloads require network access on the staging
-machine.
+Model weights are omitted by default. `scripts/predownload.sh` needs network and
+does not run on the Spark. Copy the cache from the external drive into the
+`HF_CACHE` path on both nodes. If `model-cache.tar` is present, extract it into
+the cache root on each node, for example:
+
+```bash
+mkdir -p /media/external-drive/huggingface
+tar -xf model-cache.tar -C /media/external-drive/huggingface
+export HF_CACHE=/media/external-drive/huggingface
+```
+
+Follow `rdma-testing/docs/pre-flight-checklist.md` from step 10.
 
 ## Files
 

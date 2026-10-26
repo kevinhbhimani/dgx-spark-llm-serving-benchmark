@@ -2,8 +2,8 @@
 """Plan and verify a complete, publication-ready benchmark campaign.
 
 ``plan`` validates the campaign YAML files and prints the exact model/config
-matrix and expected row count.  ``verify`` additionally validates ``index.csv``
-with the benchmark runner, checks the complete result grid and its artifacts,
+matrix and expected row count. ``verify`` validates ``index.csv`` against the
+shared artifact contract, checks the complete result grid and its artifacts,
 and can seal the campaign with an atomic SHA-256 manifest.
 
 The module is intentionally importable: :func:`plan_campaign` and
@@ -13,9 +13,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
@@ -23,7 +20,6 @@ import os
 from pathlib import Path
 import re
 import sys
-import tempfile
 from types import SimpleNamespace
 from typing import Iterable, Mapping, Sequence
 
@@ -33,12 +29,39 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from campaign_output import (
+    resolve_campaign_dir,
+    resolve_campaign_logs_dir,
+    resolve_campaign_results_dir,
+)
+from bench.config import ExperimentConfig
+from scripts.campaign.manifest import build_manifest, sha256_file, write_json_atomic
+from scripts.campaign.plan import (
+    COMMIT_RE,
+    Campaign,
+    CampaignValidationError,
+    ExpectedPoint,
+    ModelSpec,
+    finite_float,
+    nonnegative_float,
+    nonnegative_integer,
+    positive_float,
+    positive_integer,
+    build_expected_grid,
+    load_campaign,
+    parse_concurrencies,
+    plan_campaign,
+    validate_experiment_yaml,
+    validate_models_yaml,
+)
+from scripts.contracts.dependency_lock import (
+    LockFileError,
+    normalize_distribution_name,
+    parse_lock,
+)
 
 
-ALLOWED_CONFIGS = frozenset({"single", "tp2", "pp2"})
-COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
 DIGEST_RE = re.compile(r"[0-9a-fA-F]{64}")
-SAFE_LABEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_RUN_TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 PROVENANCE_DIGEST_FIELDS = (
@@ -58,468 +81,6 @@ ALLREDUCE_FIELDS = (
     "busbw_GBps",
 )
 ALLREDUCE_SIZES = tuple(1 << exponent for exponent in range(3, 31))
-
-
-class CampaignValidationError(ValueError):
-    """Raised when a campaign cannot be considered complete and valid."""
-
-
-@dataclass(frozen=True)
-class ModelSpec:
-    name: str
-    label: str
-    revision: str
-    configs: tuple[str, ...]
-    max_model_len: int
-    tokenizer: str
-    tokenizer_revision: str
-    quantization: str
-    trust_remote_code: bool
-    gpu_utilization: float
-    max_num_seqs: int | None = None
-
-
-@dataclass(frozen=True)
-class Campaign:
-    models_path: Path
-    experiment_path: Path
-    models: tuple[ModelSpec, ...]
-    experiment: Mapping[str, object]
-    largest_request_tokens: int
-
-
-@dataclass(frozen=True, order=True)
-class ExpectedPoint:
-    model_label: str
-    config_label: str
-    concurrency: int
-    repeat_id: int
-    model: str
-
-    @property
-    def key(self) -> tuple[str, str, int, int]:
-        return (
-            self.model_label,
-            self.config_label,
-            self.concurrency,
-            self.repeat_id,
-        )
-
-
-def _benchmark_module():
-    """Load the project runner lazily so ``plan`` needs only YAML support."""
-    from bench import run_benchmark
-
-    return run_benchmark
-
-
-def _load_mapping(path: str | os.PathLike[str], description: str) -> dict:
-    source = Path(path)
-    try:
-        with source.open(encoding="utf-8") as handle:
-            value = yaml.safe_load(handle)
-    except (OSError, yaml.YAMLError) as exc:
-        raise CampaignValidationError(
-            f"cannot load {description} {source}: {exc}"
-        ) from exc
-    if not isinstance(value, dict):
-        raise CampaignValidationError(
-            f"{description} {source} must contain a YAML mapping"
-        )
-    return value
-
-
-def _nonempty_string(value: object, context: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise CampaignValidationError(f"{context} must be a non-empty string")
-    return value.strip()
-
-
-def _decimal(value: object, context: str) -> Decimal:
-    if isinstance(value, bool):
-        raise CampaignValidationError(f"{context} must be numeric")
-    try:
-        number = Decimal(str(value).strip())
-    except (InvalidOperation, ValueError, AttributeError) as exc:
-        raise CampaignValidationError(f"{context} must be numeric") from exc
-    if not number.is_finite():
-        raise CampaignValidationError(f"{context} must be finite")
-    return number
-
-
-def _positive_integer(value: object, context: str) -> int:
-    number = _decimal(value, context)
-    if number <= 0 or number != number.to_integral_value():
-        raise CampaignValidationError(
-            f"{context} must be a finite positive integer"
-        )
-    return int(number)
-
-
-def _nonnegative_integer(value: object, context: str) -> int:
-    number = _decimal(value, context)
-    if number < 0 or number != number.to_integral_value():
-        raise CampaignValidationError(
-            f"{context} must be a finite non-negative integer"
-        )
-    return int(number)
-
-
-def _finite_float(value: object, context: str) -> float:
-    number = _decimal(value, context)
-    result = float(number)
-    if not math.isfinite(result):
-        raise CampaignValidationError(f"{context} must be finite")
-    return result
-
-
-def _positive_float(value: object, context: str) -> float:
-    result = _finite_float(value, context)
-    if result <= 0:
-        raise CampaignValidationError(f"{context} must be positive")
-    return result
-
-
-def _nonnegative_float(value: object, context: str) -> float:
-    result = _finite_float(value, context)
-    if result < 0:
-        raise CampaignValidationError(f"{context} must be non-negative")
-    return result
-
-
-def _validate_gpu_util(value: object, context: str) -> float:
-    number = _finite_float(value, context)
-    if not 0 < number <= 1:
-        raise CampaignValidationError(f"{context} must satisfy 0 < value <= 1")
-    return number
-
-
-def validate_models_yaml(
-    path: str | os.PathLike[str],
-) -> tuple[ModelSpec, ...]:
-    """Validate the full model matrix and return normalized model specs."""
-    document = _load_mapping(path, "models YAML")
-    raw_models = document.get("models")
-    if not isinstance(raw_models, list) or not raw_models:
-        raise CampaignValidationError(
-            f"models YAML {path} must define a non-empty 'models' list"
-        )
-    run_gpu_utilization = _validate_gpu_util(
-        document.get("gpu_util_default", 0.80),
-        "models YAML gpu_util_default",
-    )
-
-    models: list[ModelSpec] = []
-    seen_labels: set[str] = set()
-    for index, entry in enumerate(raw_models, start=1):
-        context = f"model entry {index}"
-        if not isinstance(entry, dict):
-            raise CampaignValidationError(f"{context} must be a mapping")
-        if "gpu_util" in entry:
-            raise CampaignValidationError(
-                f"{context} sets per-model gpu_util; configure the shared "
-                "run-wide models YAML gpu_util_default instead"
-            )
-
-        name = _nonempty_string(entry.get("name"), f"{context} name")
-        label = _nonempty_string(entry.get("label"), f"{context} label")
-        if not SAFE_LABEL_RE.fullmatch(label):
-            raise CampaignValidationError(
-                f"{context} label {label!r} is unsafe; use only letters, "
-                "digits, '.', '_', and '-', starting with a letter or digit"
-            )
-        if label in seen_labels:
-            raise CampaignValidationError(
-                f"models YAML contains duplicate label {label!r}"
-            )
-        seen_labels.add(label)
-
-        revision = _nonempty_string(
-            entry.get("revision"), f"{context} revision"
-        )
-        if not COMMIT_RE.fullmatch(revision):
-            raise CampaignValidationError(
-                f"{context} revision must be an exact 40-hex commit"
-            )
-
-        raw_configs = entry.get("configs")
-        if not isinstance(raw_configs, list) or not raw_configs:
-            raise CampaignValidationError(
-                f"{context} configs must be a non-empty list"
-            )
-        configs: list[str] = []
-        for raw_config in raw_configs:
-            if not isinstance(raw_config, str) or raw_config not in ALLOWED_CONFIGS:
-                raise CampaignValidationError(
-                    f"{context} has unsupported config {raw_config!r}; allowed "
-                    f"configs are {sorted(ALLOWED_CONFIGS)}"
-                )
-            if raw_config in configs:
-                raise CampaignValidationError(
-                    f"{context} repeats config {raw_config!r}"
-                )
-            configs.append(raw_config)
-
-        max_model_len = _positive_integer(
-            entry.get("max_model_len"), f"{context} max_model_len"
-        )
-
-        gpu_utilization = run_gpu_utilization
-
-        raw_tokenizer = entry.get("tokenizer")
-        tokenizer = (
-            name
-            if raw_tokenizer in (None, "")
-            else _nonempty_string(raw_tokenizer, f"{context} tokenizer")
-        )
-        raw_tokenizer_revision = entry.get("tokenizer_revision")
-        tokenizer_revision = ""
-        if raw_tokenizer_revision not in (None, ""):
-            tokenizer_revision = _nonempty_string(
-                raw_tokenizer_revision, f"{context} tokenizer_revision"
-            )
-            if not COMMIT_RE.fullmatch(tokenizer_revision):
-                raise CampaignValidationError(
-                    f"{context} tokenizer_revision must be an exact "
-                    "40-hex commit"
-                )
-        if tokenizer != name and not tokenizer_revision:
-            raise CampaignValidationError(
-                f"{context} uses tokenizer {tokenizer!r} without a pinned "
-                "tokenizer_revision"
-            )
-        if not tokenizer_revision:
-            tokenizer_revision = revision
-        raw_quantization = entry.get("quant")
-        quantization = (
-            ""
-            if raw_quantization in (None, "")
-            else _nonempty_string(raw_quantization, f"{context} quant")
-        )
-        trust_remote_code = entry.get("trust_remote_code", False)
-        if not isinstance(trust_remote_code, bool):
-            raise CampaignValidationError(
-                f"{context} trust_remote_code must be a boolean"
-            )
-        max_num_seqs = entry.get("max_num_seqs")
-        if "max_num_seqs" in entry and (
-            isinstance(max_num_seqs, bool)
-            or not isinstance(max_num_seqs, int)
-            or max_num_seqs < 1
-        ):
-            raise CampaignValidationError(
-                f"{context} max_num_seqs must be a positive integer"
-            )
-
-        models.append(
-            ModelSpec(
-                name=name,
-                label=label,
-                revision=revision,
-                configs=tuple(configs),
-                max_model_len=max_model_len,
-                tokenizer=tokenizer,
-                tokenizer_revision=tokenizer_revision,
-                quantization=quantization,
-                trust_remote_code=trust_remote_code,
-                gpu_utilization=gpu_utilization,
-                max_num_seqs=max_num_seqs,
-            )
-        )
-    return tuple(models)
-
-
-def validate_experiment_yaml(
-    path: str | os.PathLike[str], models: Sequence[ModelSpec]
-) -> tuple[dict, int]:
-    """Validate workload buckets and ensure every model can hold the largest."""
-    document = _load_mapping(path, "experiment YAML")
-    # Planning must exercise the same configuration parser as measurement.
-    # Otherwise a typo or invalid duration can pass prep and fail only after a
-    # large checkpoint has been downloaded and loaded on both GPUs.
-    from bench.config import ExperimentConfig
-
-    try:
-        config = ExperimentConfig.from_yaml(str(path))
-    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
-        raise CampaignValidationError(
-            f"experiment YAML is not accepted by the benchmark runner: {exc}"
-        ) from exc
-    if config.require_power_data and config.power_backend == "none":
-        raise CampaignValidationError(
-            "experiment requires power data; power_backend cannot be none"
-        )
-    if config.require_vllm_metrics_data and not config.scrape_vllm_metrics:
-        raise CampaignValidationError(
-            "experiment requires vLLM metrics; scraping must be enabled"
-        )
-    raw_buckets = document.get("buckets")
-    if not isinstance(raw_buckets, list) or not raw_buckets:
-        raise CampaignValidationError(
-            f"experiment YAML {path} must define a non-empty 'buckets' list"
-        )
-
-    largest = 0
-    for index, bucket in enumerate(raw_buckets, start=1):
-        context = f"experiment bucket {index}"
-        if not isinstance(bucket, dict):
-            raise CampaignValidationError(f"{context} must be a mapping")
-        input_len = _positive_integer(bucket.get("input_len"), f"{context} input_len")
-        output_len = _positive_integer(
-            bucket.get("output_len"), f"{context} output_len"
-        )
-        if "weight" in bucket:
-            _positive_float(bucket["weight"], f"{context} weight")
-        largest = max(largest, input_len + output_len)
-
-    # A trace replaces the bucket workload in Workload, so its actual maximum
-    # request length must determine the launch context requirement too.
-    if config.trace_path:
-        largest = 0
-        try:
-            with Path(config.trace_path).open(encoding="utf-8") as handle:
-                for line_number, line in enumerate(handle, start=1):
-                    if not line.strip():
-                        continue
-                    context = f"trace {config.trace_path} line {line_number}"
-                    record = json.loads(line)
-                    if not isinstance(record, dict):
-                        raise CampaignValidationError(f"{context} must be a mapping")
-                    input_value = record.get("input_len", 0)
-                    if "prompt" in record and not config.use_token_ids and not input_value:
-                        prompt = record["prompt"]
-                        if not isinstance(prompt, str):
-                            raise CampaignValidationError(
-                                f"{context} prompt must be a string"
-                            )
-                        input_value = len(prompt.split())
-                    input_len = _positive_integer(input_value, f"{context} input_len")
-                    output_len = _positive_integer(
-                        record.get("output_len", record.get("max_tokens", 128)),
-                        f"{context} output_len",
-                    )
-                    largest = max(largest, input_len + output_len)
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise CampaignValidationError(f"cannot load workload trace: {exc}") from exc
-        if not largest:
-            raise CampaignValidationError(f"trace is empty: {config.trace_path}")
-
-    too_small = [
-        f"{model.label} ({model.max_model_len})"
-        for model in models
-        if model.max_model_len < largest
-    ]
-    if too_small:
-        raise CampaignValidationError(
-            f"largest workload request needs {largest} tokens, exceeding "
-            "max_model_len for: " + ", ".join(too_small)
-        )
-    return document, largest
-
-
-def load_campaign(
-    models_path: str | os.PathLike[str] = ROOT / "configs/models.yaml",
-    experiment_path: str | os.PathLike[str] = ROOT / "configs/experiment.yaml",
-) -> Campaign:
-    """Load and globally validate both campaign configuration files."""
-    models_source = Path(models_path)
-    experiment_source = Path(experiment_path)
-    models = validate_models_yaml(models_source)
-    experiment, largest = validate_experiment_yaml(experiment_source, models)
-    return Campaign(
-        models_path=models_source,
-        experiment_path=experiment_source,
-        models=models,
-        experiment=experiment,
-        largest_request_tokens=largest,
-    )
-
-
-def parse_concurrencies(values: Sequence[object] | str) -> tuple[int, ...]:
-    """Parse quoted or unquoted space-separated positive concurrencies."""
-    raw_values: Iterable[object]
-    if isinstance(values, str):
-        raw_values = values.split()
-    else:
-        flattened: list[object] = []
-        for value in values:
-            if isinstance(value, str):
-                flattened.extend(value.split())
-            else:
-                flattened.append(value)
-        raw_values = flattened
-
-    parsed: list[int] = []
-    for value in raw_values:
-        concurrency = _positive_integer(value, "concurrency")
-        if concurrency in parsed:
-            raise CampaignValidationError(
-                f"concurrencies contain duplicate value {concurrency}"
-            )
-        parsed.append(concurrency)
-    if not parsed:
-        raise CampaignValidationError("at least one concurrency is required")
-    return tuple(parsed)
-
-
-def build_expected_grid(
-    models: Sequence[ModelSpec],
-    concurrencies: Sequence[object] | str,
-    repeats: object,
-) -> tuple[ExpectedPoint, ...]:
-    """Return the exact campaign grid in model/config/repeat/load order."""
-    loads = parse_concurrencies(concurrencies)
-    repeat_count = _positive_integer(repeats, "repeats")
-    return tuple(
-        ExpectedPoint(
-            model_label=model.label,
-            config_label=config,
-            concurrency=concurrency,
-            repeat_id=repeat_id,
-            model=model.name,
-        )
-        for model in models
-        for config in model.configs
-        for repeat_id in range(1, repeat_count + 1)
-        for concurrency in loads
-    )
-
-
-def plan_campaign(
-    models_path: str | os.PathLike[str],
-    experiment_path: str | os.PathLike[str],
-    concurrencies: Sequence[object] | str,
-    repeats: object,
-) -> dict:
-    """Validate a campaign and return its JSON-serializable execution plan."""
-    campaign = load_campaign(models_path, experiment_path)
-    loads = parse_concurrencies(concurrencies)
-    repeat_count = _positive_integer(repeats, "repeats")
-    grid = build_expected_grid(campaign.models, loads, repeat_count)
-    matrix = [
-        {
-            "model_label": model.label,
-            "model": model.name,
-            "config_label": config,
-            "concurrencies": list(loads),
-            "repeat_ids": list(range(1, repeat_count + 1)),
-            "expected_count": len(loads) * repeat_count,
-        }
-        for model in campaign.models
-        for config in model.configs
-    ]
-    return {
-        "schema_version": 1,
-        "models_yaml": str(campaign.models_path),
-        "experiment_yaml": str(campaign.experiment_path),
-        "largest_request_tokens": campaign.largest_request_tokens,
-        "model_count": len(campaign.models),
-        "model_config_count": len(matrix),
-        "concurrencies": list(loads),
-        "repeats": repeat_count,
-        "expected_count": len(grid),
-        "matrix": matrix,
-    }
 
 
 def _format_points(points: Iterable[tuple[str, str, int, int]]) -> str:
@@ -542,8 +103,8 @@ def _row_identity(row: Mapping[str, str], row_number: int) -> tuple[str, str, in
     return (
         str(row.get("model_label") or ""),
         str(row.get("config_label") or ""),
-        _positive_integer(row.get("concurrency"), f"index row {row_number} concurrency"),
-        _positive_integer(row.get("repeat_id"), f"index row {row_number} repeat_id"),
+        positive_integer(row.get("concurrency"), f"index row {row_number} concurrency"),
+        positive_integer(row.get("repeat_id"), f"index row {row_number} repeat_id"),
     )
 
 
@@ -569,24 +130,24 @@ def _validate_index_observability(
     row: Mapping[str, str], row_number: int, config: SimpleNamespace
 ) -> None:
     context = f"index row {row_number}"
-    measure_s = _positive_float(row.get("measure_s"), f"{context} measure_s")
+    measure_s = positive_float(row.get("measure_s"), f"{context} measure_s")
     if config.require_power_data:
         expected_nodes = 2 if config.config_label in {"tp2", "pp2"} else 1
-        nodes = _positive_integer(row.get("power_nodes"), f"{context} power_nodes")
+        nodes = positive_integer(row.get("power_nodes"), f"{context} power_nodes")
         if nodes != expected_nodes:
             raise CampaignValidationError(
                 f"{context} has power_nodes={nodes}, expected {expected_nodes}"
             )
         for field in ("mean_power_w", "mean_power_w_head", "energy_per_token_j", "tokens_per_watt"):
-            _positive_float(row.get(field), f"{context} {field}")
+            positive_float(row.get(field), f"{context} {field}")
         power_fields = [("power_samples_head", "power_max_gap_s_head")]
         if expected_nodes == 2:
-            _positive_float(row.get("mean_power_w_worker"), f"{context} mean_power_w_worker")
+            positive_float(row.get("mean_power_w_worker"), f"{context} mean_power_w_worker")
             power_fields.append(("power_samples_worker", "power_max_gap_s_worker"))
         allowed_gap = max(5.0, 10.0 * config.power_interval_ms / 1000.0)
         for count_field, gap_field in power_fields:
-            count = _nonnegative_integer(row.get(count_field), f"{context} {count_field}")
-            gap = _finite_float(row.get(gap_field), f"{context} {gap_field}")
+            count = nonnegative_integer(row.get(count_field), f"{context} {count_field}")
+            gap = finite_float(row.get(gap_field), f"{context} {gap_field}")
             if count < 2:
                 raise CampaignValidationError(f"{context} {count_field} must be at least 2")
             if gap < 0 or gap > allowed_gap:
@@ -602,20 +163,20 @@ def _validate_index_observability(
             "server_prompt_tokens",
             "num_preemptions",
         ):
-            value = _finite_float(row.get(field), f"{context} {field}")
+            value = finite_float(row.get(field), f"{context} {field}")
             if value < 0:
                 raise CampaignValidationError(f"{context} {field} must be non-negative")
-        _positive_float(row.get("server_generation_tokens"), f"{context} server_generation_tokens")
+        positive_float(row.get("server_generation_tokens"), f"{context} server_generation_tokens")
         minimum_span = max(0.0, measure_s - 5.0)
         for prefix in ("server_metric", "kv_metric"):
-            samples = _nonnegative_integer(
+            samples = nonnegative_integer(
                 row.get(f"{prefix}_samples"), f"{context} {prefix}_samples"
             )
-            span = _finite_float(
+            span = finite_float(
                 row.get(f"{prefix}_sample_span_s"),
                 f"{context} {prefix}_sample_span_s",
             )
-            gap = _finite_float(
+            gap = finite_float(
                 row.get(f"{prefix}_max_gap_s"),
                 f"{context} {prefix}_max_gap_s",
             )
@@ -645,7 +206,7 @@ def _require_nonempty_file(path: Path, description: str) -> Path:
     return path
 
 
-def _load_json_object_strict(path: Path, description: str) -> dict:
+def _load_json_object_strict(path: Path, description: str) -> dict[str, object]:
     """Load one JSON object while rejecting duplicate keys at every level."""
     _require_nonempty_file(path, description)
     if path.is_symlink():
@@ -653,8 +214,8 @@ def _load_json_object_strict(path: Path, description: str) -> dict:
             f"{description} must not be a symlink: {path}"
         )
 
-    def reject_duplicates(pairs):
-        result = {}
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
         for key, value in pairs:
             if key in result:
                 raise ValueError(f"duplicate JSON key {key!r}")
@@ -676,56 +237,37 @@ def _load_json_object_strict(path: Path, description: str) -> dict:
     return value
 
 
-def _normalize_distribution_name(name: str) -> str:
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
 def _locked_distributions_from_file(path: Path) -> list[dict[str, str]]:
-    """Parse the repository lock using the same exact-pin contract as prep."""
-    result: list[dict[str, str]] = []
-    seen: set[str] = set()
-    pin_re = re.compile(
-        r"(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
-        r"==(?P<version>[A-Za-z0-9][A-Za-z0-9._+!-]*)"
-    )
-    for line_number, raw in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = pin_re.fullmatch(line)
-        if match is None:
-            raise CampaignValidationError(
-                f"{path}:{line_number} is not an exact name==version pin"
+    """Convert shared exact pins to the prep manifest's record format."""
+    try:
+        return [pin.as_dict() for pin in parse_lock(path)]
+    except LockFileError as exc:
+        if exc.code == "invalid_pin":
+            message = f"{path}:{exc.line_number} is not an exact name==version pin"
+        elif exc.code == "duplicate":
+            message = (
+                f"{path}:{exc.line_number} repeats distribution "
+                f"{exc.normalized_name!r}"
             )
-        name = match.group("name")
-        normalized = _normalize_distribution_name(name)
-        if normalized in seen:
-            raise CampaignValidationError(
-                f"{path}:{line_number} repeats distribution {normalized!r}"
-            )
-        seen.add(normalized)
-        result.append({
-            "name": name,
-            "normalized_name": normalized,
-            "version": match.group("version"),
-        })
-    if not result:
-        raise CampaignValidationError(f"dependency lock has no pins: {path}")
-    return result
+        elif exc.code == "empty":
+            message = f"dependency lock has no pins: {path}"
+        elif isinstance(exc.__cause__, (OSError, UnicodeDecodeError)):
+            raise exc.__cause__
+        else:
+            message = str(exc)
+        raise CampaignValidationError(message) from exc
 
 
-def _validate_client_environment_manifest(
-    path: Path, benchmark
-) -> dict:
+def _validate_client_environment_manifest(path: Path) -> dict[str, object]:
     """Prove the prep manifest, current runtime, lock, and row hash agree."""
+    from bench import provenance
+
     manifest = _load_json_object_strict(path, "client environment manifest")
     if manifest.get("schema_version") != 1:
         raise CampaignValidationError(
             "client environment manifest schema_version must be 1"
         )
-    current = benchmark.client_environment()
+    current = provenance.client_environment()
     python_info = manifest.get("python")
     platform_info = manifest.get("platform")
     virtual = manifest.get("virtual_environment")
@@ -800,7 +342,7 @@ def _validate_client_environment_manifest(
             raise CampaignValidationError(
                 f"installed distribution {index} has empty fields"
             )
-        if normalized != _normalize_distribution_name(name):
+        if normalized != normalize_distribution_name(name):
             raise CampaignValidationError(
                 f"installed distribution {name!r} has wrong normalized_name"
             )
@@ -899,7 +441,7 @@ def _indexed_artifact(
         raise CampaignValidationError(
             f"index row {row_number} has invalid {digest_field}"
         )
-    expected_bytes = _nonnegative_integer(
+    expected_bytes = nonnegative_integer(
         row.get(bytes_field), f"index row {row_number} {bytes_field}"
     )
     path = _require_nonempty_file(out_dir / raw_path, f"{kind} artifact")
@@ -940,9 +482,11 @@ def _validate_serving_policy(
     point: ExpectedPoint,
     model: ModelSpec,
     row_number: int,
-    benchmark,
     out_dir: Path,
-) -> dict:
+) -> dict[str, object]:
+    """Check an indexed serving policy against its model and index row."""
+    from bench.release_contracts import load_serving_policy
+
     context = f"serving policy for index row {row_number}"
     policy_config = SimpleNamespace(
         require_provenance=True,
@@ -956,7 +500,7 @@ def _validate_serving_policy(
         trust_remote_code=model.trust_remote_code,
     )
     try:
-        policy, artifact = benchmark._load_serving_policy(str(path), policy_config)
+        policy, artifact = load_serving_policy(str(path), policy_config)
     except RuntimeError as exc:
         raise CampaignValidationError(f"{context}: {exc}") from exc
     if policy is None or artifact is None:
@@ -965,7 +509,7 @@ def _validate_serving_policy(
         expected = row.get(f"serving_policy_{field}")
         actual = artifact.get(field)
         if field == "bytes":
-            expected = _nonnegative_integer(expected, f"{context} bytes")
+            expected = nonnegative_integer(expected, f"{context} bytes")
         if str(actual) != str(expected):
             raise CampaignValidationError(
                 f"{context} metadata {field} does not match index.csv"
@@ -981,7 +525,7 @@ def _validate_serving_policy(
             raise CampaignValidationError(
                 f"{context} has {field}={policy.get(field)!r}, expected {expected!r}"
             )
-    policy_max_len = _positive_integer(
+    policy_max_len = positive_integer(
         policy.get("max_model_len"), f"{context} max_model_len"
     )
     if policy_max_len != model.max_model_len:
@@ -989,7 +533,7 @@ def _validate_serving_policy(
             f"{context} has max_model_len={policy_max_len}, expected "
             f"{model.max_model_len} from models.yaml"
         )
-    policy_gpu_util = _positive_float(
+    policy_gpu_util = positive_float(
         policy.get("gpu_util"), f"{context} gpu_util"
     )
     if not math.isclose(
@@ -1001,7 +545,7 @@ def _validate_serving_policy(
         )
     policy_max_num_seqs = policy.get("max_num_seqs")
     if model.max_num_seqs is not None:
-        if _positive_integer(policy_max_num_seqs, f"{context} max_num_seqs") != model.max_num_seqs:
+        if positive_integer(policy_max_num_seqs, f"{context} max_num_seqs") != model.max_num_seqs:
             raise CampaignValidationError(
                 f"{context} max_num_seqs does not match models.yaml"
             )
@@ -1027,8 +571,8 @@ def _validate_serving_policy(
                 f"expected {expected!r} from its serving policy"
             )
     parallel = {"single": (1, 1), "tp2": (2, 1), "pp2": (1, 2)}[point.config_label]
-    tensor = _positive_integer(row.get("tensor_parallel_size"), f"{context} TP")
-    pipeline = _positive_integer(row.get("pipeline_parallel_size"), f"{context} PP")
+    tensor = positive_integer(row.get("tensor_parallel_size"), f"{context} TP")
+    pipeline = positive_integer(row.get("pipeline_parallel_size"), f"{context} PP")
     if (tensor, pipeline) != parallel:
         raise CampaignValidationError(
             f"{context} has TP/PP={(tensor, pipeline)}, expected {parallel}"
@@ -1042,11 +586,17 @@ def _validate_summary(
     point: ExpectedPoint,
     model: ModelSpec,
     row_number: int,
-    benchmark,
-    base_config,
-    out_dir: Path,
+    base_config: ExperimentConfig,
+    logs_dir: Path,
     serving_policy: Mapping[str, object],
 ) -> Path:
+    """Cross-check a summary with its row, policy, and release gates."""
+    from bench.release_contracts import (
+        validate_observability,
+        validate_provenance,
+        validate_result_quality,
+    )
+
     context = f"summary for index row {row_number}"
     for field in ("model_label", "model", "config_label"):
         expected = {
@@ -1062,7 +612,7 @@ def _validate_summary(
         ("concurrency", point.concurrency),
         ("repeat_id", point.repeat_id),
     ):
-        actual = _positive_integer(summary.get(field), f"{context} {field}")
+        actual = positive_integer(summary.get(field), f"{context} {field}")
         if actual != expected:
             raise CampaignValidationError(
                 f"{context} has {field}={actual}, expected {expected}"
@@ -1126,7 +676,7 @@ def _validate_summary(
     server_info = summary.get("server_info")
     if not isinstance(server_info, dict):
         raise CampaignValidationError(f"{context} is missing server_info")
-    live_max_len = _positive_integer(
+    live_max_len = positive_integer(
         server_info.get("max_model_len"), f"{context} live max_model_len"
     )
     if live_max_len != model.max_model_len:
@@ -1134,7 +684,7 @@ def _validate_summary(
             f"{context} live max_model_len={live_max_len}, expected "
             f"{model.max_model_len}"
         )
-    live_gpu_util = _positive_float(
+    live_gpu_util = positive_float(
         server_info.get("gpu_memory_utilization"),
         f"{context} live gpu_memory_utilization",
     )
@@ -1159,7 +709,9 @@ def _validate_summary(
         raise CampaignValidationError(
             f"{context} has invalid server_log={server_log_value!r}"
         )
-    server_log = _require_nonempty_file(out_dir / server_log_name, "server log artifact")
+    server_log = _require_nonempty_file(
+        logs_dir / server_log_name, "server log artifact"
+    )
 
     provenance_config = SimpleNamespace(
         require_provenance=True,
@@ -1171,7 +723,7 @@ def _validate_summary(
         deployment_fingerprint=raw_config.get("deployment_fingerprint"),
     )
     try:
-        benchmark._validate_provenance(provenance_config)
+        validate_provenance(provenance_config)
     except RuntimeError as exc:
         raise CampaignValidationError(f"{context}: {exc}") from exc
 
@@ -1184,12 +736,12 @@ def _validate_summary(
         config_label=point.config_label,
     )
     try:
-        benchmark._validate_observability(summary, monitor_config)
+        validate_observability(summary, monitor_config)
     except RuntimeError as exc:
         raise CampaignValidationError(f"{context}: {exc}") from exc
     _validate_index_observability(row, row_number, monitor_config)
     try:
-        benchmark._validate_result_quality(summary, base_config)
+        validate_result_quality(summary, base_config)
     except RuntimeError as exc:
         raise CampaignValidationError(f"{context}: {exc}") from exc
     return server_log
@@ -1211,7 +763,7 @@ def validate_allreduce_csv(path: str | os.PathLike[str]) -> None:
         )
     try:
         sizes = [
-            _positive_integer(row.get("bytes"), f"{source} bytes")
+            positive_integer(row.get("bytes"), f"{source} bytes")
             for row in rows
         ]
         for row_number, row in enumerate(rows, start=2):
@@ -1224,11 +776,11 @@ def validate_allreduce_csv(path: str | os.PathLike[str]) -> None:
             # The real 1 GiB busbw floor is enforced by ray_allreduce_bench.sh
             # before the artifact is ever written.
             for field in ("avg_s", "min_s"):
-                _positive_float(
+                positive_float(
                     row.get(field), f"{source} row {row_number} {field}"
                 )
             for field in ("algbw_GBps", "busbw_GBps"):
-                _nonnegative_float(
+                nonnegative_float(
                     row.get(field), f"{source} row {row_number} {field}"
                 )
             if float(row["min_s"]) > float(row["avg_s"]):
@@ -1269,94 +821,6 @@ def _expected_allreduce_fingerprint(
     return hashlib.sha256(serialized).hexdigest()
 
 
-def sha256_file(path: str | os.PathLike[str]) -> str:
-    """Return a streaming SHA-256 digest for an artifact."""
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _artifact_record(path: Path, out_dir: Path) -> dict:
-    resolved = path.resolve()
-    try:
-        display_path = resolved.relative_to(out_dir.resolve()).as_posix()
-    except ValueError:
-        try:
-            display_path = resolved.relative_to(ROOT.resolve()).as_posix()
-        except ValueError:
-            display_path = str(resolved)
-    return {
-        "path": display_path,
-        "bytes": path.stat().st_size,
-        "sha256": sha256_file(path),
-    }
-
-
-def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        try:
-            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        except (AttributeError, OSError):
-            directory_fd = None
-        if directory_fd is not None:
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def _build_manifest(
-    *,
-    campaign: Campaign,
-    out_dir: Path,
-    concurrencies: tuple[int, ...],
-    repeats: int,
-    expected_count: int,
-    artifacts: Mapping[str, Sequence[Path]],
-    completed_only: bool = False,
-    skipped_combos: Sequence[str] = (),
-    allow_source_match_commits: bool = False,
-    harness_git_commits: Sequence[str] = (),
-) -> dict:
-    return {
-        "schema_version": 1,
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "campaign": {
-            "models_yaml": str(campaign.models_path),
-            "experiment_yaml": str(campaign.experiment_path),
-            "concurrencies": list(concurrencies),
-            "repeats": repeats,
-            "expected_count": expected_count,
-            "completed_only": completed_only,
-            "skipped_combos": list(skipped_combos),
-            "allow_source_match_commits": allow_source_match_commits,
-            "harness_git_commits": list(harness_git_commits),
-        },
-        "artifacts": {
-            kind: [
-                _artifact_record(path, out_dir)
-                for path in sorted(set(paths), key=lambda item: str(item))
-            ]
-            for kind, paths in artifacts.items()
-        },
-    }
-
-
 def verify_campaign(
     models_path: str | os.PathLike[str],
     experiment_path: str | os.PathLike[str],
@@ -1366,7 +830,7 @@ def verify_campaign(
     manifest_path: str | os.PathLike[str] | None = None,
     completed_only: bool = False,
     allow_source_match_commits: bool = False,
-) -> dict:
+) -> dict[str, object]:
     """Verify an exact finished campaign and optionally write its manifest.
 
     With ``completed_only``, restrict the expected grid to the
@@ -1384,15 +848,17 @@ def verify_campaign(
     """
     campaign = load_campaign(models_path, experiment_path)
     loads = parse_concurrencies(concurrencies)
-    repeat_count = _positive_integer(repeats, "repeats")
+    repeat_count = positive_integer(repeats, "repeats")
     grid = build_expected_grid(campaign.models, loads, repeat_count)
     expected = {point.key: point for point in grid}
-    output = Path(out_dir)
+    campaign_root = Path(out_dir).expanduser().resolve()
+    output = resolve_campaign_results_dir(campaign_root)
+    logs_directory = resolve_campaign_logs_dir(campaign_root)
     index_path = _require_nonempty_file(output / "index.csv", "index artifact")
 
-    benchmark = _benchmark_module()
+    from bench import artifacts, provenance
     try:
-        benchmark.validate_index_schema(str(output))
+        artifacts.validate_index_schema(str(output))
     except RuntimeError as exc:
         raise CampaignValidationError(str(exc)) from exc
 
@@ -1448,19 +914,19 @@ def verify_campaign(
         )
 
     try:
-        expected_config_sha = benchmark.config_file_fingerprint(
+        expected_config_sha = provenance.config_file_fingerprint(
             str(campaign.experiment_path)
         )
-        base_config = benchmark.ExperimentConfig.from_yaml(
+        base_config = ExperimentConfig.from_yaml(
             str(campaign.experiment_path)
         )
     except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
         raise CampaignValidationError(
             f"experiment YAML is not accepted by the benchmark runner: {exc}"
         ) from exc
-    current_source = benchmark._source_fingerprint()
-    current_environment = benchmark.client_environment_fingerprint()
-    current_commit = benchmark._git_commit()
+    current_source = provenance.source_fingerprint()
+    current_environment = provenance.client_environment_fingerprint()
+    current_commit = provenance.git_commit()
     if not COMMIT_RE.fullmatch(str(current_commit or "")):
         raise CampaignValidationError(
             "current benchmark source has no recoverable Git commit"
@@ -1469,7 +935,7 @@ def verify_campaign(
     environment_path = _require_nonempty_file(
         output / "client_environment.json", "client environment manifest"
     )
-    _validate_client_environment_manifest(environment_path, benchmark)
+    _validate_client_environment_manifest(environment_path)
 
     model_by_label = {model.label: model for model in campaign.models}
     consistent_global: dict[str, str] = {}
@@ -1494,7 +960,7 @@ def verify_campaign(
             raise CampaignValidationError(
                 f"{context} has model={row.get('model')!r}, expected {point.model!r}"
             )
-        row_repeat_count = _positive_integer(
+        row_repeat_count = positive_integer(
             row.get("repeat_count"), f"{context} repeat_count"
         )
         if not point.repeat_id <= row_repeat_count <= repeat_count:
@@ -1506,11 +972,11 @@ def verify_campaign(
             raise CampaignValidationError(
                 f"{context} expected_concurrencies does not equal {loads}"
             )
-        failed = _nonnegative_integer(row.get("requests_failed"), f"{context} requests_failed")
-        completed = _nonnegative_integer(
+        failed = nonnegative_integer(row.get("requests_failed"), f"{context} requests_failed")
+        completed = nonnegative_integer(
             row.get("requests_completed"), f"{context} requests_completed"
         )
-        tokens = _nonnegative_integer(
+        tokens = nonnegative_integer(
             row.get("total_output_tokens"), f"{context} total_output_tokens"
         )
         if failed:
@@ -1520,9 +986,9 @@ def verify_campaign(
         if tokens == 0:
             raise CampaignValidationError(f"{context} records zero output tokens")
 
-        if row.get("methodology_version") != benchmark.METHODOLOGY_VERSION:
+        if row.get("methodology_version") != provenance.METHODOLOGY_VERSION:
             raise CampaignValidationError(
-                f"{context} methodology_version is not {benchmark.METHODOLOGY_VERSION!r}"
+                f"{context} methodology_version is not {provenance.METHODOLOGY_VERSION!r}"
             )
         for field in PROVENANCE_DIGEST_FIELDS:
             value = _require_digest(row, field, row_number)
@@ -1622,7 +1088,6 @@ def verify_campaign(
             point,
             model_by_label[point.model_label],
             row_number,
-            benchmark,
             output,
         )
         expected_scope = (
@@ -1686,9 +1151,8 @@ def verify_campaign(
             point,
             model_by_label[point.model_label],
             row_number,
-            benchmark,
             base_config,
-            output,
+            logs_directory,
             serving_policy,
         )
         launch_identity = (point.model_label, point.config_label, point.repeat_id)
@@ -1723,7 +1187,7 @@ def verify_campaign(
             dual_runtime, dual_policy
         )
         matching_allreduce = sorted(
-            output.glob(f"allreduce_ray_{allreduce_id}_*.csv")
+        output.glob(f"allreduce_ray_{allreduce_id}_*.csv")
         )
         allreduce_errors: list[str] = []
         for candidate in matching_allreduce:
@@ -1758,7 +1222,7 @@ def verify_campaign(
         if path.is_file()
     ]
     source_paths = list((ROOT / "bench").glob("*.py"))
-    source_paths += list((ROOT / "scripts").glob("*.py"))
+    source_paths += list((ROOT / "scripts").rglob("*.py"))
     source_paths += list((ROOT / "scripts").glob("*.sh"))
     source_paths += list((ROOT / "plotting").glob("*.py"))
     environment_paths = [environment_path]
@@ -1774,8 +1238,8 @@ def verify_campaign(
         log
         for csv_path in valid_allreduce
         for log in (
-            csv_path.with_name(f"{csv_path.stem}_raw.log"),
-            csv_path.with_name(f"{csv_path.stem}_nccl.log"),
+            logs_directory / f"{csv_path.stem}_raw.log",
+            logs_directory / f"{csv_path.stem}_nccl.log",
         )
         if log.is_file()
     )
@@ -1791,8 +1255,8 @@ def verify_campaign(
         "allreduce_log": allreduce_logs,
         "interconnect_extra": sorted(output.glob("interconnect_extra_*.csv")),
         "interconnect_log": sorted(
-            list(output.glob("interconnect_extra_*_raw.log"))
-            + list(output.glob("interconnect_extra_*_nccl.log"))
+            list(logs_directory.glob("interconnect_extra_*_raw.log"))
+            + list(logs_directory.glob("interconnect_extra_*_nccl.log"))
         ),
         "config": config_paths,
         "lock": lock_paths,
@@ -1811,9 +1275,9 @@ def verify_campaign(
             raise CampaignValidationError(
                 f"manifest path {destination} would overwrite a campaign artifact"
             )
-        manifest = _build_manifest(
+        manifest = build_manifest(
             campaign=campaign,
-            out_dir=output,
+            out_dir=campaign_root,
             concurrencies=loads,
             repeats=repeat_count,
             expected_count=len(expected),
@@ -1823,7 +1287,7 @@ def verify_campaign(
             allow_source_match_commits=allow_source_match_commits,
             harness_git_commits=sorted(commit_values),
         )
-        _write_json_atomic(destination, manifest)
+        write_json_atomic(destination, manifest)
         manifest_written = str(destination)
 
     return {
@@ -1885,7 +1349,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument(
         "--out-dir",
         default=None,
-        help="result directory (default: experiment YAML out_dir or 'results')",
+        help="result directory (default: OUT_DIR or results/benchmark-<UTC-date>)",
     )
     verify_parser.add_argument(
         "--manifest",
@@ -1925,10 +1389,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         else:
             if args.out_dir is None:
-                experiment = _load_mapping(args.experiment_path, "experiment YAML")
-                out_dir = str(experiment.get("out_dir") or "results")
+                out_dir = str(resolve_campaign_dir(os.environ.get("OUT_DIR")))
             else:
-                out_dir = args.out_dir
+                out_dir = str(resolve_campaign_dir(args.out_dir))
+            if args.manifest:
+                manifest_path = Path(args.manifest).expanduser()
+                if not manifest_path.is_absolute():
+                    manifest_path = (
+                        resolve_campaign_results_dir(out_dir) / manifest_path
+                    )
+                args.manifest = str(manifest_path.resolve())
             result = verify_campaign(
                 args.models_path,
                 args.experiment_path,

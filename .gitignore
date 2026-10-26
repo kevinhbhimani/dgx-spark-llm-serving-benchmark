@@ -242,7 +242,7 @@ server_*.log
 /archive/
 
 # Scratch figures from manual plot_results.py/plot_trends.py runs (default --out).
-# Campaign figures live under a results dir (e.g. results/figs) and are not ignored.
+# Campaign figures live under a campaign results directory and are not ignored.
 /figs/
 points-120b.txt
 points-safe.txt

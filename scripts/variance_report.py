@@ -20,10 +20,9 @@ over the whole index rather than over hand-picked points. It reports:
    baselines/pmbs26-tcp): whether each baseline value falls inside the range
    these replicates produced.
 
-    python3 scripts/variance_report.py --index results/index.csv
-    python3 scripts/variance_report.py --index results/index.csv \
-        --md results/figs/stats/replicate_stats.md \
-        --tex results/figs/stats/replicate_stats.tex
+    python3 scripts/variance_report.py --index results/benchmark-2026-10-22
+    python3 scripts/variance_report.py --index results/benchmark-2026-10-22 \
+        --md figs/stats/replicate_stats.md --tex figs/stats/replicate_stats.tex
 """
 from __future__ import annotations
 import argparse
@@ -31,8 +30,14 @@ import itertools
 import math
 import re
 import sys
+from pathlib import Path
 
 import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from campaign_output import resolve_campaign_output_path, resolve_index_path
 
 # (index column, human label, unit, scale-to-unit, TeX name fragment)
 METRICS = [
@@ -433,7 +438,7 @@ def _write_paper_table(path: str, stats: list[dict]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--index", default="results/index.csv")
+    ap.add_argument("--index", help="campaign directory or index.csv path")
     ap.add_argument("--md", help="also write a markdown report to this path")
     ap.add_argument("--tex", help="also write LaTeX macros to this path")
     ap.add_argument("--paper-table",
@@ -441,6 +446,14 @@ def main() -> int:
                          "to this path")
     ap.add_argument("--baseline", help="single-repeat baseline index to cross-check")
     args = ap.parse_args()
+    index_path = resolve_index_path(args.index)
+    args.index = str(index_path)
+    for field in ("md", "tex", "paper_table"):
+        value = getattr(args, field)
+        if value:
+            setattr(args, field, str(resolve_campaign_output_path(value, index_path)))
+    if args.baseline:
+        args.baseline = str(resolve_index_path(args.baseline))
 
     try:
         df = pd.read_csv(args.index)

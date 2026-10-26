@@ -17,6 +17,7 @@ figure, not as headline numbers.
 """
 from __future__ import annotations
 import math
+from typing import Any
 import numpy as np
 
 
@@ -38,6 +39,73 @@ def _tokens_in_window(records, window_start, window_end):
         times = getattr(r, "token_times", None) or []
         total += sum(1 for t in times if window_start <= t < window_end)
     return total
+
+
+def temperature_summary(
+    head_sampler: Any,
+    worker_sampler: Any | None,
+    window_start: float,
+    window_end: float,
+    *,
+    expected_nodes: int,
+    head_node_ip: str | None = None,
+    worker_node_ip: str | None = None,
+    worker_ray_node_id: str | None = None,
+) -> dict[str, Any]:
+    """Summarize per-node GPU temperatures for the request window."""
+    def node_summary(sampler: Any | None, role: str, node_ip: str | None,
+                     ray_node_id: str | None = None) -> dict[str, Any]:
+        identity = {"role": role, "node_ip": node_ip}
+        if ray_node_id:
+            identity["ray_node_id"] = ray_node_id
+        if sampler is None:
+            return {
+                **identity,
+                "source": None,
+                "scope": "gpu",
+                "units": "C",
+                "status": "not_configured",
+                "mean_c": None,
+                "max_c": None,
+                "sample_count": 0,
+                "max_gap_s": None,
+                "gpus": [],
+            }
+        summarize = getattr(sampler, "temperature_summary", None)
+        if summarize is None:
+            values = {
+                "source": None,
+                "scope": "gpu",
+                "units": "C",
+                "status": "unsupported_sampler",
+                "mean_c": None,
+                "max_c": None,
+                "sample_count": 0,
+                "max_gap_s": None,
+                "gpus": [],
+            }
+        else:
+            values = summarize(window_start, window_end)
+        return {**identity, **values}
+
+    nodes = {
+        "head": node_summary(head_sampler, "head", head_node_ip),
+        "worker": node_summary(
+            worker_sampler, "worker", worker_node_ip, worker_ray_node_id
+        ),
+    }
+    sampled_nodes = sum(node["status"] == "sampled" for node in nodes.values())
+    return {
+        "schema_version": 1,
+        "scope": "gpu",
+        "units": "C",
+        "window_start_perf": window_start,
+        "window_end_perf": window_end,
+        "expected_nodes": expected_nodes,
+        "sampled_nodes": sampled_nodes,
+        "complete": sampled_nodes == expected_nodes,
+        "nodes": nodes,
+    }
 
 
 def aggregate(records, cfg, window_start, window_end, power=None, vmetrics=None,

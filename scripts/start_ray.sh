@@ -19,6 +19,12 @@ source "$HERE/connectx_env.sh"
 
 ROLE="${1:-head}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+acquire_resource_lock || exit 1
+if [[ "$ROLE" == "stop" ]]; then
+  wait_for_resources_idle auto serving || exit 1
+else
+  wait_for_resources_idle auto || exit 1
+fi
 
 maybe_drop_caches() {
   if [[ "${DROP_CACHES:-0}" == "1" ]]; then
@@ -51,10 +57,13 @@ docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --
   -e NCCL_SOCKET_NTHREADS="${NCCL_SOCKET_NTHREADS:-1}"
   -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE"
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1
+  -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub
+  -e HF_MODULES_CACHE=/hf-cache/modules
+  -e HF_CACHE_UID="$HF_CACHE_UID" -e HF_CACHE_GID="$HF_CACHE_GID"
   -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS"
   -e BENCH_VLLM_IMAGE="$VLLM_IMAGE" -e BENCH_RAY_VERSION="$RAY_VERSION"
   --entrypoint /bin/bash
-  -v "$HF_CACHE":/root/.cache/huggingface
+  -v "$HF_CACHE":/hf-cache
   -v "$RAY_CONSTRAINTS":/tmp/ray-runtime-constraints.txt:ro )
 if [[ -d /dev/infiniband ]]; then
   docker_common+=( --device=/dev/infiniband )
@@ -104,11 +113,13 @@ case "$ROLE" in
       echo "[ray] RDMA requires the host /dev/infiniband device directory" >&2
       exit 1
     fi
+    check_hf_cache_access
+    check_hf_cache_access_in_image
     echo "[ray] head on $HEAD_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$HEAD_IP" "$VLLM_IMAGE" \
-      -lc "$RAY_SETUP && ray start --head --node-ip-address=$HEAD_IP --port=$RAY_PORT --block"
+      -lc "$RAY_SETUP && umask 0002 && ray start --head --node-ip-address=$HEAD_IP --port=$RAY_PORT --block"
     ;;
   worker)
     require_local_connectx_ip "$HOEDUS_IP" "Ray worker role" || exit 1
@@ -117,11 +128,13 @@ case "$ROLE" in
       echo "[ray] RDMA requires the host /dev/infiniband device directory" >&2
       exit 1
     fi
+    check_hf_cache_access
+    check_hf_cache_access_in_image
     echo "[ray] worker $HOEDUS_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$HOEDUS_IP" "$VLLM_IMAGE" \
-      -lc "$RAY_SETUP && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$HOEDUS_IP --block"
+      -lc "$RAY_SETUP && umask 0002 && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$HOEDUS_IP --block"
     ;;
   stop)
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
