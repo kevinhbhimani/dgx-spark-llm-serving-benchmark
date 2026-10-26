@@ -337,7 +337,8 @@ def fig_parallelism_scaling(df, out, fmts):
     questions without crowded, rotated bar labels: whether TP/PP beat one
     Spark, how much PP beats TP, and whether the second node changes energy per
     token at one matched concurrency. Throughput ratios compare each
-    configuration's maximum exact token-in-window throughput for c <= 128.
+    configuration's maximum exact token-in-window throughput over the swept
+    concurrencies.
     Energy selects the concurrency maximizing the single-Spark strict goodput
     and compares every placement at that same c.
     """
@@ -456,8 +457,9 @@ def fig_parallelism_scaling(df, out, fmts):
     axt.set_xlabel("Dual / single maximum")
     tp_speed = [v[0] for v in speed.values() if pd.notna(v[0])]
     pp_speed = [v[1] for v in speed.values() if pd.notna(v[1])]
+    c_max = pd.to_numeric(df["concurrency"], errors="coerce").max()
     axt.set_title(
-        "(a) Maximum measured, $c\\leq128$\n"
+        f"(a) Maximum measured, $c\\leq{c_max:.0f}$\n"
         f"median TP={np.median(tp_speed):.2f}×, "
         f"PP={np.median(pp_speed):.2f}×",
         fontsize=8,

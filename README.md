@@ -63,8 +63,8 @@ PLAN_ONLY=1 scripts/run_job.sh
 Plan mode performs no hardware operations. It checks the isolated environment,
 campaign options, model/config matrix, revisions, workload bounds, and expected
 result rectangle. The shipped matrix is 19 checkpoints in 53 model/config
-curves times 8 concurrencies times `REPEATS=3` independent replicates: 159
-server launches and 1272 measurement windows (see
+curves times 6 concurrencies (1 4 8 16 32 64) times `REPEATS=3` independent
+replicates: 159 server launches and 954 measurement windows (see
 [Replicates and statistics](#replicates-and-statistics)).
 
 Before running a Docker-backed model command, confirm that each participating
@@ -136,7 +136,7 @@ checking connectivity and output files, not for paper-quality measurements.
 ```bash
 export MODEL_LABELS=llama3.1-8b
 CANARY_ONLY=1 scripts/run_models.sh single
-CONCURRENCIES="1 2 4 8 16 32 64 128" REPEATS=1 \
+CONCURRENCIES="1 4 8 16 32 64" REPEATS=1 \
 scripts/run_models.sh single
 MODEL_LABELS=llama3.1-8b scripts/purge_model_cache.sh
 ```
@@ -407,7 +407,7 @@ scripts keep the explicit per-model values selected by `run_models.sh`.
 Defaults in `.env` may still use shell parameter expansion, for example:
 
 ```bash
-export CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
+export CONCURRENCIES="${CONCURRENCIES:-1 4 8 16 32 64}"
 ```
 
 Set `ENV_FILE=/path/to/another.env` to load a different environment file for a
@@ -458,7 +458,7 @@ export BASE_URL=http://127.0.0.1:8000
 # Optional. Set the complete campaign output path, such as:
 # export OUT_DIR=results/rdma-v4-paper-2026-10-22
 export CONFIG_YAML=configs/experiment.yaml
-export CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
+export CONCURRENCIES="${CONCURRENCIES:-1 4 8 16 32 64}"
 export REPEATS="${REPEATS:-3}"
 # unset defers to the YAML's power_backend; an override must still satisfy
 # require_power_data (the full config therefore cannot use "none")
@@ -563,7 +563,7 @@ python -m bench.run_benchmark \
 Run the provenance-complete full closed-loop sweep through the model wrapper:
 
 ```bash
-CONCURRENCIES="1 2 4 8 16 32 64 128" \
+CONCURRENCIES="1 4 8 16 32 64" \
 scripts/run_models.sh single
 ```
 
@@ -655,7 +655,7 @@ CANARY_ONLY=1 scripts/run_models.sh tp2
 5. Run the provenance-complete tensor-parallel sweep:
 
 ```bash
-CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh tp2
+CONCURRENCIES="1 4 8 16 32 64" scripts/run_models.sh tp2
 ```
 
 6. For pipeline parallel serving, keep the Ray cluster running, canary it, then
@@ -663,7 +663,7 @@ CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh tp2
 
 ```bash
 CANARY_ONLY=1 scripts/run_models.sh pp2
-CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh pp2
+CONCURRENCIES="1 4 8 16 32 64" scripts/run_models.sh pp2
 ```
 
 7. Stop the Ray container on each node when finished:
@@ -778,7 +778,7 @@ CANARY_ONLY=1 scripts/run_models.sh single
 CANARY_ONLY=1 MODEL_LABELS='llama3.3-70b-fp8' scripts/run_models.sh single
 
 # Single-node models (no Ray). Launches and removes a container per model.
-CONCURRENCIES="1 2 4 8 16 32 64 128" scripts/run_models.sh single
+CONCURRENCIES="1 4 8 16 32 64" scripts/run_models.sh single
 
 # Dual-node models. Start Ray on both nodes first; run_models.sh then cycles
 # only the vLLM serve process between models and leaves the Ray cluster up.
@@ -858,13 +858,15 @@ PLAN_ONLY=1 scripts/run_job.sh
 ```
 
 The default plan reports 19 model groups, 159 server launches (53
-model/config curves x 3 replicates), and 1272 measurement windows (x 8
-concurrencies). At the configured 750 s minimum per window that is ~265
-sequential hours before automatic extensions; with the extensions seen in the
-baselines (~4 min mean per window) expect ~346 h of measurement (about 14.5
-days), plus ~13 h of model launches, plus downloads. Of the 1272 windows, 912
-use two GB10s, so the campaign is at least ~455 GB10-hours of accelerator use;
-this is not "265 GPU-hours." Then start Ray on Diya and Hoedus and run this on
+model/config curves x 3 replicates), and 954 measurement windows (x 6
+concurrencies: 1 4 8 16 32 64). At the configured 750 s minimum per window
+that is ~198 sequential hours before automatic extensions; with the
+extensions seen in the baselines (~3 min mean per window at these
+concurrencies) expect ~247 h of measurement, plus ~17 h of model launches,
+~9 h for the canary pass, and ~3 h of downloads: ~279 h (about 11.6 days),
+or ~312 h (13 days) with pessimistic latencies. Of the 954 windows, 684 use
+two GB10s, so the campaign is at least ~341 GB10-hours of accelerator use;
+this is not "198 GPU-hours." Then start Ray on Diya and Hoedus and run this on
 Diya inside `tmux`, using the same `OUT_DIR`. `scripts/connectx_env.sh` already
 defaults to the dual-cable RDMA layout with NCCL transport logging:
 
@@ -943,7 +945,7 @@ python scripts/validate_campaign.py verify \
   --models configs/models.yaml \
   --experiment configs/experiment.yaml \
   --out-dir "$OUT_DIR" \
-  --concurrencies 1 2 4 8 16 32 64 128 \
+  --concurrencies 1 4 8 16 32 64 \
   --repeats 3 \
   --manifest "$OUT_DIR/results/campaign_manifest.json"
 ```
@@ -990,7 +992,7 @@ model.
 An optional model-matrix `max_num_seqs` sets and fingerprints vLLM's server
 scheduler limit consistently across that checkpoint's configs. Nemotron 3
 Super NVFP4 uses `4` for the pinned image's documented Spark constraint.
-Client concurrency still ranges up to 128, so requests above the server limit
+Client concurrency still ranges up to 64, so requests above the server limit
 queue. State this policy when comparing its curves with other checkpoints;
 see the [readiness runbook](docs/rdma-readiness.md).
 
@@ -1113,7 +1115,7 @@ NCCL_IB_DISABLE=1 ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8 ALLREDUCE_MAX_8B_LATENCY_S=0.0
   CAMPAIGN_CONFIGS="tp2 pp2" scripts/run_job.sh
 ```
 
-That subset is 12 launches and 96 windows (~1.5 days). Finalization runs with
+That subset is 12 launches and 72 windows (about 1 day). Finalization runs with
 `--completed-only` for subsets.
 
 ## Workloads And Traces

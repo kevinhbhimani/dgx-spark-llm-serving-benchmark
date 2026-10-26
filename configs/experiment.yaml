@@ -55,11 +55,12 @@ warmup_s: 120.0
 #     request finishes, so a longer minimum adds wall time without changing
 #     what is measured.
 # Minimum per point: 3 x (120 + 600 + 30) = 2250s, versus 1 x 1800s before
-# (+25%). With the automatic extensions seen in the baselines (~4 min mean per
-# window), expect ~49 min per point versus ~34 min. For the 53-curve matrix
-# (424 points, 1272 windows, 159 launches) that is ~265 h minimum and ~346 h
-# expected, plus launches and downloads; 912 of the windows use two GB10s.
-# measure_s: 300 brings it to ~240 h at the price of noisier p99 at mid load.
+# (+25%). With the automatic extensions seen in the baselines (~3 min mean per
+# window at concurrencies 1 4 8 16 32 64), expect ~46 min per point versus
+# ~34 min. For the 53-curve matrix (318 points, 954 windows, 159 launches)
+# that is ~198 h minimum and ~247 h expected, plus launches, downloads, and
+# canaries (~279 h in total); 684 of the windows use two GB10s.
+# measure_s: 300 brings it to ~172 h at the price of noisier p99 at mid load.
 measure_s: 600.0
 min_window_requests: 20
 window_extension_step_s: 60.0
