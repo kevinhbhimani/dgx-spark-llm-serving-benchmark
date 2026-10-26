@@ -47,7 +47,6 @@ def is_gitignored(repo_root: Path, path: Path) -> bool:
     result = subprocess.run(
         [
             "git",
-            "--literal-pathspecs",
             "check-ignore",
             "--quiet",
             "--",
