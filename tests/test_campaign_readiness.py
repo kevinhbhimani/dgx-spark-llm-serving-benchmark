@@ -55,6 +55,48 @@ class PlanningReadinessTests(unittest.TestCase):
                     self.plan()
                 self.configuration = original
 
+    def test_gpu_util_override_changes_expected_and_launch_value(self) -> None:
+        with mock.patch.dict(os.environ, {"GPU_UTIL": "0.85"}):
+            plan = self.plan()
+            self.assertEqual(plan["gpu_utilization"], 0.85)
+            self.assertEqual(plan["matrix"][0]["gpu_utilization"], 0.85)
+            self.assertEqual(
+                validator.validate_models_yaml(self.models)[0].gpu_utilization,
+                0.85,
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/models_for_config.py",
+                    str(self.models),
+                    "single",
+                ],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            )
+        self.assertEqual(result.stdout.strip().split("|")[4], "0.85")
+
+    def test_gpu_util_override_rejects_out_of_range_and_non_finite_values(self) -> None:
+        self.models.write_text(yaml.safe_dump({"models": [self.model]}))
+        for value in ("0", "1.1", "nan", "inf", "invalid"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"GPU_UTIL": value}
+            ):
+                with self.assertRaisesRegex(
+                    validator.CampaignValidationError, "GPU_UTIL"
+                ):
+                    validator.validate_models_yaml(self.models)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/models_for_config.py",
+                        str(self.models),
+                        "single",
+                    ],
+                    cwd=ROOT, text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("GPU_UTIL", result.stderr)
+
     def test_trace_context_limit_uses_requests_instead_of_bucket_maximum(self):
         self.configuration["trace_path"] = "trace.jsonl"
         trace = self.root / "trace.jsonl"
@@ -139,8 +181,8 @@ class MicrobenchArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(validator.CampaignValidationError, "differs from expected"):
                 microbench.validate_interconnect_csv(path, "roce")
 
-    def _reuse(self, kind, *, matching=True, transport="roce"):
-        function = "allreduce_once" if kind == "allreduce" else "sendrecv_once"
+    def _exercise_gate(self, kind, *, matching=True, transport="roce"):
+        function = "allreduce_preflight" if kind == "allreduce" else "sendrecv_once"
         source = (ROOT / "scripts/run_job.sh").read_text()
         body = source.split(f"{function}() {{", 1)[1].split("\n}\n", 1)[0]
         with tempfile.TemporaryDirectory() as temporary:
@@ -153,8 +195,9 @@ class MicrobenchArtifactTests(unittest.TestCase):
             wrapper = scripts / name
             wrapper.write_text('#!/bin/bash\nif [[ "${1:-}" == "--fingerprint-only" ]]; then echo identity; else echo RERUN; fi\n')
             wrapper.chmod(0o755)
-            out = work / "results"
-            out.mkdir()
+            campaign = work / "campaign"
+            out = campaign / "results"
+            out.mkdir(parents=True)
             artifact_id = "identity" if matching else "old-identity"
             if kind == "allreduce":
                 artifact = out / f"allreduce_ray_{artifact_id}_fixture.csv"
@@ -167,7 +210,10 @@ class MicrobenchArtifactTests(unittest.TestCase):
             else:
                 self.write_interconnect(out / f"interconnect_extra_{artifact_id}_fixture.csv", transport=transport)
             environment = os.environ.copy()
-            environment.update(OUT_DIR=str(out), PYTHON=sys.executable, NCCL_IB_DISABLE="0")
+            environment.update(
+                OUT_DIR=str(campaign), CAMPAIGN_RESULTS_DIR=str(out),
+                PYTHON=sys.executable, NCCL_IB_DISABLE="0",
+            )
             result = subprocess.run(
                 ["bash", "-c", f"log() {{ :; }}\n{function}() {{{body}\n}}\n{function}"],
                 cwd=work, env=environment, text=True, capture_output=True, check=False,
@@ -175,13 +221,15 @@ class MicrobenchArtifactTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             return result.stdout
 
-    def test_reuse_preserves_valid_small_transfer_rounding(self):
-        self.assertNotIn("RERUN", self._reuse("allreduce"))
-        self.assertNotIn("RERUN", self._reuse("interconnect"))
+    def test_allreduce_preflight_always_runs_with_matching_saved_artifact(self):
+        self.assertIn("RERUN", self._exercise_gate("allreduce"))
+
+    def test_interconnect_reuse_preserves_valid_small_transfer_rounding(self):
+        self.assertNotIn("RERUN", self._exercise_gate("interconnect"))
 
     def test_stale_or_wrong_transport_interconnect_artifact_is_not_reused(self):
-        self.assertIn("RERUN", self._reuse("interconnect", matching=False))
-        self.assertIn("RERUN", self._reuse("interconnect", transport="tcp"))
+        self.assertIn("RERUN", self._exercise_gate("interconnect", matching=False))
+        self.assertIn("RERUN", self._exercise_gate("interconnect", transport="tcp"))
 
 
 class ReplicateLaunchTests(unittest.TestCase):
@@ -193,6 +241,7 @@ class ReplicateLaunchTests(unittest.TestCase):
         environment.update(
             REPEATS="3", ONLY_REPEAT="", STATUS_ONLY="0", CANARY_ONLY="0",
             STATUS_MISSING="0", CONFIG="single", OUT_DIR="results",
+            CAMPAIGN_RESULTS_DIR="results/results",
             LAST_SERVER_LOG="",
         )
         environment.update(overrides)
@@ -211,6 +260,61 @@ class ReplicateLaunchTests(unittest.TestCase):
     def test_status_and_canary_are_not_repeated(self):
         self.assertEqual(self._launch_ids(STATUS_ONLY="1"), ["LAUNCH= LIMIT=4"])
         self.assertEqual(self._launch_ids(CANARY_ONLY="1"), ["LAUNCH= LIMIT=4"])
+
+
+class StartupStallWatchdogTests(unittest.TestCase):
+    HEARTBEAT = (
+        "(EngineCore pid=1) INFO [shm_broadcast.py:801] No available shared "
+        "memory broadcast block found in 60 seconds."
+    )
+
+    def _wait_ready(self, appended_line, **overrides):
+        """Run run_models.sh's wait_ready with a server that never becomes
+        ready and appends one line to its log per poll."""
+        source = (ROOT / "scripts/run_models.sh").read_text()
+        start = source.index("STARTUP_HEARTBEAT_PATTERN=")
+        end = source.index("\n}\n", source.index("wait_ready() {", start)) + 3
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "server.log"
+            log.write_text("[launch] pp2\nAutotuning process ends\n")
+            environment = os.environ.copy()
+            environment.update(
+                READY_TIMEOUT="60", READY_STALL_TIMEOUT="20", LAUNCH_PID="",
+                LOG=str(log), LINE=appended_line,
+            )
+            environment.update(overrides)
+            script = (
+                "set -uo pipefail\n"
+                "sleep() { :; }\n"
+                'polls=0\n'
+                'server_ready() { polls=$((polls + 1)); '
+                'printf "%s\\n" "${LINE//@@/$polls}" >> "$LOG"; return 1; }\n'
+                "server_contract() { return 0; }\n"
+                + source[start:end]
+                + 'wait_ready model "$LOG"\n'
+            )
+            return subprocess.run(
+                ["bash", "-c", script], cwd=ROOT, env=environment,
+                text=True, capture_output=True, check=False,
+            )
+
+    def test_engine_heartbeats_alone_are_reported_as_a_hang(self):
+        result = self._wait_ready(self.HEARTBEAT)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("treating the launch as hung", result.stderr)
+        self.assertIn("Autotuning process ends", result.stderr)
+        self.assertNotIn("timed out after", result.stderr)
+
+    def test_new_worker_output_keeps_waiting_until_ready_timeout(self):
+        result = self._wait_ready("loading shard @@")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("timed out after 60s", result.stderr)
+        self.assertNotIn("treating the launch as hung", result.stderr)
+
+    def test_zero_disables_the_stall_watchdog(self):
+        result = self._wait_ready(self.HEARTBEAT, READY_STALL_TIMEOUT="0")
+        self.assertIn("timed out after 60s", result.stderr)
+        self.assertNotIn("treating the launch as hung", result.stderr)
 
 
 if __name__ == "__main__":

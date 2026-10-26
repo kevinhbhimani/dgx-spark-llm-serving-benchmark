@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from scripts import check_environment
+from scripts.contracts import dependency_lock
 
 
 AUDITED_LOCK = """\
@@ -62,6 +63,17 @@ yarl==1.25.1
 
 
 class LockFileTests(unittest.TestCase):
+    def test_environment_checker_reexports_shared_lock_contract(self):
+        self.assertIs(check_environment.LockFileError, dependency_lock.LockFileError)
+        self.assertIs(
+            check_environment.LockedDistribution, dependency_lock.LockedDistribution
+        )
+        self.assertIs(
+            check_environment.normalize_distribution_name,
+            dependency_lock.normalize_distribution_name,
+        )
+        self.assertIs(check_environment.parse_lock, dependency_lock.parse_lock)
+
     def test_repository_lock_is_the_exact_audited_closure(self):
         lock = Path(__file__).resolve().parents[1] / "requirements.lock"
 
@@ -84,6 +96,47 @@ class LockFileTests(unittest.TestCase):
                     lock.write_text(content, encoding="utf-8")
                     with self.assertRaises(check_environment.LockFileError):
                         check_environment.parse_lock(lock)
+
+    def test_shared_parser_reports_structured_errors_without_changing_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = Path(temporary) / "requirements.lock"
+            for content, code, line_number, normalized_name, message in (
+                (
+                    "example>=1\n", "invalid_pin", 1, None,
+                    f"{lock}:1: expected exactly name==version",
+                ),
+                (
+                    "Foo_Bar==1\nfoo-bar==1\n", "duplicate", 2, "foo-bar",
+                    f"{lock}:2: duplicate distribution 'foo-bar' "
+                    "(first pinned on line 1)",
+                ),
+                (
+                    "# comment\n", "empty", None, None,
+                    f"lock file contains no exact pins: {lock}",
+                ),
+            ):
+                with self.subTest(code=code):
+                    lock.write_text(content, encoding="utf-8")
+                    with self.assertRaises(check_environment.LockFileError) as raised:
+                        check_environment.parse_lock(lock)
+                    error = raised.exception
+                    self.assertEqual(str(error), message)
+                    self.assertEqual(error.code, code)
+                    self.assertEqual(error.line_number, line_number)
+                    self.assertEqual(error.normalized_name, normalized_name)
+
+    def test_direct_script_help_imports_shared_parser(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [sys.executable, "scripts/check_environment.py", "--help"],
+            check=False,
+            capture_output=True,
+            cwd=repository_root,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--lock", completed.stdout)
 
 
 class RuntimeIsolationTests(unittest.TestCase):

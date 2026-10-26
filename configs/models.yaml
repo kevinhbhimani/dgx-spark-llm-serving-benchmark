@@ -16,9 +16,8 @@
 #   revision      exact 40-hex HF commit (required).
 #   max_model_len passed to vLLM --max-model-len; must be >= the largest
 #                 input_len + output_len in the workload (8192 + 512).
-#   gpu_util      optional --gpu-memory-utilization (launcher default 0.80).
-#                 Keep it IDENTICAL across a model's configs, or the KV budget
-#                 confounds the single/tp2/pp2 comparison.
+#   gpu_util      not allowed; every model and serving config uses the single
+#                 run-wide gpu_util_default below.
 #   quant         optional --quantization for on-the-fly quantization. Leave
 #                 unset for pre-quantized checkpoints (ModelOpt FP8/NVFP4,
 #                 Qwen FP8, MXFP4): vLLM auto-detects the method.
@@ -35,7 +34,8 @@
 #
 # Every revision below was pinned on 2026-10-15. Weight sizes are the exact
 # download sizes of the pinned snapshot (excluding original/ and metal/
-# duplicates). "single" appears only where weights + KV fit one GB10 at 0.80.
+# duplicates). "single" appears only where weights + KV fit one GB10 at the
+# configured gpu_util_default.
 #
 # KV-cache precision is NOT uniform along the precision ladders, and the paper
 # must say so: NVIDIA ModelOpt checkpoints (all *-NVFP4, nvidia/*-FP8) ship an
@@ -48,6 +48,14 @@
 # Lightning). The image in scripts/connectx_env.sh was therefore moved from NGC
 # 26.04 (vLLM 0.19.0) to 26.09 (vLLM 0.29.0). Run the canary pass before the
 # campaign; it launches every entry under every config it lists.
+
+# One run-wide memory budget shared by every model and serving config.
+# At 0.80, the campaign targets 102.4 GB of a nominal 128 GB per node.
+# The launcher checks this fraction of each node's detected MemTotal and passes
+# it to vLLM. vLLM applies --gpu-memory-utilization per instance, so reserve
+# each node and run one serving instance per node at a time.
+# Set GPU_UTIL to override the shared target for planning, validation, and launch.
+gpu_util_default: 0.80
 
 models:
   # ---- 1. Llama 3.1 8B precision ladder: dense, full attention ----------------
@@ -153,7 +161,7 @@ models:
 
   # ---- 7. gpt-oss-120b: MoE, alternating sliding-window attention, MXFP4 -----
   # Native MXFP4 checkpoint. The repo also carries original/ and metal/ copies
-  # (195.8 GB total); predownload.sh skips both.
+  # (195.8 GB total); the snapshot acquisition command skips both.
   - name: openai/gpt-oss-120b                         # 65.3 GB
     label: gpt-oss-120b
     revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a

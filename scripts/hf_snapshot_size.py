@@ -25,6 +25,8 @@ import re
 import sys
 import urllib.request
 
+from failure_diagnostics import redact_diagnostic
+
 # Keep in sync with the snapshot_download() call in predownload.sh. original/
 # and metal/ hold duplicate PyTorch/Metal copies of the same weights (vLLM
 # serves the top-level safetensors).
@@ -91,8 +93,13 @@ def main(argv: list[str]) -> int:
         try:
             files = snapshot_files(repo, revision, token)
         except Exception as exc:  # network, HTTP, or malformed metadata
-            print(f"[size] FAILED {repo}@{revision}: {type(exc).__name__}: {exc}",
-                  file=sys.stderr)
+            detail = redact_diagnostic(str(exc), (token,))
+            print(
+                f"[size] FAILED {repo}@{revision}: {type(exc).__name__}: "
+                f"{detail}; cache={hf_cache / 'hub'}; check repository access, "
+                "revision, network, and cache permissions",
+                file=sys.stderr,
+            )
             return 1
         full = sum(item["size"] for item in files)
         have = cached_bytes(hf_cache, repo, files)

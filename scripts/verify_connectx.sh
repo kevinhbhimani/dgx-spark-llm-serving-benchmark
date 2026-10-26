@@ -10,12 +10,16 @@ echo "[verify] names must resolve to their configured ConnectX IPv4 addresses"
 for spec in "$DIYA_HOST=$DIYA_IP" "$HOEDUS_HOST=$HOEDUS_IP"; do
   host="${spec%%=*}" expected="${spec#*=}"
   resolved="$(getent ahostsv4 "$host" | awk '{print $1}' | sort -u)"
-  if [[ "$resolved" != "$expected" ]]; then
-    echo "[verify] $host resolved to '${resolved:-nothing}', expected $expected" >&2
-    echo "[verify] map this rendezvous name only to its primary ConnectX IP; remove secondary or campus aliases" >&2
+  addresses_for_check="$resolved"
+  if [[ "$host" == "$DIYA_HOST" ]]; then
+    addresses_for_check="$(awk '$1 !~ /^127\./' <<< "$resolved" | sort -u)"
+  fi
+  if [[ "$addresses_for_check" != "$expected" ]]; then
+    echo "[verify] $host resolved to '${resolved:-nothing}' (non-loopback: '${addresses_for_check:-nothing}'), expected $expected" >&2
+    echo "[verify] map this rendezvous name to its primary ConnectX IP; remove secondary or campus aliases" >&2
     exit 1
   fi
-  echo "[verify] $host -> $resolved"
+  echo "[verify] $host -> $addresses_for_check"
 done
 
 echo "[verify] route to Hoedus"

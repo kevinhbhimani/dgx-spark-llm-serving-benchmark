@@ -11,11 +11,12 @@
 #   REVISION        pinned Hugging Face commit for model files.
 #   TOKENIZER_REVISION pinned commit for tokenizer files (defaults to REVISION).
 #   TRUST_REMOTE_CODE  non-empty adds --trust-remote-code (models with custom code).
-#   GPU_UTIL        override --gpu-memory-utilization (default 0.80 for every
-#                   config). One uniform value so single vs tp2/pp2 comparisons
-#                   hold the KV budget policy constant; 0.80 is the highest that
-#                   clears the two-node preflight and Ray's node memory monitor
-#                   on Grace unified memory (see README troubleshooting).
+#   GPU_UTIL        shared --gpu-memory-utilization target. Campaigns default
+#                   to models.yaml gpu_util_default (0.80) and pass this
+#                   environment override through planning and serving. The
+#                   preflight checks the same fraction of each node's MemTotal.
+#                   vLLM applies this limit per instance, so reserve each node
+#                   and run one serving instance per node at a time.
 #   MAX_NUM_SEQS    optional positive scheduler sequence limit. A model-specific
 #                   value applies consistently to single, tp2, and pp2.
 #   PREFIX_CACHING  1 re-enables vLLM prefix caching. Default off: the synthetic
@@ -28,11 +29,17 @@
 #   TORCHINDUCTOR_AUTOGRAD_CACHE  defaults to 0. The pinned torch build can
 #                   crash while serializing AOT graphs for on-the-fly FP8;
 #                   disabling only that disk cache leaves compilation enabled.
+#   FLASHINFER_AUTOTUNE  0 (default) passes --no-enable-flashinfer-autotune in
+#                   every mode; 1 keeps vLLM's default (autotune on). vLLM
+#                   0.29.0 averages autotune timings over the world group, so
+#                   pp2 deadlocks at startup when its two stages tune different
+#                   kernels (vllm#57197, fixed in 0.32.0). One value for all
+#                   configs keeps single/tp2/pp2 kernel selection comparable.
 #   HF_HUB_OFFLINE  1 (default) serves purely from the local HF cache. The worker
 #                   node (Hoedus) has no DNS to huggingface.co, so an online launch
 #                   burns minutes on doomed metadata retries before falling back to
 #                   cache. Set HF_HUB_OFFLINE=0 only to pull a not-yet-cached model
-#                   (predownload it first with scripts/predownload.sh).
+#                   (acquire it first with scripts/predownload.sh).
 #   SINGLE_CONTAINER  where `single` runs. "standalone" (default) starts its own
 #                   container named $VLLM_CONTAINER, which replaces a running Ray
 #                   head. "ray" execs the TP=1 PP=1 server into the running Ray
@@ -47,6 +54,7 @@ CONFIG="${1:-single}"          # single, tp2, pp2
 MODEL="${MODEL:-Qwen/Qwen3-8B}"
 REVISION="${REVISION:-}"
 PORT="${PORT:-8000}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:$PORT}"
 # The benchmark client always runs on the head, so the API listens on loopback
 # only; HOST=0.0.0.0 exposes it for a remote client.
 HOST="${HOST:-127.0.0.1}"
@@ -68,9 +76,28 @@ if [[ -n "$MAX_NUM_SEQS" && ! "$MAX_NUM_SEQS" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 GPU_UTIL="${GPU_UTIL:-0.80}"
+if ! python3 - "$GPU_UTIL" <<'PY'
+import math
+import sys
+
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if math.isfinite(value) and 0 < value <= 1 else 1)
+PY
+then
+  echo "[launch] GPU_UTIL must satisfy 0 < value <= 1" >&2
+  exit 2
+fi
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+FLASHINFER_AUTOTUNE="${FLASHINFER_AUTOTUNE:-0}"
+case "$FLASHINFER_AUTOTUNE" in 0|1) ;; *)
+  echo "[launch] FLASHINFER_AUTOTUNE must be 0 or 1, got '$FLASHINFER_AUTOTUNE'" >&2
+  exit 2 ;;
+esac
 SINGLE_CONTAINER="${SINGLE_CONTAINER:-standalone}"
 case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
   echo "[launch] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
@@ -80,10 +107,11 @@ esac
 # Serve from the local HF cache by default; the worker node cannot reach
 # huggingface.co, so online metadata lookups only add slow, failing retries.
 HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
-hf_offline_env=()
-if [[ "$HF_HUB_OFFLINE" == "1" ]]; then
-  hf_offline_env=( -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 )
-fi
+hf_cache_env=( -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub
+  -e HF_MODULES_CACHE=/hf-cache/modules
+  -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" )
+hf_offline_env=( -e HF_HUB_OFFLINE="$HF_HUB_OFFLINE"
+  -e TRANSFORMERS_OFFLINE="$HF_HUB_OFFLINE" )
 container_dns_args=()
 if [[ -n "$CONTAINER_DNS" ]]; then
   container_dns_args=( --dns "$CONTAINER_DNS" )
@@ -101,6 +129,9 @@ common=( --host "$HOST" --port "$PORT" --dtype "$DTYPE"
 if [[ "$PREFIX_CACHING" != "1" ]]; then
   common+=( --no-enable-prefix-caching )
 fi
+if [[ "$FLASHINFER_AUTOTUNE" != "1" ]]; then
+  common+=( --no-enable-flashinfer-autotune )
+fi
 if [[ -n "$QUANT" ]]; then common+=( --quantization "$QUANT" ); fi
 if [[ -n "$MAX_NUM_SEQS" ]]; then common+=( --max-num-seqs "$MAX_NUM_SEQS" ); fi
 if [[ -n "$TOKENIZER" ]]; then common+=( --tokenizer "$TOKENIZER" ); fi
@@ -111,7 +142,66 @@ fi
 if [[ -n "$TRUST_REMOTE_CODE" ]]; then common+=( --trust-remote-code ); fi
 
 require_local_connectx_ip "$HEAD_IP" "serving head role" || exit 1
+acquire_resource_lock || exit 1
+if [[ "$CONFIG" == "single" ]]; then
+  wait_for_resources_idle auto || exit 1
+else
+  wait_for_resources_idle required || exit 1
+fi
 echo "[launch] $CONFIG  model=$MODEL  image=$VLLM_IMAGE  iface=$CX_IFACE  head=$HEAD_IP"
+
+# A direct launcher holds the shared lock through startup, then releases it
+# once the API is ready so a separate benchmark client can use the server. A
+# caller such as run_models.sh already owns the lock and keeps it through the
+# full experiment.
+run_server_command() {
+  if [[ "${RESOURCE_LOCK_INHERITED:-0}" == "1" ]]; then
+    "$@"
+    return $?
+  fi
+
+  local timeout="${LAUNCH_READY_TIMEOUT:-${READY_TIMEOUT:-1800}}"
+  local waited=0 server_pid=0 server_status=0
+  if [[ ! "$timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[launch] LAUNCH_READY_TIMEOUT must be a positive integer" >&2
+    return 2
+  fi
+  "$@" &
+  server_pid=$!
+  echo "[launch] waiting for $BASE_URL/v1/models before releasing the resource lock"
+  while (( waited < timeout )); do
+    if curl -sf --max-time 1 "$BASE_URL/v1/models" >/dev/null 2>&1; then
+      flock -u "$CAMPAIGN_LOCK_FD"
+      export CAMPAIGN_LOCK_HELD=0
+      echo "[launch] API ready; released the resource lock for benchmark clients"
+      wait "$server_pid" || server_status=$?
+      return "$server_status"
+    fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      wait "$server_pid" || server_status=$?
+      if (( server_status == 0 )); then
+        echo "[launch] server command exited before the API became ready" >&2
+        return 1
+      fi
+      return "$server_status"
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+
+  echo "[launch] timed out after ${timeout}s waiting for the API; stopping the launch" >&2
+  if [[ "$CONFIG" == "single" && "$SINGLE_CONTAINER" == "standalone" ]]; then
+    docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
+  else
+    docker exec "$VLLM_CONTAINER" pkill -f "vllm serve" >/dev/null 2>&1 || true
+  fi
+  kill -TERM "$server_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+  local worker_scope=auto
+  [[ "$CONFIG" != "single" ]] && worker_scope=required
+  wait_for_resources_idle "$worker_scope" serving || true
+  return 1
+}
 
 # Optionally flush stale page cache before large model loads.
 # Stale cache causes false OOM on Grace unified memory; requires sudo.
@@ -173,6 +263,8 @@ PY
 _check_cluster_cache() {
   echo "[launch] preflight: pinned model snapshot on both Ray nodes"
   docker exec -i \
+    "${hf_cache_env[@]}" \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
     -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
     -e MODEL="$MODEL" -e REVISION="$REVISION" \
     -e TOKENIZER="$TOKENIZER" -e TOKENIZER_REVISION="$TOKENIZER_REVISION" \
@@ -186,8 +278,12 @@ ray.init(address="auto", log_to_driver=False)
 def validate(repo, revision, require_weights):
     from pathlib import Path
     from huggingface_hub import snapshot_download
-    path = Path(snapshot_download(repo, revision=revision or None,
-                                  local_files_only=True))
+    path = Path(snapshot_download(
+        repo, revision=revision or None, local_files_only=True,
+        ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"],
+    ))
+    if revision and path.name != revision:
+        raise RuntimeError(f"resolved snapshot is {path.name}, expected {revision}")
     broken = [str(p.relative_to(path)) for p in path.rglob("*")
               if p.is_symlink() and not p.exists()]
     partial = list((path.parents[1] / "blobs").glob("*.incomplete"))
@@ -289,7 +385,8 @@ PY
 # remains, fail rather than creating memory pressure across the shared node.
 _check_cluster_memory() {
   echo "[launch] preflight: free memory on all Ray nodes vs GPU_UTIL=$GPU_UTIL"
-  if ! docker exec -i -e GPU_UTIL="$GPU_UTIL" "$VLLM_CONTAINER" python3 -u - <<'PY'
+  if ! docker exec -i "${hf_cache_env[@]}" -e GPU_UTIL="$GPU_UTIL" \
+    "$VLLM_CONTAINER" python3 -u - <<'PY'
 import os, sys
 import ray
 
@@ -307,7 +404,8 @@ def meminfo():
 def reclaim_cache(need):
     # Drop only clean checkpoint pages. Never allocate against the node just to
     # force general cache eviction: doing so can swap unrelated user processes.
-    for root, _dirs, files in os.walk("/root/.cache/huggingface"):
+    cache_root = os.environ.get("HF_HUB_CACHE", "/hf-cache/hub")
+    for root, _dirs, files in os.walk(cache_root):
         for name in files:
             path = os.path.join(root, name)
             if os.path.islink(path):
@@ -364,17 +462,23 @@ MSG
 
 case "$CONFIG" in
   single)
+    check_hf_cache_access
+    check_hf_cache_access_in_image
     if [[ "$SINGLE_CONTAINER" == "ray" ]]; then
       # Same image, mounts, and offline policy as the dual configs. With
       # TP=PP=1 vLLM uses its in-process executor and never touches Ray.
       echo "[launch] single node TP=1 PP=1 inside the Ray head container $VLLM_CONTAINER"
       _require_ray_head
       _check_local_memory
-      docker exec "${hf_offline_env[@]}" \
+      if [[ "$HF_HUB_OFFLINE" != "1" && -n "${HF_TOKEN:-}" ]]; then
+        hf_offline_env+=( -e HF_TOKEN )
+      fi
+      run_server_command docker exec --user "$HF_CACHE_UID:$HF_CACHE_GID" -e HOME=/tmp \
+        "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
         -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
-        "$VLLM_CONTAINER" \
-        vllm serve "$MODEL" "${common[@]}" \
-        --tensor-parallel-size 1 --pipeline-parallel-size 1
+        "$VLLM_CONTAINER" /bin/bash -lc \
+        'umask 0002; exec vllm serve "$@"' -- \
+        "$MODEL" "${common[@]}" --tensor-parallel-size 1 --pipeline-parallel-size 1
       exit $?
     fi
     echo "[launch] single node TP=1 PP=1, standalone container"
@@ -395,19 +499,22 @@ case "$CONFIG" in
     # (scripts/run_models.sh). Single mode does not use the Ray container, so
     # reusing $VLLM_CONTAINER here is safe; clear any stale one first.
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
-    docker run --rm --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host \
+    run_server_command docker run --rm --name "$VLLM_CONTAINER" --user "$HF_CACHE_UID:$HF_CACHE_GID" \
+      --gpus all --network host --ipc=host \
       "${container_dns_args[@]}" \
-      "${run_env[@]}" "${hf_offline_env[@]}" -v "$HF_CACHE":/root/.cache/huggingface \
-      "$VLLM_IMAGE" \
-      vllm serve "$MODEL" "${common[@]}" \
-      --tensor-parallel-size 1 --pipeline-parallel-size 1
+      -e HOME=/tmp -v "$HF_CACHE":/hf-cache \
+      "${run_env[@]}" "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
+      "$VLLM_IMAGE" /bin/bash -lc \
+      'umask 0002; exec vllm serve "$@"' -- \
+      "$MODEL" "${common[@]}" --tensor-parallel-size 1 --pipeline-parallel-size 1
     ;;
   tp2)
     echo "[launch] dual node tensor parallel TP=2 PP=1 over Ray in $VLLM_CONTAINER"
     _require_ray
     _check_cluster_cache
     _check_cluster_memory
-    docker exec "${hf_offline_env[@]}" \
+    run_server_command docker exec "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
+      -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
       -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
       "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \
@@ -419,7 +526,7 @@ case "$CONFIG" in
     _require_ray
     _check_cluster_cache
     _check_cluster_memory
-    docker exec "${hf_offline_env[@]}" \
+    run_server_command docker exec "${hf_cache_env[@]}" "${hf_offline_env[@]}" \
       -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" \
       "$VLLM_CONTAINER" \
       vllm serve "$MODEL" "${common[@]}" \
