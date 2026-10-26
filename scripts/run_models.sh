@@ -96,7 +96,10 @@ REPEATS="${REPEATS:-3}"
 READY_TIMEOUT="${READY_TIMEOUT:-1800}"
 READY_STALL_TIMEOUT="${READY_STALL_TIMEOUT:-900}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-600}"
+<<<<<<< HEAD
+=======
 FLASHINFER_AUTOTUNE="${FLASHINFER_AUTOTUNE:-0}"
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 CANARY_ONLY="${CANARY_ONLY:-0}"
 MODEL_LABELS="${MODEL_LABELS:-}"
 ONLY_REPEAT="${ONLY_REPEAT:-}"
@@ -109,7 +112,11 @@ case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
   echo "[models] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
   exit 1 ;;
 esac
+<<<<<<< HEAD
+for flag_name in SKIP_DONE CANARY_ONLY STATUS_ONLY RUN_JOB_CACHE_READY; do
+=======
 for flag_name in SKIP_DONE CANARY_ONLY STATUS_ONLY RUN_JOB_CACHE_READY FLASHINFER_AUTOTUNE; do
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
   flag_value="${!flag_name}"
   if [[ "$flag_value" != "0" && "$flag_value" != "1" ]]; then
     echo "[models] $flag_name must be 0 or 1, got '$flag_value'" >&2
@@ -982,7 +989,11 @@ run_one() {
   LAUNCH_PID=$!
 
   LAST_FAILURE_STAGE="readiness-canary"
+<<<<<<< HEAD
+  if ! wait_ready "$name"; then
+=======
   if ! wait_ready "$name" "$log"; then
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
     echo "[models] skipping $label; see $log" >&2
     cleanup_server || return 1
     return 1
