@@ -34,13 +34,9 @@ COMPILE_CACHE = os.path.join(
 )
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*")
 # Command-line fragments of processes that may hold model files open.
-<<<<<<< HEAD
-BUSY_MARKERS = ("vllm serve", "RayWorkerWrapper", "EngineCore")
-=======
 # Ray worker actors: RayWorkerWrapper in older vLLM (0.19), RayWorkerProc in
 # the pinned vLLM 0.29.0 (process title ray::RayWorkerProc...).
 BUSY_MARKERS = ("vllm serve", "RayWorkerWrapper", "RayWorkerProc", "EngineCore")
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 
 class RepoPurgeResult(TypedDict):
