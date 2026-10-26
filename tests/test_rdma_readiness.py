@@ -85,13 +85,9 @@ class ConnectXPreflightTests(unittest.TestCase):
                         NCCL_IB_DISABLE="0",
                         DIYA_IP="10.10.10.1", HOEDUS_IP="10.10.10.2", HEAD_IP="10.10.10.1",
                         HF_CACHE=str(self.root / "hf-cache"),
-<<<<<<< HEAD
-                        CALL_LOG=str(self.calls))
-=======
                         RESOURCE_PROC_ROOT=str(self.root / "proc"),
                         CALL_LOG=str(self.calls))
         (self.root / "proc").mkdir()
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
         self.command("getent", '''case "$2" in
           cisc-diya)
             echo "10.10.10.1 STREAM"
@@ -488,12 +484,9 @@ class ConnectXPreflightTests(unittest.TestCase):
                 self.assertEqual(args[gpu_memory_index + 1], "0.85")
                 max_num_seqs_index = args.index("--max-num-seqs")
                 self.assertEqual(args[max_num_seqs_index + 1], "4")
-<<<<<<< HEAD
-=======
                 # FlashInfer autotune is off by default in every mode; the
                 # mock rewrites the call log for each serve command.
                 self.assertEqual(args.count("--no-enable-flashinfer-autotune"), 1)
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
             finally:
                 allow_api_ready.touch()
                 server_stop.touch()
@@ -561,8 +554,6 @@ class ConnectXPreflightTests(unittest.TestCase):
             )
         )
 
-<<<<<<< HEAD
-=======
     def test_flashinfer_autotune_opt_in_keeps_vllm_default(
         self: ConnectXPreflightTests,
     ) -> None:
@@ -604,7 +595,6 @@ class ConnectXPreflightTests(unittest.TestCase):
                 self.assertIn("FLASHINFER_AUTOTUNE must be 0 or 1", result.stderr)
                 self.assertNotIn("docker", self.calls.read_text().split())
 
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
     def test_direct_launch_rejects_server_exit_before_api_readiness(
         self: ConnectXPreflightTests,
     ) -> None:
