@@ -9,6 +9,7 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+<<<<<<< HEAD
 ARG RAY_VERSION
 
 COPY ray-runtime-constraints.txt /tmp/ray-runtime-constraints.txt
@@ -16,5 +17,10 @@ RUN pip install --no-cache-dir --constraint /tmp/ray-runtime-constraints.txt \
     "ray[default]==${RAY_VERSION}" \
     && python3 -c 'import ray; print("ray", ray.__version__)' \
     && rm /tmp/ray-runtime-constraints.txt
+=======
+ARG RAY_VERSION=2.53.0
+
+RUN pip install --no-cache-dir "ray[default]==${RAY_VERSION}"
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 ENV PIP_NO_INDEX=1

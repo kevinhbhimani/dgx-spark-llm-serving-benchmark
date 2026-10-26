@@ -262,5 +262,66 @@ class ReplicateLaunchTests(unittest.TestCase):
         self.assertEqual(self._launch_ids(CANARY_ONLY="1"), ["LAUNCH= LIMIT=4"])
 
 
+class StartupStallWatchdogTests(unittest.TestCase):
+    HEARTBEAT = (
+        "(EngineCore pid=1) INFO [shm_broadcast.py:801] No available shared "
+        "memory broadcast block found in 60 seconds."
+    )
+
+    def _wait_ready(self, appended_line, **overrides):
+        """Run run_models.sh's wait_ready with a server that never becomes
+        ready and appends one line to its log per poll."""
+        source = (ROOT / "scripts/run_models.sh").read_text()
+        start = source.index("STARTUP_HEARTBEAT_PATTERN=")
+        end = source.index("\n}\n", source.index("wait_ready() {", start)) + 3
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "server.log"
+            log.write_text("[launch] pp2\nAutotuning process ends\n")
+            environment = os.environ.copy()
+            environment.update(
+                READY_TIMEOUT="60", READY_STALL_TIMEOUT="20", LAUNCH_PID="",
+                LOG=str(log), LINE=appended_line, FORMAT="%s\\n",
+            )
+            environment.update(overrides)
+            script = (
+                "set -uo pipefail\n"
+                "sleep() { :; }\n"
+                'polls=0\n'
+                'server_ready() { polls=$((polls + 1)); '
+                'printf "$FORMAT" "${LINE//@@/$polls}" >> "$LOG"; return 1; }\n'
+                "server_contract() { return 0; }\n"
+                + source[start:end]
+                + 'wait_ready model "$LOG"\n'
+            )
+            return subprocess.run(
+                ["bash", "-c", script], cwd=ROOT, env=environment,
+                text=True, capture_output=True, check=False,
+            )
+
+    def test_engine_heartbeats_alone_are_reported_as_a_hang(self):
+        result = self._wait_ready(self.HEARTBEAT)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("treating the launch as hung", result.stderr)
+        self.assertIn("Autotuning process ends", result.stderr)
+        self.assertNotIn("timed out after", result.stderr)
+
+    def test_new_worker_output_keeps_waiting_until_ready_timeout(self):
+        result = self._wait_ready("loading shard @@")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("timed out after 60s", result.stderr)
+        self.assertNotIn("treating the launch as hung", result.stderr)
+
+    def test_progress_bar_redraws_count_as_progress(self):
+        # tqdm redraws one line with "\r", so the line count never changes.
+        result = self._wait_ready("Loading shards: @@/17", FORMAT="\\r%s")
+        self.assertIn("timed out after 60s", result.stderr)
+        self.assertNotIn("treating the launch as hung", result.stderr)
+
+    def test_zero_disables_the_stall_watchdog(self):
+        result = self._wait_ready(self.HEARTBEAT, READY_STALL_TIMEOUT="0")
+        self.assertIn("timed out after 60s", result.stderr)
+        self.assertNotIn("treating the launch as hung", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
