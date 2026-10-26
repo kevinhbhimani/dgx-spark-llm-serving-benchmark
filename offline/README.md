@@ -1,224 +1,209 @@
-# Offline bundle
+# Offline DGX Spark bundle
 
-Builds a self-contained bundle for a DGX Spark with no outbound network access.
-The bundle carries the container image, the pinned client wheelhouse, and the
-repository source. It excludes model weights unless `--include-models` is used.
+This directory builds a bundle for DGX Spark nodes without outbound network
+access. The bundle contains the pinned vLLM image with the Ray runtime, the
+client wheelhouse for the target platform, and the repository source. Model
+weights are excluded unless `--include-models` is set.
 
-<<<<<<< HEAD
 ## Bundle contents
-=======
-## Contents
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 | File | Contents |
 | --- | --- |
-| `vllm-ray-image.tar.zst` | vLLM image with Ray baked in |
-| `wheels/` | `requirements.lock` wheels for the target platform |
-| `dgx-spark-benchmark-src.tar.gz` | repository source |
-| `model-cache.tar` | Optional Hugging Face cache, included with `--include-models` |
-| `install_offline.sh` | installer for the Spark |
-| `SHA256SUMS` | checksums for every file above |
-| `BUNDLE_INFO` | image tag, base digest, Ray version, target platform |
+| `vllm-ray-image.tar.zst` or `vllm-ray-image.tar.gz` | Derived vLLM image with Ray installed |
+| `wheels/` | Binary wheels for `requirements.lock` and the target platform |
+| `dgx-spark-benchmark-src.tar.gz` | Repository source without Git history, generated results directories, or local secrets |
+| `model-cache.tar` | Optional Hugging Face `hub/` cache |
+| `install_offline.sh` | Installer for each target node |
+| `BUNDLE_INFO` | Image, Ray, platform, Python, and requirements metadata |
+| `SHA256SUMS` | Checksums for bundle files except `SHA256SUMS` itself |
 
-## Why the image is rebuilt
+The builder places `install_offline.sh` at the bundle root so it can be run
+after transfer.
 
-`scripts/start_ray.sh` installs Ray at container start with
-`pip install -q 'ray[default]==2.53.0'`. That step needs a package index. The
-derived image bakes Ray in, so the step is a satisfied no-op. The image also
-sets `PIP_NO_INDEX=1`, so a pip call that needs an index fails immediately
-instead of waiting for a network timeout.
+The derived image installs the Ray version pinned in
+`scripts/ray-runtime-constraints.txt` and sets `PIP_NO_INDEX=1`. The
+`scripts/start_ray.sh` pip command can use the installed packages and fails if a
+package is missing because the image has no package-index access.
 
 ## Build
 
-<<<<<<< HEAD
-Run from the repository root on a machine with network access, Docker, Docker
-Buildx, Python, and sufficient storage. The script also accepts an absolute
-path from another working directory:
-=======
-Run on a machine with internet access and Docker.
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
+Run the builder on a machine with network access, Docker Buildx, Python 3 with
+pip, `tar`, and `sha256sum`. It pulls the base image and downloads the locked
+client wheels. `zstd` is optional; the builder uses gzip when zstd is absent.
+
+From the repository root:
 
 ```bash
-offline/build_bundle.sh
+offline/build_bundle.sh [--include-models] [OUTPUT_DIR]
 ```
 
-Output directory: `offline/offline-bundle/`.
+The default output directory is `offline/offline-bundle/`. The builder refuses
+to overwrite an existing output path. The target defaults to `linux/arm64`
+and Python 3.12. Set `TARGET_PLATFORM=linux/amd64` for an x86_64 target.
 
-Model weights are excluded by default. To include the Hugging Face cache, pass
-`--include-models`. The cache root must contain a non-empty `hub/` directory.
-Set `MODEL_CACHE_DIR` to select a cache on an external drive; otherwise the
-builder uses `HF_CACHE` from `scripts/connectx_env.sh`.
+For an x86_64 build host targeting DGX Spark, register arm64 emulation for the
+Docker Buildx image build:
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install arm64
+docker run --rm --platform linux/arm64 alpine uname -m
+```
+
+The second command prints `aarch64` when the host can run arm64 containers.
+The builder checks the saved image architecture. Ray import verification runs
+when the build host can execute the target image.
+
+### Include model weights
+
+Model weights are excluded by default. To prepare a complete cache on a
+networked build machine, set `HF_CACHE` and download the pinned snapshots:
+
+```bash
+HF_CACHE=/media/external-drive/huggingface scripts/predownload.sh all
+HF_CACHE=/media/external-drive/huggingface CHECK_ONLY=1 scripts/predownload.sh all
+```
+
+The second command checks the snapshots against `configs/models.yaml`. Then
+include that cache in the bundle:
 
 ```bash
 MODEL_CACHE_DIR=/media/external-drive/huggingface \
   offline/build_bundle.sh --include-models /media/external-drive/offline-bundle
 ```
 
-This writes the cache to `model-cache.tar` in the bundle and excludes the
-Hugging Face `.locks` directory. The builder archives files already in the
-cache and does not check that pinned model snapshots are complete. To carry
-model weights separately, leave off `--include-models` and keep the cache
-directory on the external drive.
+The cache root must contain a non-empty `hub/` directory. The builder excludes
+`hub/token` and `hub/.locks`; it does not validate snapshot completeness.
+To move the cache separately, omit `--include-models` and copy the cache to
+each target node.
 
-The build machine must be `aarch64` with Python 3.12, or use BuildKit
-emulation and cross-platform wheel download. `build_bundle.sh` compares the
-build machine to `TARGET_PLATFORM` and `TARGET_PYTHON` and passes `--platform`
-and `--python-version` to `pip download` when they differ.
-
-Overrides: `VLLM_IMAGE`, `RAY_VERSION`, `TARGET_PLATFORM`, `TARGET_PYTHON`,
-`DERIVED_IMAGE`, `ZSTD_LEVEL`, `MODEL_CACHE_DIR`.
-
-### Build on x86_64
-
-BuildKit executes the arm64 `RUN pip install` step through QEMU. Register the
-arm64 handler once:
-
-```bash
-docker run --privileged --rm tonistiigi/binfmt --install arm64
-<<<<<<< HEAD
-docker run --rm --platform linux/arm64 alpine uname -m
-```
-
-The second command prints `aarch64` when the Docker host can run arm64
-containers. BuildKit can execute the image build through QEMU. QEMU builds can
-run slower than native builds, especially when compiling software.
-
-A configured Docker Build Cloud builder can export the image archive to the
-build host. A native ARM64 cloud VM can also run the same bundle script without
-emulation. The build host needs registry access for `VLLM_IMAGE` and package
-index access for the client wheelhouse.
-
-Docker documents the [multi-platform build methods](https://docs.docker.com/build/building/multi-platform/),
-[Buildx image exporters](https://docs.docker.com/build/exporters/), and
-[Build Cloud image loading](https://docs.docker.com/build/exporters/). pip
-documents target-platform options for [`pip download`](https://pip.pypa.io/en/stable/cli/pip_download/).
+The builder supports `VLLM_IMAGE`, `RAY_VERSION`, `TARGET_PLATFORM`,
+`TARGET_PYTHON`, `DERIVED_IMAGE`, `ZSTD_LEVEL`, and `MODEL_CACHE_DIR`
+environment overrides. `RAY_VERSION` must match the version in
+`scripts/ray-runtime-constraints.txt`.
 
 ## Transfer and install
 
-Copy the generated bundle directory to the offline system:
+Copy the complete bundle directory to each target node:
 
 ```bash
 BUNDLE_DIR=/absolute/path/to/offline-bundle
 rsync -avP --partial "$BUNDLE_DIR/" /media/external-drive/offline-bundle/
 ```
 
-Run the installer on each target node from the copied bundle directory:
-=======
-docker run --rm --platform linux/arm64 alpine uname -m   # aarch64
-```
-
-Then run `offline/build_bundle.sh`. It passes `--platform linux/arm64` to
-`docker pull` and `docker build`, and `--load` so the result lands in the local
-image store for `docker save`. `pip download` targets aarch64 because the build
-machine arch differs from `TARGET_PLATFORM`.
-
-`docker pull --platform linux/arm64` and `docker save` do not need QEMU. Only
-the image build and the Ray verification run do.
-
-Verify the saved image is arm64:
-
-```bash
-docker image inspect --format '{{.Architecture}}' dgx-spark-vllm-ray:2.53.0   # arm64
-```
-
-Docker Desktop has the arm64 handler built in; skip the registration step.
-
-## Transfer
-
-```bash
-rsync -avP --partial offline/offline-bundle/ /media/external-drive/offline-bundle/
-```
-
-## Install
-
-Run on both nodes, from the bundle directory on the external drive or a copy.
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
+Each target node requires Docker, Python 3.12, `tar`, `sha256sum`, and the
+compression tool named by the image archive (`zstd` or `gzip`). Run the
+installer from the copied bundle directory:
 
 ```bash
 ./install_offline.sh
 ```
 
-<<<<<<< HEAD
-The installer checks checksums, target CPU architecture, and Python major and
-minor version. It loads the image, extracts the source, restores the model cache
-when present, and installs wheels without an index. It runs
-`scripts/check_environment.py` when that script and `requirements.lock` exist.
-
-Set `SRC_DIR` to choose the source installation path. Set `HF_CACHE` to choose
-the model cache path when the bundle contains `model-cache.tar`.
-
-## Run
-
-From the bundle directory, export these values on both nodes:
-
-```bash
-export VLLM_IMAGE="$(awk -F= '$1 == "derived_image" {print $2}' BUNDLE_INFO)"
-export RAY_VERSION="$(awk -F= '$1 == "ray_version" {print $2}' BUNDLE_INFO)"
-=======
-The installer verifies `SHA256SUMS`, loads the image, extracts the source to
+The installer checks checksums, host architecture, and Python major and minor
+version. It loads the image, extracts the source to
 `$HOME/dgx-spark-llm-serving-benchmark`, creates `.venv`, installs the
-wheelhouse with `--no-index`, and runs `scripts/check_environment.py`.
+wheelhouse without an index, and runs `scripts/check_environment.py`. Set
+`SRC_DIR` to choose another source directory. Set `HF_CACHE` when installing
+a bundle with model weights; the default is `$HOME/.cache/huggingface`.
 
-## Run
+The source archive omits `.env` files and Git history. Configure each node's
+repo-local `.env` with its network addresses and interface settings before
+starting Ray. Follow [cluster setup](../docs/cluster-setup.md) and
+[RDMA readiness](../docs/rdma-readiness.md) for hardware configuration.
 
-Export on both nodes:
+## Run Ray and all-reduce
 
-```bash
-export VLLM_IMAGE="dgx-spark-vllm-ray:2.53.0"
-export RAY_VERSION="2.53.0"
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
-export RAY_SETUP=:
-cd ~/dgx-spark-llm-serving-benchmark
-source environments/rdma-dual-cable.env
-```
-
-<<<<<<< HEAD
-`RAY_SETUP=:` skips the container's Ray installation. The derived image
-contains the version from `scripts/ray-runtime-constraints.txt`.
-
-### All-reduce
-
-Head node: `scripts/start_ray.sh head`. Worker node:
-`scripts/start_ray.sh worker`. Run this on the head after both nodes report
-`Active`:
-=======
-`RAY_SETUP=:` skips the container's Ray install. The image already has Ray.
-
-### All-reduce
-
-Head node: `scripts/start_ray.sh head`. Worker node: `scripts/start_ray.sh worker`.
-Head node, after both nodes report `Active`:
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
+On both nodes, set the image and Ray version from the copied bundle metadata.
+Set `BUNDLE_DIR` to the bundle directory on each node:
 
 ```bash
-bash scripts/ray_allreduce_bench.sh
+BUNDLE_DIR=/media/external-drive/offline-bundle
+export VLLM_IMAGE="$(awk -F= '$1 == "derived_image" {print $2}' "$BUNDLE_DIR/BUNDLE_INFO")"
+export RAY_VERSION="$(awk -F= '$1 == "ray_version" {print $2}' "$BUNDLE_DIR/BUNDLE_INFO")"
+cd "$HOME/dgx-spark-llm-serving-benchmark"
+source scripts/connectx_env.sh
 ```
 
-Output: `results/allreduce_ray_<fingerprint>_<timestamp>.csv`.
-
-### Model serving
-
-Model weights are omitted by default. `scripts/predownload.sh` needs network and
-does not run on the Spark. Copy the cache from the external drive into the
-`HF_CACHE` path on both nodes. If `model-cache.tar` is present, extract it into
-the cache root on each node, for example:
+Start the Ray head on one node and the worker on the other:
 
 ```bash
-mkdir -p /media/external-drive/huggingface
-tar -xf model-cache.tar -C /media/external-drive/huggingface
-export HF_CACHE=/media/external-drive/huggingface
+scripts/start_ray.sh head
+scripts/start_ray.sh worker
 ```
 
-Follow `rdma-testing/docs/pre-flight-checklist.md` from step 10.
+After both nodes report `Active`, run this on the head:
 
-## Files
+```bash
+scripts/ray_allreduce_bench.sh
+```
 
-<<<<<<< HEAD
-- `Dockerfile.ray`: derived vLLM image definition.
-- `build_bundle.sh`: bundle builder.
-- `install_offline.sh`: offline target installer.
-=======
-- `Dockerfile.ray`: derived image definition.
-- `build_bundle.sh`: build and assemble on the internet machine.
-- `install_offline.sh`: load, extract, and validate on the Spark.
->>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
+The all-reduce output is written to
+`results/allreduce_ray_<fingerprint>_<timestamp>.csv`.
+
+## Run model benchmarks from the local cache
+
+Model-serving runs require complete pinned snapshots in the Hugging Face cache.
+When the bundle includes `model-cache.tar`, the installer extracts it into
+`HF_CACHE`. Otherwise copy a complete `hub/` cache to each node. For a custom
+cache location, set the same `HF_CACHE` in each node's `.env`.
+
+The current source has unresolved merge-conflict markers in
+`scripts/run_models.sh`. Bash rejects the script before a model run. Resolve
+that file before using the model benchmark commands below.
+
+Activate the installed client environment and export the image settings in each
+shell:
+
+```bash
+cd "$HOME/dgx-spark-llm-serving-benchmark"
+source .venv/bin/activate
+export PYTHON="$PWD/.venv/bin/python"
+BUNDLE_DIR=/media/external-drive/offline-bundle
+export VLLM_IMAGE="$(awk -F= '$1 == "derived_image" {print $2}' "$BUNDLE_DIR/BUNDLE_INFO")"
+export RAY_VERSION="$(awk -F= '$1 == "ray_version" {print $2}' "$BUNDLE_DIR/BUNDLE_INFO")"
+source scripts/connectx_env.sh
+```
+
+On each node, validate that its cache contains every pinned snapshot required
+by the run. This command is local-only and does not contact Hugging Face:
+
+```bash
+CHECK_ONLY=1 scripts/predownload.sh all
+```
+
+`launch_server.sh` defaults to `HF_HUB_OFFLINE=1`. Direct
+`run_models.sh single` defaults to online mode and acquires snapshots before
+launch. Set `RUN_JOB_CACHE_READY=1` to skip that acquisition step and
+`HF_HUB_OFFLINE=1` to keep serving local-only. Run a single-node sweep on the
+head:
+
+```bash
+RUN_JOB_CACHE_READY=1 HF_HUB_OFFLINE=1 \
+  OUT_DIR=results/offline-single scripts/run_models.sh single
+```
+
+For dual-node runs, validate the required cache on both nodes. `RUN_JOB_CACHE_READY=1`
+also skips the runner's worker-cache mirror, so each node must have the complete
+snapshot cache before launch. Start Ray on both nodes, then run this command on
+the head:
+
+```bash
+RUN_JOB_CACHE_READY=1 HF_HUB_OFFLINE=1 \
+  OUT_DIR=results/offline-tp2 scripts/run_models.sh tp2
+```
+
+Use `pp2` in place of `tp2` for pipeline parallel. A missing or incomplete
+snapshot stops at the local cache preflight before server launch. The
+`run_job.sh` campaign wrapper requires a clean committed Git checkout. The
+bundle source archive omits Git history, so use `run_models.sh` for model runs
+from an installed bundle.
+
+## Offline troubleshooting
+
+- `weight_gb` or `kv_cache_gb` is blank because model configuration or Hub
+  metadata is unavailable: confirm that the required snapshot is in the local
+  cache and that gated repositories have valid credentials on the networked
+  build host.
+- `client tokenizer preflight failed`: confirm the pinned tokenizer snapshot is
+  complete and that the model entry's `trust_remote_code` setting is correct.
+  Run `CHECK_ONLY=1 scripts/predownload.sh <config>` to validate the local
+  snapshots for one serving configuration.
