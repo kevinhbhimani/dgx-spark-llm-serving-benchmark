@@ -81,6 +81,7 @@ class CampaignFixture:
         self._write_environment_manifest()
         self.policy_path = None
         self.policy = None
+        self.flashinfer_autotune = None
 
     def _write_environment_manifest(self):
         if CampaignFixture._environment_manifest is None:
@@ -178,6 +179,9 @@ class CampaignFixture:
                 f"cluster_runtime={runtime_hash}\n",
             )
         )
+        if self.flashinfer_autotune is not None:
+            policy["flashinfer_autotune"] = self.flashinfer_autotune
+            legacy_input += f"flashinfer_autotune={self.flashinfer_autotune}\n"
         policy["serving_fingerprint"] = hashlib.sha256(
             legacy_input.encode()
         ).hexdigest()
@@ -710,6 +714,39 @@ class VerifyTests(unittest.TestCase):
             self.assertEqual(
                 len({row["experiment_fingerprint"] for row in rows}), 1
             )
+
+    def test_disabled_flashinfer_autotune_policy_verifies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.flashinfer_autotune = "0"
+            fixture.add_point(run_tag="model-a-r1", repeat_id=1,
+                              repeat_count=2, gpu_blocks=10)
+            fixture.add_point(run_tag="model-a-r2", repeat_id=2,
+                              repeat_count=2, gpu_blocks=11)
+            report = validator.verify_campaign(
+                fixture.models, fixture.experiment, fixture.results, [1], 2
+            )
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(fixture.policy["flashinfer_autotune"], "0")
+
+    def test_repeats_cannot_mix_flashinfer_autotune_policies(self):
+        # The autotune policy feeds the serving and experiment fingerprints, so
+        # repeats of one point that disagree on it never verify together.
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.flashinfer_autotune = "0"
+            fixture.add_point(run_tag="model-a-r1", repeat_id=1,
+                              repeat_count=2, gpu_blocks=10)
+            fixture.flashinfer_autotune = None
+            fixture.add_point(run_tag="model-a-r2", repeat_id=2,
+                              repeat_count=2, gpu_blocks=11)
+            with self.assertRaisesRegex(
+                validator.CampaignValidationError,
+                "flashinfer_autotune|serving[ _]fingerprint|experiment",
+            ):
+                validator.verify_campaign(
+                    fixture.models, fixture.experiment, fixture.results, [1], 2
+                )
 
     def test_completed_only_verifies_present_combos_and_skips_absent(self):
         with tempfile.TemporaryDirectory() as tmp:

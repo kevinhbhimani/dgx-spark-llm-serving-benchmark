@@ -1132,6 +1132,17 @@ def verify_campaign(
                 raise CampaignValidationError(
                     f"campaign mixes multiple serving-policy {field} values"
                 )
+        # Optional field: absent means vLLM's default (autotune on). Kernel
+        # selection must be one policy across single, tp2, and pp2.
+        autotune = str(serving_policy.get("flashinfer_autotune") or "1")
+        if autotune not in ("0", "1"):
+            raise CampaignValidationError(
+                f"{context} serving policy has flashinfer_autotune={autotune!r}"
+            )
+        if consistent_policy.setdefault("flashinfer_autotune", autotune) != autotune:
+            raise CampaignValidationError(
+                "campaign mixes multiple serving-policy flashinfer_autotune values"
+            )
         scope_key = "single" if point.config_label == "single" else "dual"
         runtime_fingerprint = str(
             serving_policy.get("runtime_facts_sha256") or ""

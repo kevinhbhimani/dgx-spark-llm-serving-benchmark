@@ -125,6 +125,13 @@ the paper. The FP8 checkpoint is not covered by the note and runs uncapped, so
 its comparison with NVFP4 is matched only at concurrency 4 or below. See the
 [NVIDIA 26.09 known issues](https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html).
 
+The same image's vLLM 0.29.0 deadlocks `pp2` startup during FlashInfer
+autotuning when the two stages tune different kernels; the October 2026
+canary hung this way on Nemotron 3 Super NVFP4 (vllm-project/vllm#57197, fixed
+in v0.32.0). Launches therefore default to `FLASHINFER_AUTOTUNE=0`
+(`--no-enable-flashinfer-autotune`) for every config, recorded in each serving
+policy. Report that kernel autotuning was disabled in the paper.
+
 The same note names Nemotron Nano V3 NVFP4. Nemotron 3.5 Lightning 30B-A3B
 NVFP4 is the same class of checkpoint (30B-A3B Mamba hybrid), and the note does
 not say whether it applies. The canary sends one short request, so it cannot

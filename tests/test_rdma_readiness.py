@@ -85,7 +85,13 @@ class ConnectXPreflightTests(unittest.TestCase):
                         NCCL_IB_DISABLE="0",
                         DIYA_IP="10.10.10.1", HOEDUS_IP="10.10.10.2", HEAD_IP="10.10.10.1",
                         HF_CACHE=str(self.root / "hf-cache"),
+<<<<<<< HEAD
                         CALL_LOG=str(self.calls))
+=======
+                        RESOURCE_PROC_ROOT=str(self.root / "proc"),
+                        CALL_LOG=str(self.calls))
+        (self.root / "proc").mkdir()
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
         self.command("getent", '''case "$2" in
           cisc-diya)
             echo "10.10.10.1 STREAM"
@@ -482,6 +488,12 @@ class ConnectXPreflightTests(unittest.TestCase):
                 self.assertEqual(args[gpu_memory_index + 1], "0.85")
                 max_num_seqs_index = args.index("--max-num-seqs")
                 self.assertEqual(args[max_num_seqs_index + 1], "4")
+<<<<<<< HEAD
+=======
+                # FlashInfer autotune is off by default in every mode; the
+                # mock rewrites the call log for each serve command.
+                self.assertEqual(args.count("--no-enable-flashinfer-autotune"), 1)
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
             finally:
                 allow_api_ready.touch()
                 server_stop.touch()
@@ -549,6 +561,50 @@ class ConnectXPreflightTests(unittest.TestCase):
             )
         )
 
+<<<<<<< HEAD
+=======
+    def test_flashinfer_autotune_opt_in_keeps_vllm_default(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        (
+            server_started,
+            allow_api_ready,
+            _api_ready,
+            api_probed,
+            server_stop,
+            _api_responses,
+        ) = self._configure_launch_fixture()
+        process = self._start_script(
+            "launch_server.sh",
+            "pp2",
+            FLASHINFER_AUTOTUNE="1",
+            HF_CACHE=str(self.root / "empty-cache"),
+        )
+        try:
+            self._wait_for_file(server_started, process)
+            allow_api_ready.touch()
+            self._wait_for_file(api_probed, process)
+            args = self.calls.read_text().splitlines()
+            self.assertIn("--pipeline-parallel-size", args)
+            self.assertNotIn("--no-enable-flashinfer-autotune", args)
+        finally:
+            allow_api_ready.touch()
+            server_stop.touch()
+            stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+
+    def test_flashinfer_autotune_rejects_invalid_values_before_docker(self):
+        for value in ("yes", "2", "true"):
+            with self.subTest(value=value):
+                self.calls.write_text("")
+                result = self.run_script(
+                    "launch_server.sh", "pp2", FLASHINFER_AUTOTUNE=value
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("FLASHINFER_AUTOTUNE must be 0 or 1", result.stderr)
+                self.assertNotIn("docker", self.calls.read_text().split())
+
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
     def test_direct_launch_rejects_server_exit_before_api_readiness(
         self: ConnectXPreflightTests,
     ) -> None:

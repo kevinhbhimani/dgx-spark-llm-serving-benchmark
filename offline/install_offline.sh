@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
+<<<<<<< HEAD
 # Install a generated offline bundle on a compatible target system.
+=======
+# Install the offline bundle on a DGX Spark with no internet access.
+# Run from the bundle directory on each node.
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 set -euo pipefail
 
 BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,11 +12,15 @@ cd "$BUNDLE_DIR"
 
 command -v docker >/dev/null 2>&1 || { echo "[offline] docker is required" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "[offline] python3 is required" >&2; exit 1; }
+<<<<<<< HEAD
 command -v sha256sum >/dev/null 2>&1 || { echo "[offline] sha256sum is required" >&2; exit 1; }
+=======
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 echo "[offline] verifying checksums"
 sha256sum -c SHA256SUMS
 
+<<<<<<< HEAD
 bundle_format=""
 derived_image=""
 target_platform=""
@@ -103,6 +112,10 @@ if [[ "$HOST_PYTHON" != "$target_python" ]]; then
   echo "[offline] bundle targets Python $target_python, host Python is $HOST_PYTHON" >&2
   exit 1
 fi
+=======
+# shellcheck disable=SC1091
+source ./BUNDLE_INFO
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 echo "[offline] loading $derived_image"
 case "$image_archive" in
@@ -117,16 +130,20 @@ case "$image_archive" in
     docker load -i "$image_archive"
     ;;
 esac
+<<<<<<< HEAD
 IMAGE_ARCH="$(docker image inspect --format '{{.Architecture}}' "$derived_image")"
 if [[ "$IMAGE_ARCH" != "$EXPECTED_IMAGE_ARCH" ]]; then
   echo "[offline] loaded image architecture is $IMAGE_ARCH, expected $EXPECTED_IMAGE_ARCH" >&2
   exit 1
 fi
+=======
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 SRC_DIR="${SRC_DIR:-$HOME/dgx-spark-llm-serving-benchmark}"
 mkdir -p "$SRC_DIR"
 echo "[offline] extracting source to $SRC_DIR"
 tar -xzf "$source_archive" -C "$SRC_DIR"
+<<<<<<< HEAD
 if [[ ! -f "$SRC_DIR/$requirements_file" ]]; then
   echo "[offline] $requirements_file is missing from the source archive" >&2
   exit 1
@@ -159,6 +176,19 @@ if [[ -f "$SRC_DIR/scripts/check_environment.py" && -f "$SRC_DIR/requirements.lo
 else
   echo "[offline] project environment checker is unavailable; pip installation completed"
 fi
+=======
+
+[[ -d "$BUNDLE_DIR/wheels" ]] || { echo "[offline] wheels/ missing from the bundle" >&2; exit 1; }
+
+echo "[offline] creating client virtual environment"
+python3 -m venv "$SRC_DIR/.venv"
+PYTHONNOUSERSITE=1 "$SRC_DIR/.venv/bin/pip" install \
+  --no-index --find-links "$BUNDLE_DIR/wheels" \
+  -r "$SRC_DIR/requirements.lock"
+
+echo "[offline] validating client environment"
+PYTHONNOUSERSITE=1 "$SRC_DIR/.venv/bin/python" "$SRC_DIR/scripts/check_environment.py"
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 cat <<EOF
 
