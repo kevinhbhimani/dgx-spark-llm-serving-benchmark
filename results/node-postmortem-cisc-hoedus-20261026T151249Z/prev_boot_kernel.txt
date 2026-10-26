@@ -1,0 +1,31 @@
+$ bash -c journalctl -k -b -1 --no-pager -o short-iso-precise | grep -iE 'oom|out of memory|NV_ERR_NO_MEMORY|NVRM|Xid|thermal|critical|hw_protection|panic|Oops|hung_task|soft lockup|rcu.*stall|watchdog|Power key|power button|mlx5.*power' | tail -200
+2026-10-26T10:56:39.319071-04:00 cisc-hoedus kernel: thermal_sys: Registered thermal governor 'fair_share'
+2026-10-26T10:56:39.319081-04:00 cisc-hoedus kernel: thermal_sys: Registered thermal governor 'bang_bang'
+2026-10-26T10:56:39.319090-04:00 cisc-hoedus kernel: thermal_sys: Registered thermal governor 'step_wise'
+2026-10-26T10:56:39.319099-04:00 cisc-hoedus kernel: thermal_sys: Registered thermal governor 'user_space'
+2026-10-26T10:56:39.319108-04:00 cisc-hoedus kernel: thermal_sys: Registered thermal governor 'power_allocator'
+2026-10-26T10:56:39.348555-04:00 cisc-hoedus kernel: input: Power Button as /devices/platform/PNP0C0C:00/input/input0
+2026-10-26T10:56:39.348564-04:00 cisc-hoedus kernel: ACPI: button: Power Button [PWRB]
+2026-10-26T10:56:39.348712-04:00 cisc-hoedus kernel: acpi LNXTHERM:00: registered as thermal_zone0
+2026-10-26T10:56:39.348723-04:00 cisc-hoedus kernel: ACPI: thermal: Thermal Zone [TSOC] (35 C)
+2026-10-26T10:56:39.348823-04:00 cisc-hoedus kernel: acpi LNXTHERM:01: registered as thermal_zone1
+2026-10-26T10:56:39.348834-04:00 cisc-hoedus kernel: ACPI: thermal: Thermal Zone [TS0E] (34 C)
+2026-10-26T10:56:39.348946-04:00 cisc-hoedus kernel: acpi LNXTHERM:02: registered as thermal_zone2
+2026-10-26T10:56:39.348957-04:00 cisc-hoedus kernel: ACPI: thermal: Thermal Zone [TS0P] (33 C)
+2026-10-26T10:56:39.349059-04:00 cisc-hoedus kernel: acpi LNXTHERM:03: registered as thermal_zone3
+2026-10-26T10:56:39.349072-04:00 cisc-hoedus kernel: ACPI: thermal: Thermal Zone [TS1E] (33 C)
+2026-10-26T10:56:39.349175-04:00 cisc-hoedus kernel: acpi LNXTHERM:04: registered as thermal_zone4
+2026-10-26T10:56:39.349187-04:00 cisc-hoedus kernel: ACPI: thermal: Thermal Zone [TS1P] (32 C)
+2026-10-26T10:56:39.349291-04:00 cisc-hoedus kernel: acpi LNXTHERM:05: registered as thermal_zone5
+2026-10-26T10:56:39.349303-04:00 cisc-hoedus kernel: ACPI: thermal: Thermal Zone [TGPU] (35 C)
+2026-10-26T10:56:39.349405-04:00 cisc-hoedus kernel: acpi LNXTHERM:06: registered as thermal_zone6
+2026-10-26T10:56:39.349417-04:00 cisc-hoedus kernel: ACPI: thermal: Thermal Zone [TUNC] (34 C)
+2026-10-26T10:56:39.349426-04:00 cisc-hoedus kernel: ACPI GTDT: found 1 SBSA generic Watchdog(s).
+2026-10-26T10:56:39.354892-04:00 cisc-hoedus kernel: watchdog: NMI not fully supported
+2026-10-26T10:56:39.354902-04:00 cisc-hoedus kernel: watchdog: Hard watchdog permanently disabled
+2026-10-26T10:56:39.376319-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pcie_event:326:(pid 12): Detected insufficient power on the PCIe slot (27W).
+2026-10-26T10:56:39.378262-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pcie_event:326:(pid 351): Detected insufficient power on the PCIe slot (27W).
+2026-10-26T10:56:39.379467-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pcie_event:326:(pid 336): Detected insufficient power on the PCIe slot (27W).
+2026-10-26T10:56:39.380605-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pcie_event:326:(pid 376): Detected insufficient power on the PCIe slot (27W).
+
+[exit 0]
