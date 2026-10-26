@@ -1,0 +1,102 @@
+# Smoke-test windows; not a paper config.
+base_url: "http://127.0.0.1:8000"
+endpoint: "/v1/completions"
+model: ""                 # empty means query the served name from /v1/models
+tokenizer: "Qwen/Qwen3-8B"
+use_token_ids: true
+
+# workload buckets spanning short chat to long context
+# The largest request is 8192 input + 512 output = 8704 total tokens, so vLLM
+# must be launched with --max-model-len/ MAXLEN of at least 8704.
+buckets:
+  - {input_len: 128,  output_len: 128, weight: 1.0}
+  - {input_len: 1024, output_len: 256, weight: 1.0}
+  - {input_len: 4096, output_len: 256, weight: 1.0}
+  - {input_len: 8192, output_len: 512, weight: 0.5}
+seed: 1234
+# Smooth weighted round robin instead of independent random bucket draws. Every
+# short contiguous request slice stays close to the configured proportions, so
+# slow c=1 points see the same mix as high-throughput points.
+balanced_workload: true
+
+mode: "closed"            # closed for fixed concurrency, open for Poisson arrivals
+concurrency: 16
+qps: 4.0
+max_inflight: 512
+# Warmup, measure, and cooldown run as ONE continuous phase. These are minimum
+# boundary durations, not assumptions about request lifetime:
+#   - in closed-loop mode the window does not open until warmup_s has elapsed
+#     AND every worker has completed its initial request, eliminating a surviving
+#     synchronized first wave;
+#   - after the minimum cooldown, replacement load continues until every request
+#     started in the measurement window finishes, so its latency is never
+#     flattered by a draining server;
+#   - only non-measurement replacement requests then drain.
+# The summary records warmup_extension_s, load_extension_s, and drain_s.
+# Minimums only, per the extension rules above: at high concurrency on slow
+# models the first-wave rule stretches warmup to the worst request lifetime
+# (~550s at c=128 on dense 70B) regardless of this value, and the cooldown
+# extends until the last measurement request finishes.
+warmup_s: 15.0
+# Replicate design (steady-exact-v4). Every point is measured in 3 independent
+# replicates, each on its own server launch (scripts/run_job.sh), so the
+# reported spread includes launch-to-launch variance, which is exactly what a
+# single-vs-tp2-vs-pp2 margin has to beat. Three shorter windows replace one
+# long window:
+#   - measure_s 600 is the minimum window (the MLPerf Inference minimum
+#     duration). Between-launch variance, not within-window sampling, dominated
+#     the old variance study (CV 0.2-6.5%), so 3 x 600s is the better use of
+#     time than 1 x 1500s.
+#   - min_window_requests keeps slow low-load points honest: the window keeps
+#     extending in 60s steps until 20 requests have started in it, capped at
+#     3600s. Old c=1 points on dense 32B-70B saw only 20-35 requests in 1500s
+#     (dense 49B BF16 on tp2: 25), and the pilot has no single/pp2 curve for
+#     that model at all; a fixed 600s window would leave many below the floor.
+#   - cooldown_s 30: the drain rule already holds load until every measurement
+#     request finishes, so a longer minimum adds wall time without changing
+#     what is measured.
+# Minimum per point: 3 x (120 + 600 + 30) = 2250s, versus 1 x 1800s before
+# (+25%). With the automatic extensions seen in the baselines (~4 min mean per
+# window), expect ~49 min per point versus ~34 min. For the 53-curve matrix
+# (424 points, 1272 windows, 159 launches) that is ~265 h minimum and ~346 h
+# expected, plus launches and downloads; 912 of the windows use two GB10s.
+# measure_s: 300 brings it to ~240 h at the price of noisier p99 at mid load.
+measure_s: 30.0
+min_window_requests: 5
+window_extension_step_s: 10.0
+max_measure_s: 120.0
+cooldown_s: 5.0
+# Must comfortably exceed the worst-case e2e (queueing + full stream) at the
+# highest concurrency in the sweep, or slow-but-successful requests are
+# recorded as timeout failures.
+request_timeout_s: 900.0
+
+# service level objective used for goodput. Two ITL tiers are scored against the
+# same TTFT bound: itl_slo_s is the strict interactive target (10 tok/s/stream),
+# itl_slo_s2 a looser tier. On bandwidth-bound GB10 the dense 32B/70B models
+# floor above 0.10s ITL even unloaded, so their strict goodput is ~0; the looser
+# tier separates them under load. goodput_rps uses itl_slo_s, goodput_itl2_rps
+# uses itl_slo_s2.
+ttft_slo_s: 3.0
+itl_slo_s: 0.10
+itl_slo_s2: 0.20
+
+power_backend: "nvidia_smi"     # none, nvidia_smi, sysfs, tegrastats
+power_sysfs_path: ""
+power_rails: []
+power_interval_ms: 100
+scrape_vllm_metrics: true
+# Paper runs must not silently accept a dead power sampler or metrics scrape.
+require_power_data: true
+require_vllm_metrics_data: true
+# Paper rows must identify exact HF commits and the complete serving policy.
+require_provenance: true
+# Never publish or resume a paper point containing request/stream failures, and
+# require enough completed requests to support at least the headline medians.
+require_zero_request_failures: true
+min_successful_requests: 5
+
+config_label: "single"
+collect_hf_metadata: false
+out_dir: "results"
+run_note: ""
