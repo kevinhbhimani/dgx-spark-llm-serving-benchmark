@@ -468,9 +468,12 @@ export REPEATS="${REPEATS:-3}"
 # export POWER_BACKEND=nvidia_smi
 export MODELS_YAML=configs/models.yaml
 export READY_TIMEOUT=1800
+<<<<<<< HEAD
+=======
 # Seconds of startup with nothing new in the server log but engine heartbeats
 # before run_models.sh declares the launch hung (0 disables).
 # export READY_STALL_TIMEOUT=900
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 # Installed into Ray containers by start_ray.sh. Keep it aligned with
 # scripts/ray-runtime-constraints.txt and VLLM_IMAGE.
 export RAY_VERSION=2.56.1
@@ -1572,6 +1575,8 @@ using temperature to interpret a hardware failure.
   worker node's HF cache (each node has its own; acquisition runs on the head).
   `run_models.sh` mirrors automatically; a direct `launch_server.sh` requires
   `scripts/mirror_worker_cache.sh tp2|pp2|all` from the head before relaunch.
+<<<<<<< HEAD
+=======
 - `pp2` launch stops logging during `[AutoTuner]: Tuning ...` and the server
   log then shows only `No available shared memory broadcast block found in 60
   seconds` once a minute until the readiness timeout: the two pipeline stages
@@ -1586,6 +1591,7 @@ using temperature to interpret a hardware failure.
   on the pinned 26.09 image. The vLLM `[shutdown]` and `SIGTERM received`
   lines at the end of such a log are run_models.sh stopping the server, not
   a host shutdown.
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 - `tp2`/`pp2` launch passes the cache preflight but hangs during model load
   with no engine output: NCCL cannot finish the RDMA handshake. Run
   `ibdev2netdev` on both nodes and confirm one UP device per port. Run
