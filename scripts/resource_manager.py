@@ -10,9 +10,13 @@ import sys
 from collections.abc import Iterable
 
 
+<<<<<<< HEAD
+SERVING_MARKERS = ("vllm serve", "RayWorkerWrapper", "EngineCore")
+=======
 # Ray worker actors: RayWorkerWrapper in older vLLM (0.19), RayWorkerProc in
 # the pinned vLLM 0.29.0 (process title ray::RayWorkerProc...).
 SERVING_MARKERS = ("vllm serve", "RayWorkerWrapper", "RayWorkerProc", "EngineCore")
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 CACHE_MARKERS = (
     "download_hf_snapshot.py",
     "predownload.sh",
@@ -40,6 +44,13 @@ def process_command_lines() -> Iterable[tuple[int, str]]:
             break
         ancestors.add(parent)
 
+<<<<<<< HEAD
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit() or int(entry) in ancestors:
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as handle:
+=======
     # Tests point RESOURCE_PROC_ROOT at a fake procfs so the guard does not see
     # unrelated vLLM servers on the machine running the suite.
     proc_root = os.environ.get("RESOURCE_PROC_ROOT", "/proc")
@@ -48,6 +59,7 @@ def process_command_lines() -> Iterable[tuple[int, str]]:
             continue
         try:
             with open(os.path.join(proc_root, entry, "cmdline"), "rb") as handle:
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
                 command = handle.read().replace(b"\0", b" ").decode(errors="replace")
         except OSError:
             continue

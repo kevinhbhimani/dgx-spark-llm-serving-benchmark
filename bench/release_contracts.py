@@ -335,6 +335,8 @@ def load_serving_policy(
                 "serving policy max_num_seqs must be a positive integer string"
             )
         legacy_input += f"max_num_seqs={max_num_seqs}\n"
+<<<<<<< HEAD
+=======
     # Present only when autotuning was disabled; absence is vLLM's default.
     flashinfer_autotune = policy.get("flashinfer_autotune", "")
     if flashinfer_autotune != "":
@@ -343,6 +345,7 @@ def load_serving_policy(
                 "serving policy flashinfer_autotune must be \"0\" when present"
             )
         legacy_input += "flashinfer_autotune=0\n"
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
     if hashlib.sha256(legacy_input.encode()).hexdigest() != fingerprint:
         raise RuntimeError(
             "serving policy fields do not reproduce serving_fingerprint"
