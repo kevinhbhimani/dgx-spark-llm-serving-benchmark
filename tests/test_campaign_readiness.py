@@ -280,7 +280,7 @@ class StartupStallWatchdogTests(unittest.TestCase):
             environment = os.environ.copy()
             environment.update(
                 READY_TIMEOUT="60", READY_STALL_TIMEOUT="20", LAUNCH_PID="",
-                LOG=str(log), LINE=appended_line,
+                LOG=str(log), LINE=appended_line, FORMAT="%s\\n",
             )
             environment.update(overrides)
             script = (
@@ -288,7 +288,7 @@ class StartupStallWatchdogTests(unittest.TestCase):
                 "sleep() { :; }\n"
                 'polls=0\n'
                 'server_ready() { polls=$((polls + 1)); '
-                'printf "%s\\n" "${LINE//@@/$polls}" >> "$LOG"; return 1; }\n'
+                'printf "$FORMAT" "${LINE//@@/$polls}" >> "$LOG"; return 1; }\n'
                 "server_contract() { return 0; }\n"
                 + source[start:end]
                 + 'wait_ready model "$LOG"\n'
@@ -308,6 +308,12 @@ class StartupStallWatchdogTests(unittest.TestCase):
     def test_new_worker_output_keeps_waiting_until_ready_timeout(self):
         result = self._wait_ready("loading shard @@")
         self.assertEqual(result.returncode, 1)
+        self.assertIn("timed out after 60s", result.stderr)
+        self.assertNotIn("treating the launch as hung", result.stderr)
+
+    def test_progress_bar_redraws_count_as_progress(self):
+        # tqdm redraws one line with "\r", so the line count never changes.
+        result = self._wait_ready("Loading shards: @@/17", FORMAT="\\r%s")
         self.assertIn("timed out after 60s", result.stderr)
         self.assertNotIn("treating the launch as hung", result.stderr)
 
