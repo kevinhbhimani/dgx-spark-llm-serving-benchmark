@@ -1,0 +1,26 @@
+Evidence directory: results/node-postmortem-cisc-hoedus-20261026T193713Z
+
+Boots (latest last):
+ -3 cfc24a2feea74537997d57b34a3e9d86 Mon 2026-10-26 10:58:30 EDT Mon 2026-10-26 13:45:01 EDT
+ -2 2631610b25944f67a125bac8109e0991 Mon 2026-10-26 13:49:48 EDT Mon 2026-10-26 15:25:31 EDT
+ -1 9807d275b01a4698b1b075210be5daa9 Mon 2026-10-26 15:27:59 EDT Mon 2026-10-26 15:27:59 EDT
+  0 3c29d96f6c5e4c64a839bbba41156596 Mon 2026-10-26 15:29:41 EDT Mon 2026-10-26 15:37:13 EDT
+
+[exit 0]
+
+Last 15 lines of the previous boot:
+2026-10-26T15:27:59.333504-04:00 cisc-hoedus kernel: nvme nvme0: using unchecked data buffer
+2026-10-26T15:27:59.333517-04:00 cisc-hoedus systemd[1]: Started multipathd.service - Device-Mapper Multipath Device Controller.
+2026-10-26T15:27:59.333528-04:00 cisc-hoedus systemd-journald[602]: Journal started
+2026-10-26T15:27:59.333555-04:00 cisc-hoedus systemd-journald[602]: Runtime Journal (/run/log/journal/1737094ace5e4d4f8fb74559130b254f) is 8.0M, max 1.2G, 1.2G free.
+2026-10-26T15:27:59.251793-04:00 cisc-hoedus systemd-modules-load[615]: Module 'i2c_dev' is built in
+2026-10-26T15:27:59.259800-04:00 cisc-hoedus systemd-modules-load[615]: Inserted module 'ipmi_devintf'
+2026-10-26T15:27:59.264137-04:00 cisc-hoedus systemd-modules-load[615]: Inserted module 'dm_multipath'
+2026-10-26T15:27:59.268278-04:00 cisc-hoedus systemd-modules-load[615]: Inserted module 'mstflint_access'
+2026-10-26T15:27:59.334623-04:00 cisc-hoedus systemd[1]: Started systemd-journald.service - Journal Service.
+2026-10-26T15:27:59.335248-04:00 cisc-hoedus multipathd[644]: multipathd v0.9.4: start up
+2026-10-26T15:27:59.335248-04:00 cisc-hoedus multipathd[644]: reconfigure: setting up paths and maps
+2026-10-26T15:27:59.338830-04:00 cisc-hoedus systemd-udevd[646]: Using default interface naming scheme 'v255'.
+2026-10-26T15:27:59.353905-04:00 cisc-hoedus systemd[1]: Starting systemd-journal-flush.service - Flush Journal to Persistent Storage...
+2026-10-26T15:27:59.359994-04:00 cisc-hoedus systemd-journald[602]: Time spent on flushing to /var/log/journal/1737094ace5e4d4f8fb74559130b254f is 11.173ms for 1249 entries.
+
