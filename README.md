@@ -17,6 +17,8 @@ For the setup, preflight, and full-suite command sequence, follow the
 [campaign runbook](docs/campaign-runbook.md). It links to the detailed
 [cluster setup](docs/cluster-setup.md) and
 [RDMA readiness checks](docs/rdma-readiness.md).
+For disconnected installation and model runs, see the
+[offline bundle guide](offline/README.md).
 
 ## Quick Start
 
@@ -108,12 +110,11 @@ The launcher defaults to `--generation-config vllm`, so model-repository
 request settings. Override `GENERATION_CONFIG` only when that difference is
 intentional.
 
-Serving otherwise defaults to `HF_HUB_OFFLINE=1`. `scripts/run_job.sh` acquires
-the selected pinned model group immediately before its canary or measurement
-runs. Direct `scripts/run_models.sh` calls acquire one selected model before
-launch. Both use the same head-node acquisition; dual-node runs mirror to the
-worker. `run_job.sh` acquires once per model group and applies the campaign's
-existing purge behavior.
+`scripts/run_job.sh` acquires the selected pinned model group immediately before
+its canary or measurement runs. Direct `scripts/run_models.sh` calls acquire
+one selected model before launch. Both use the same head-node acquisition;
+dual-node runs mirror to the worker. `run_job.sh` acquires once per model group
+and applies the campaign's existing purge behavior.
 
 4. In another terminal, run a short smoke test:
 
@@ -453,10 +454,6 @@ export HF_TOKEN=...
 # connectx_env.sh default; read by run_models.sh and audit_nccl_transport.py).
 # export NCCL_DEBUG=INFO
 # export NCCL_DEBUG_SUBSYS=INIT,NET
-# Single-node serving uses online, pinned-revision Hub acquisition by default.
-# Set HF_HUB_OFFLINE=1 only when the required snapshot is already cached.
-# Dual-node serving stays offline after acquisition and mirroring.
-# export HF_HUB_OFFLINE=1
 export BASE_URL=http://127.0.0.1:8000
 # Optional. Set the complete campaign output path, such as:
 # export OUT_DIR=results/rdma-v4-paper-2026-10-22
@@ -488,9 +485,9 @@ export PYTHONNOUSERSITE=1
 
 `CONTAINER_DNS` affects container DNS only, not host resolution. Leave it empty
 when Docker's host-derived resolver works; an explicit public resolver may be
-blocked on managed networks. Offline serving still performs no Hub lookup.
-`DOWNLOAD_DNS` is useful when the model-acquisition container needs a resolver
-different from the serving/Ray containers.
+blocked on managed networks. `DOWNLOAD_DNS` is useful when the
+model-acquisition container needs a resolver different from the serving/Ray
+containers.
 
 Do not put an arbitrary `SERVING_FINGERPRINT` in `.env` to satisfy the full
 config. It must be the SHA-256 hash of the server's actual launch policy;
@@ -1554,9 +1551,9 @@ using temperature to interpret a hardware failure.
   orchestrator continues to the next model rather than aborting the whole
   sweep.
 - `weight_gb`/`kv_cache_gb` blank in the index: the model config or Hub metadata
-  could not be fetched (offline or gated without `HF_TOKEN`). HTTP-derived
-  launch fields such as `gpu_blocks` and `block_size` still populate. For a
-  hybrid attention/Mamba cache, `total_kv_tokens` is intentionally left blank
+  could not be fetched, including when a gated repository lacks `HF_TOKEN`.
+  HTTP-derived launch fields such as `gpu_blocks` and `block_size` still
+  populate. For a hybrid attention/Mamba cache, `total_kv_tokens` is left blank
   unless vLLM exposes a group-aware token capacity or `server_log` supplies its
   startup value; reporting `gpu_blocks * block_size` there would be wrong.
 - Tokenizer download fails: set `HF_TOKEN`, log in with the Hugging Face CLI, or
@@ -1634,10 +1631,6 @@ using temperature to interpret a hardware failure.
   usual cause), commit, and rerun; the marker `OUT_DIR/.canary_passed` makes
   later runs skip a pass that already succeeded. `ALLOW_CANARY_FAILURES=1`
   measures the models that passed.
-- `client tokenizer preflight failed`: the pinned client `transformers`
-  cannot load that model's tokenizer offline. The launch is skipped before any
-  GPU time; check `trust_remote_code` for the entry and that the snapshot is
-  complete (`CHECK_ONLY=1 scripts/predownload.sh`).
 - `NCCL used NET/Socket ... although NCCL_IB_DISABLE=0`: the RoCE handshake
   failed and NCCL fell back to TCP, so the launch was refused rather than
   measured as RDMA. Check `ibdev2netdev` on both nodes and the

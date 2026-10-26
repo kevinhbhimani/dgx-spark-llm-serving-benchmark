@@ -5,7 +5,7 @@
 #   scripts/node_postmortem.sh [CAMPAIGN_DIR]
 #   sudo scripts/node_postmortem.sh [CAMPAIGN_DIR]   # if the journal is unreadable
 #
-# Writes everything to ./node-postmortem-<host>-<UTC timestamp>/ and prints the
+# Writes everything to ./results/node-postmortem-<host>-<UTC timestamp>/ and prints the
 # directory. CAMPAIGN_DIR (optional) is a campaign OUT_DIR whose run_job and
 # server logs should be summarized as well.
 #
@@ -27,7 +27,7 @@ set -uo pipefail
 
 CAMPAIGN_DIR="${1:-}"
 HOST="$(hostname -s 2>/dev/null || echo unknown)"
-OUT="node-postmortem-${HOST}-$(date -u +%Y%m%dT%H%M%SZ)"
+OUT="results/node-postmortem-${HOST}-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT" || exit 1
 
 # Run one command into OUT/<name>, recording its exit status but never aborting.
