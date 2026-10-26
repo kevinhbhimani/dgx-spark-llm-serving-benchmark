@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Delete finished models' snapshots from the head and worker HF caches.
+"""Container-side implementation for purge_model_cache.sh.
 
 Runs inside the head vLLM/Ray container, as root and with the same cache mount
-as serving (the cache is written by containers, so the host user usually
-cannot delete it). The worker side runs as a Ray task pinned to the worker
-node, the same no-SSH path mirror_worker_cache.py uses.
+as serving. The worker purge runs as a Ray task pinned to that node.
 
 Only model revisions named by validated repo ids are removed. Hugging Face's
 cache API keeps shared blobs that other cached revisions still use and removes
@@ -12,9 +10,10 @@ blobs with no remaining references. With --compile-cache, the vLLM
 torch.compile cache is cleared too. Nothing is deleted on a node that is still
 running a vLLM server or a Ray serving worker.
 
-Usage: purge_model_cache.py [--worker IP] [--compile-cache] [--dry-run]
-                            [--prune-cache-garbage | --no-prune-cache-garbage]
-                            REPO [...]
+Usage: purge_model_cache_container.py [--worker IP] [--compile-cache]
+                                       [--dry-run]
+                                       [--prune-cache-garbage | --no-prune-cache-garbage]
+                                       REPO [...]
 """
 from __future__ import annotations
 
@@ -29,7 +28,7 @@ from typing import TypedDict
 
 from huggingface_hub import scan_cache_dir
 
-HUB = "/root/.cache/huggingface/hub"
+HUB = os.environ.get("HF_HUB_CACHE", "/hf-cache/hub")
 COMPILE_CACHE = os.path.join(
     os.environ.get("VLLM_CACHE_ROOT", "/root/.cache/vllm"), "torch_compile_cache"
 )

@@ -54,9 +54,26 @@
 # The launcher checks this fraction of each node's detected MemTotal and passes
 # it to vLLM. vLLM applies --gpu-memory-utilization per instance, so reserve
 # each node and run one serving instance per node at a time.
+# Set GPU_UTIL to override the shared target for planning, validation, and launch.
 gpu_util_default: 0.80
 
 models:
+
+
+
+
+  # Qwen here for now to test why it fails
+  - name: Qwen/Qwen3.6-35B-A3B-FP8                    # 37.5 GB
+    label: qwen3.6-35b-a3b-fp8
+    revision: 95a723d08a9490559dae23d0cff1d9466213d989
+    configs: [single, tp2, pp2]
+    max_model_len: 8704
+    meta: {pretty: "Qwen3.6-35B-A3B FP8", arch: moe, attention: linear-hybrid, quant: fp8, params_b: 36.0, active_b: 3.0, ladder_base: qwen3.6-35b-a3b, nvidia: false}
+
+
+
+
+
   # ---- 1. Llama 3.1 8B precision ladder: dense, full attention ----------------
   # Same labels and revisions as the PMBS26 TCP baseline. FP8 and NVFP4 are
   # NVIDIA ModelOpt checkpoints of the same base (FP8 KV cache); the base repo
@@ -116,13 +133,6 @@ models:
     max_model_len: 8704
     meta: {pretty: "Qwen3.6-35B-A3B", arch: moe, attention: linear-hybrid, quant: bf16, params_b: 36.0, active_b: 3.0, ladder_base: qwen3.6-35b-a3b, nvidia: false}
 
-  - name: Qwen/Qwen3.6-35B-A3B-FP8                    # 37.5 GB
-    label: qwen3.6-35b-a3b-fp8
-    revision: 95a723d08a9490559dae23d0cff1d9466213d989
-    configs: [single, tp2, pp2]
-    max_model_len: 8704
-    meta: {pretty: "Qwen3.6-35B-A3B FP8", arch: moe, attention: linear-hybrid, quant: fp8, params_b: 36.0, active_b: 3.0, ladder_base: qwen3.6-35b-a3b, nvidia: false}
-
   - name: nvidia/Qwen3.6-35B-A3B-NVFP4                # 23.5 GB
     label: qwen3.6-35b-a3b-nvfp4
     revision: 1355db6a052410cfd62085d94b58866fd0f2c3c5
@@ -160,7 +170,7 @@ models:
 
   # ---- 7. gpt-oss-120b: MoE, alternating sliding-window attention, MXFP4 -----
   # Native MXFP4 checkpoint. The repo also carries original/ and metal/ copies
-  # (195.8 GB total); predownload.sh skips both.
+  # (195.8 GB total); the snapshot acquisition command skips both.
   - name: openai/gpt-oss-120b                         # 65.3 GB
     label: gpt-oss-120b
     revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a

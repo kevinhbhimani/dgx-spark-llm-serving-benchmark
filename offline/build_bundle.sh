@@ -1,45 +1,71 @@
 #!/usr/bin/env bash
-# Build a transferable runtime bundle from the current repository checkout.
+# Assemble an offline bundle for the DGX Spark two-node benchmark.
+#
+# Run on a machine with internet access and Docker. The bundle carries the
+# derived vLLM+Ray image, the pinned client wheelhouse, and the repository
+# source. Model weights are excluded unless --include-models is passed.
+#
+# Usage:
+#   offline/build_bundle.sh [--include-models] [OUTPUT_DIR]
+#
+# Environment overrides:
+#   VLLM_IMAGE       base image (default: pinned digest in scripts/connectx_env.sh)
+#   RAY_VERSION      Ray version baked into the derived image (default: 2.53.0)
+#   TARGET_PLATFORM  image platform (default: linux/arm64)
+#   TARGET_PYTHON    client Python version (default: 3.12)
+#   DERIVED_IMAGE    derived image tag (default: dgx-spark-vllm-ray:$RAY_VERSION)
+#   ZSTD_LEVEL       zstd compression level (default: 3)
+#   MODEL_CACHE_DIR  Hugging Face cache root for --include-models (default: HF_CACHE)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 
-if [[ -f "$REPO_ROOT/scripts/connectx_env.sh" ]]; then
-  # shellcheck source=../scripts/connectx_env.sh
-  source "$REPO_ROOT/scripts/connectx_env.sh"
-fi
+INCLUDE_MODELS=0
+OUTPUT_DIR=""
+while (($#)); do
+  case "$1" in
+    --include-models)
+      INCLUDE_MODELS=1
+      ;;
+    --help|-h)
+      cat <<EOF
+Usage: $(basename "$0") [--include-models] [OUTPUT_DIR]
 
-RAY_CONSTRAINTS="$REPO_ROOT/scripts/ray-runtime-constraints.txt"
-REQUIREMENTS_FILE=""
-if [[ -f "$REPO_ROOT/requirements.lock" ]]; then
-  REQUIREMENTS_FILE="$REPO_ROOT/requirements.lock"
-elif [[ -f "$REPO_ROOT/requirements.txt" ]]; then
-  REQUIREMENTS_FILE="$REPO_ROOT/requirements.txt"
-fi
+By default, model weights are excluded. When --include-models is set, the
+Hugging Face hub cache under MODEL_CACHE_DIR or HF_CACHE is added to the bundle.
+EOF
+      exit 0
+      ;;
+    --*)
+      echo "[offline] unknown option: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$OUTPUT_DIR" ]]; then
+        echo "[offline] only one OUTPUT_DIR may be specified" >&2
+        exit 2
+      fi
+      OUTPUT_DIR="$1"
+      ;;
+  esac
+  shift
+done
 
-if [[ -z "${RAY_VERSION:-}" && -f "$RAY_CONSTRAINTS" ]]; then
-  RAY_VERSION="$(awk -F '==' 'tolower($1) == "ray" { print $2; exit }' "$RAY_CONSTRAINTS")"
-fi
-VLLM_IMAGE="${VLLM_IMAGE:-}"
-RAY_VERSION="${RAY_VERSION:-}"
-if [[ -z "$VLLM_IMAGE" ]]; then
-  echo "[offline] set VLLM_IMAGE or define it in scripts/connectx_env.sh" >&2
-  exit 1
-fi
-if [[ -z "$RAY_VERSION" ]]; then
-  echo "[offline] set RAY_VERSION or pin ray in scripts/ray-runtime-constraints.txt" >&2
-  exit 1
-fi
-if [[ -z "$REQUIREMENTS_FILE" ]]; then
-  echo "[offline] requirements.lock or requirements.txt is required" >&2
-  exit 1
-fi
+# shellcheck source=../scripts/connectx_env.sh
+source "$REPO_ROOT/scripts/connectx_env.sh"
 
-if [[ -f "$RAY_CONSTRAINTS" ]]; then
-  CONSTRAINED_RAY_VERSION="$(awk -F '==' 'tolower($1) == "ray" { print $2; exit }' "$RAY_CONSTRAINTS")"
-  if [[ -n "$CONSTRAINED_RAY_VERSION" && "$RAY_VERSION" != "$CONSTRAINED_RAY_VERSION" ]]; then
-    echo "[offline] RAY_VERSION=$RAY_VERSION differs from ray==$CONSTRAINED_RAY_VERSION in $RAY_CONSTRAINTS" >&2
+TARGET_PLATFORM="${TARGET_PLATFORM:-linux/arm64}"
+TARGET_PYTHON="${TARGET_PYTHON:-3.12}"
+DERIVED_IMAGE="${DERIVED_IMAGE:-dgx-spark-vllm-ray:${RAY_VERSION}}"
+ZSTD_LEVEL="${ZSTD_LEVEL:-3}"
+OUTPUT_DIR="${OUTPUT_DIR:-$HERE/offline-bundle}"
+MODEL_CACHE_ARCHIVE=none
+if (( INCLUDE_MODELS )); then
+  MODEL_CACHE_DIR="${MODEL_CACHE_DIR:-${HF_CACHE:-}}"
+  if [[ -z "$MODEL_CACHE_DIR" || ! -d "$MODEL_CACHE_DIR/hub" || -L "$MODEL_CACHE_DIR/hub" ]] \
+      || ! find "$MODEL_CACHE_DIR/hub" -mindepth 1 -print -quit | grep -q .; then
+    echo "[offline] --include-models requires a non-empty hub/ directory under MODEL_CACHE_DIR or HF_CACHE" >&2
     exit 1
   fi
 fi
@@ -192,21 +218,15 @@ else
   echo "[offline] no Hugging Face hub cache found; model weights are not included"
 fi
 
-cp "$HERE/install_offline.sh" "$STAGING_DIR/install_offline.sh"
-chmod +x "$STAGING_DIR/install_offline.sh"
-SOURCE_REVISION="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf unknown)"
-if [[ "$SOURCE_REVISION" == "unknown" ]]; then
-  SOURCE_WORKTREE_STATE="unknown"
+if (( INCLUDE_MODELS )); then
+  MODEL_CACHE_ARCHIVE=model-cache.tar
+  echo "[offline] archiving Hugging Face hub cache from $MODEL_CACHE_DIR"
+  tar -C "$MODEL_CACHE_DIR" --exclude='hub/.locks' -cf "$OUTPUT_DIR/$MODEL_CACHE_ARCHIVE" hub
 else
-  SOURCE_STATUS="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)"
-  if [[ -n "$SOURCE_STATUS" ]]; then
-    SOURCE_WORKTREE_STATE="modified"
-  else
-    SOURCE_WORKTREE_STATE="clean"
-  fi
+  echo "[offline] model weights excluded; pass --include-models to add the Hugging Face hub cache"
 fi
-cat > "$STAGING_DIR/BUNDLE_INFO" <<EOF
-bundle_format=2
+
+cat > "$OUTPUT_DIR/BUNDLE_INFO" <<EOF
 derived_image=$DERIVED_IMAGE
 base_image=$VLLM_IMAGE
 base_image_id=$BASE_IMAGE_ID
@@ -220,8 +240,6 @@ requirements_sha256=$(sha256sum "$REQUIREMENTS_FILE" | awk '{print $1}')
 image_archive=$IMAGE_ARCHIVE
 source_archive=$SOURCE_ARCHIVE
 model_cache_archive=$MODEL_CACHE_ARCHIVE
-source_revision=$SOURCE_REVISION
-source_worktree_state=$SOURCE_WORKTREE_STATE
 image_id=$(docker image inspect --format '{{.Id}}' "$DERIVED_IMAGE")
 built_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF

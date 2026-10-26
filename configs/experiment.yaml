@@ -97,5 +97,4 @@ min_successful_requests: 20
 
 config_label: "single"
 collect_hf_metadata: false
-out_dir: "results"
 run_note: ""

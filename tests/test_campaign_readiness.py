@@ -55,6 +55,48 @@ class PlanningReadinessTests(unittest.TestCase):
                     self.plan()
                 self.configuration = original
 
+    def test_gpu_util_override_changes_expected_and_launch_value(self) -> None:
+        with mock.patch.dict(os.environ, {"GPU_UTIL": "0.85"}):
+            plan = self.plan()
+            self.assertEqual(plan["gpu_utilization"], 0.85)
+            self.assertEqual(plan["matrix"][0]["gpu_utilization"], 0.85)
+            self.assertEqual(
+                validator.validate_models_yaml(self.models)[0].gpu_utilization,
+                0.85,
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/models_for_config.py",
+                    str(self.models),
+                    "single",
+                ],
+                cwd=ROOT, text=True, capture_output=True, check=True,
+            )
+        self.assertEqual(result.stdout.strip().split("|")[4], "0.85")
+
+    def test_gpu_util_override_rejects_out_of_range_and_non_finite_values(self) -> None:
+        self.models.write_text(yaml.safe_dump({"models": [self.model]}))
+        for value in ("0", "1.1", "nan", "inf", "invalid"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"GPU_UTIL": value}
+            ):
+                with self.assertRaisesRegex(
+                    validator.CampaignValidationError, "GPU_UTIL"
+                ):
+                    validator.validate_models_yaml(self.models)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/models_for_config.py",
+                        str(self.models),
+                        "single",
+                    ],
+                    cwd=ROOT, text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("GPU_UTIL", result.stderr)
+
     def test_trace_context_limit_uses_requests_instead_of_bucket_maximum(self):
         self.configuration["trace_path"] = "trace.jsonl"
         trace = self.root / "trace.jsonl"
@@ -153,8 +195,9 @@ class MicrobenchArtifactTests(unittest.TestCase):
             wrapper = scripts / name
             wrapper.write_text('#!/bin/bash\nif [[ "${1:-}" == "--fingerprint-only" ]]; then echo identity; else echo RERUN; fi\n')
             wrapper.chmod(0o755)
-            out = work / "results"
-            out.mkdir()
+            campaign = work / "campaign"
+            out = campaign / "results"
+            out.mkdir(parents=True)
             artifact_id = "identity" if matching else "old-identity"
             if kind == "allreduce":
                 artifact = out / f"allreduce_ray_{artifact_id}_fixture.csv"
@@ -167,7 +210,10 @@ class MicrobenchArtifactTests(unittest.TestCase):
             else:
                 self.write_interconnect(out / f"interconnect_extra_{artifact_id}_fixture.csv", transport=transport)
             environment = os.environ.copy()
-            environment.update(OUT_DIR=str(out), PYTHON=sys.executable, NCCL_IB_DISABLE="0")
+            environment.update(
+                OUT_DIR=str(campaign), CAMPAIGN_RESULTS_DIR=str(out),
+                PYTHON=sys.executable, NCCL_IB_DISABLE="0",
+            )
             result = subprocess.run(
                 ["bash", "-c", f"log() {{ :; }}\n{function}() {{{body}\n}}\n{function}"],
                 cwd=work, env=environment, text=True, capture_output=True, check=False,
@@ -195,6 +241,7 @@ class ReplicateLaunchTests(unittest.TestCase):
         environment.update(
             REPEATS="3", ONLY_REPEAT="", STATUS_ONLY="0", CANARY_ONLY="0",
             STATUS_MISSING="0", CONFIG="single", OUT_DIR="results",
+            CAMPAIGN_RESULTS_DIR="results/results",
             LAST_SERVER_LOG="",
         )
         environment.update(overrides)

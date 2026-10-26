@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Delete finished models' pinned snapshots from the head and worker HF caches.
+# Operator entry point for model cache cleanup.
+# Selects repos from MODELS_YAML and runs the container-side Python implementation.
 #
 #   MODEL_LABELS="qwen3.6-27b" scripts/purge_model_cache.sh
 #   DRY_RUN=1 MODEL_LABELS="qwen3.6-27b qwen3.6-27b-fp8" scripts/purge_model_cache.sh
@@ -25,6 +26,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+acquire_resource_lock || exit 1
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 PYTHON="${PYTHON:-python3}"
@@ -94,14 +96,27 @@ if [[ "$PURGE_WORKER" == "1" ]]; then
   args+=(--worker "$HOEDUS_IP")
 fi
 
+if [[ "$PURGE_WORKER" == "1" ]]; then
+  wait_for_resources_idle required || exit 1
+else
+  wait_for_resources_idle auto || exit 1
+fi
+
 echo "[purge] ${#REPOS[@]} repo(s) for '${MODEL_LABELS:-none}'" \
      "(worker: $([[ "$PURGE_WORKER" == "1" ]] && echo "$HOEDUS_IP" || echo no))"
 if [[ "$ray_up" == "1" ]]; then
-  docker cp "$HERE/purge_model_cache.py" "$VLLM_CONTAINER":/tmp/purge_model_cache.py
-  docker exec "$VLLM_CONTAINER" \
-    python3 -u /tmp/purge_model_cache.py "${args[@]}" "${REPOS[@]}"
+  docker cp "$HERE/purge_model_cache_container.py" \
+    "$VLLM_CONTAINER":/tmp/purge_model_cache_container.py
+  docker exec -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
+    -e HF_MODULES_CACHE=/hf-cache/modules \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
+    "$VLLM_CONTAINER" \
+    python3 -u /tmp/purge_model_cache_container.py "${args[@]}" "${REPOS[@]}"
 else
-  docker run --rm -i -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
-    -v "$HF_CACHE":/root/.cache/huggingface "$VLLM_IMAGE" \
-    python3 -u - "${args[@]}" "${REPOS[@]}" < "$HERE/purge_model_cache.py"
+  docker run --rm -i -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
+    -e HF_MODULES_CACHE=/hf-cache/modules \
+    -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
+    -v "$HF_CACHE":/hf-cache "$VLLM_IMAGE" \
+    python3 -u - "${args[@]}" "${REPOS[@]}" \
+      < "$HERE/purge_model_cache_container.py"
 fi

@@ -13,85 +13,33 @@ import importlib.metadata
 import json
 import os
 import platform
-import re
 import site
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+if __package__:
+    from .contracts.dependency_lock import (
+        LockFileError,
+        LockedDistribution,
+        normalize_distribution_name,
+        parse_lock,
+    )
+else:
+    from contracts.dependency_lock import (
+        LockFileError,
+        LockedDistribution,
+        normalize_distribution_name,
+        parse_lock,
+    )
 
 
 MINIMUM_PYTHON = (3, 12)
 PIP_CHECK_TIMEOUT_SECONDS = 120.0
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOCK_PATH = REPOSITORY_ROOT / "requirements.lock"
-_PIN_RE = re.compile(
-    r"(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
-    r"==(?P<version>[A-Za-z0-9][A-Za-z0-9._+!-]*)"
-)
-
-
-class LockFileError(ValueError):
-    """Raised when the lock file is not a list of unique exact pins."""
-
-
-@dataclass(frozen=True)
-class LockedDistribution:
-    name: str
-    version: str
-
-    @property
-    def normalized_name(self) -> str:
-        return normalize_distribution_name(self.name)
-
-    def as_dict(self) -> dict[str, str]:
-        return {
-            "name": self.name,
-            "normalized_name": self.normalized_name,
-            "version": self.version,
-        }
-
-
-def normalize_distribution_name(name: str) -> str:
-    """Return the distribution-name normalization used by package indexes."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
-def parse_lock(path: Path) -> list[LockedDistribution]:
-    """Parse *path*, accepting only unique ``distribution==version`` pins."""
-    try:
-        text = path.read_bytes().decode("utf-8")
-    except FileNotFoundError as exc:
-        raise LockFileError(f"lock file does not exist: {path}") from exc
-    except (OSError, UnicodeDecodeError) as exc:
-        raise LockFileError(f"cannot read lock file {path}: {exc}") from exc
-
-    pins: list[LockedDistribution] = []
-    seen: dict[str, int] = {}
-    for line_number, raw_line in enumerate(text.splitlines(), start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = _PIN_RE.fullmatch(line)
-        if match is None:
-            raise LockFileError(
-                f"{path}:{line_number}: expected exactly name==version"
-            )
-        pin = LockedDistribution(match.group("name"), match.group("version"))
-        previous = seen.get(pin.normalized_name)
-        if previous is not None:
-            raise LockFileError(
-                f"{path}:{line_number}: duplicate distribution {pin.name!r} "
-                f"(first pinned on line {previous})"
-            )
-        seen[pin.normalized_name] = line_number
-        pins.append(pin)
-
-    if not pins:
-        raise LockFileError(f"lock file contains no exact pins: {path}")
-    return pins
 
 
 def is_real_virtual_environment() -> bool:
