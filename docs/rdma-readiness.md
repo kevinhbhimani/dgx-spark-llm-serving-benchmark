@@ -33,9 +33,11 @@ PLAN_ONLY=1 scripts/run_job.sh
 ```
 
 The default plan is 19 checkpoints, 53 model/config curves, 159 independent
-server launches, and 1272 measurement windows. Its minimum measurement time is
-about 265 sequential hours; warmup and sample-count extensions, canaries,
-downloads, and launches add time. Use a fresh output directory after changing
+server launches, and 954 measurement windows at concurrencies 1 4 8 16 32 64.
+Its minimum measurement time is about 198 sequential hours; warmup and
+sample-count extensions, canaries, downloads, and launches bring the expected
+total to about 279 hours (about 312 hours with pessimistic latencies).
+Use a fresh output directory after changing
 the experiment, dependencies, harness, material serving policy, or `GPU_UTIL`
 target. The campaign GPU-memory target defaults to `0.80`. Set `GPU_UTIL` on
 Diya to override it; planning, validation, memory preflight, and serving
@@ -65,7 +67,7 @@ Run the local checks and start the Ray head on Diya:
 scripts/verify_connectx.sh
 scripts/hardware_smoke.sh                    # Diya-only diagnostic output
 SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
-  SMOKE_CONCURRENCIES="1 128" OUT_DIR=results/smoke-lightning-2026-10-22 \
+  SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22 \
   scripts/hardware_smoke.sh                  # top load; see the 26.09 note below
 scripts/start_ray.sh head
 ```
@@ -119,7 +121,7 @@ per-device bandwidth measurements.
 The pinned NGC 26.09 image has a documented Spark constraint for Nemotron 3
 Super NVFP4: `--max-num-seqs 4`. The model matrix records `max_num_seqs: 4` for
 that checkpoint and fingerprints this policy across serving configurations.
-The client still sweeps up to 128 outstanding requests; above four, server
+The client still sweeps up to 64 outstanding requests; above four, server
 queueing is part of the measured latency. Report this server sequence limit in
 the paper. The FP8 checkpoint is not covered by the note and runs uncapped, so
 its comparison with NVFP4 is matched only at concurrency 4 or below. See the
@@ -135,7 +137,7 @@ policy. Report that kernel autotuning was disabled in the paper.
 The same note names Nemotron Nano V3 NVFP4. Nemotron 3.5 Lightning 30B-A3B
 NVFP4 is the same class of checkpoint (30B-A3B Mamba hybrid), and the note does
 not say whether it applies. The canary sends one short request, so it cannot
-catch a failure that appears only under load. Run the concurrency-128 smoke
+catch a failure that appears only under load. Run the concurrency-64 smoke
 check above before the campaign. If it fails, add `max_num_seqs: 4` to that
 entry, commit, and start from a fresh output directory.
 
@@ -148,7 +150,7 @@ with:
 ```bash
 python scripts/validate_campaign.py verify \
   --models configs/models.yaml --experiment configs/experiment.yaml \
-  --out-dir "$OUT_DIR" --concurrencies 1 2 4 8 16 32 64 128 --repeats 3 \
+  --out-dir "$OUT_DIR" --concurrencies 1 4 8 16 32 64 --repeats 3 \
   --manifest "$OUT_DIR/campaign_manifest.json"
 ```
 
