@@ -1,0 +1,26 @@
+$ bash -c free -g; head -20 /proc/meminfo
+               total        used        free      shared  buff/cache   available
+Mem:             121           7         109           0           5         114
+Swap:             15           0          15
+MemTotal:       127533036 kB
+MemFree:        114764788 kB
+MemAvailable:   119691636 kB
+Buffers:          122848 kB
+Cached:          5741696 kB
+SwapCached:            0 kB
+Active:          4368104 kB
+Inactive:        4314904 kB
+Active(anon):    2900964 kB
+Inactive(anon):        0 kB
+Active(file):    1467140 kB
+Inactive(file):  4314904 kB
+Unevictable:      174512 kB
+Mlocked:          166412 kB
+SwapTotal:      16777212 kB
+SwapFree:       16777212 kB
+Zswap:                 0 kB
+Zswapped:              0 kB
+Dirty:             58020 kB
+Writeback:             0 kB
+
+[exit 0]

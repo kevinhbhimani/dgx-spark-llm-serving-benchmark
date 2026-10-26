@@ -1,0 +1,305 @@
+$ journalctl -b -1 -n 300 --no-pager -o short-iso-precise
+2026-10-26T15:27:59.307030-04:00 cisc-hoedus kernel: usb usb4: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 7.00
+2026-10-26T15:27:59.307175-04:00 cisc-hoedus kernel: usb usb4: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.307322-04:00 cisc-hoedus kernel: usb usb4: Product: xHCI Host Controller
+2026-10-26T15:27:59.307467-04:00 cisc-hoedus kernel: usb usb4: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.307615-04:00 cisc-hoedus kernel: usb usb4: SerialNumber: NVDA8000:01
+2026-10-26T15:27:59.307742-04:00 cisc-hoedus kernel: hub 4-0:1.0: USB hub found
+2026-10-26T15:27:59.307862-04:00 cisc-hoedus kernel: hub 4-0:1.0: 1 port detected
+2026-10-26T15:27:59.307960-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:02: xHCI Host Controller
+2026-10-26T15:27:59.308057-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:02: new USB bus registered, assigned bus number 5
+2026-10-26T15:27:59.308070-04:00 cisc-hoedus kernel: r8127 Ethernet controller driver 11.014.00-NAPI loaded
+2026-10-26T15:27:59.308164-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:02: hcc params 0x01844f91 hci version 0x120 quirks 0x0008000000000010
+2026-10-26T15:27:59.308261-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:02: irq 34, io mem 0x1dde0000
+2026-10-26T15:27:59.308356-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:02: xHCI Host Controller
+2026-10-26T15:27:59.308450-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:02: new USB bus registered, assigned bus number 6
+2026-10-26T15:27:59.308545-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:02: Host supports USB 3.2 Enhanced SuperSpeed
+2026-10-26T15:27:59.308704-04:00 cisc-hoedus kernel: usb usb5: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 7.00
+2026-10-26T15:27:59.308858-04:00 cisc-hoedus kernel: usb usb5: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.309007-04:00 cisc-hoedus kernel: usb usb5: Product: xHCI Host Controller
+2026-10-26T15:27:59.309150-04:00 cisc-hoedus kernel: usb usb5: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.309297-04:00 cisc-hoedus kernel: usb usb5: SerialNumber: NVDA8000:02
+2026-10-26T15:27:59.309423-04:00 cisc-hoedus kernel: hub 5-0:1.0: USB hub found
+2026-10-26T15:27:59.309549-04:00 cisc-hoedus kernel: hub 5-0:1.0: 1 port detected
+2026-10-26T15:27:59.309713-04:00 cisc-hoedus kernel: usb usb6: We don't know the algorithms for LPM for this host, disabling LPM.
+2026-10-26T15:27:59.309865-04:00 cisc-hoedus kernel: usb usb6: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 7.00
+2026-10-26T15:27:59.311102-04:00 cisc-hoedus kernel: usb usb6: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.311256-04:00 cisc-hoedus kernel: usb usb6: Product: xHCI Host Controller
+2026-10-26T15:27:59.311408-04:00 cisc-hoedus kernel: usb usb6: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.311552-04:00 cisc-hoedus kernel: usb usb6: SerialNumber: NVDA8000:02
+2026-10-26T15:27:59.311685-04:00 cisc-hoedus kernel: hub 6-0:1.0: USB hub found
+2026-10-26T15:27:59.312257-04:00 cisc-hoedus kernel: hub 6-0:1.0: 1 port detected
+2026-10-26T15:27:59.312271-04:00 cisc-hoedus kernel: Key type psk registered
+2026-10-26T15:27:59.312373-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:03: xHCI Host Controller
+2026-10-26T15:27:59.312471-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:03: new USB bus registered, assigned bus number 7
+2026-10-26T15:27:59.312567-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:03: hcc params 0x01844f91 hci version 0x120 quirks 0x0008000000000010
+2026-10-26T15:27:59.313077-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:03: irq 35, io mem 0x1de10000
+2026-10-26T15:27:59.316577-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:03: xHCI Host Controller
+2026-10-26T15:27:59.316720-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:03: new USB bus registered, assigned bus number 8
+2026-10-26T15:27:59.316830-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:03: Host supports USB 3.2 Enhanced SuperSpeed
+2026-10-26T15:27:59.316998-04:00 cisc-hoedus kernel: usb usb7: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 7.00
+2026-10-26T15:27:59.317149-04:00 cisc-hoedus kernel: usb usb7: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.317300-04:00 cisc-hoedus kernel: usb usb7: Product: xHCI Host Controller
+2026-10-26T15:27:59.317447-04:00 cisc-hoedus kernel: usb usb7: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.317597-04:00 cisc-hoedus kernel: usb usb7: SerialNumber: NVDA8000:03
+2026-10-26T15:27:59.318624-04:00 cisc-hoedus kernel: hub 7-0:1.0: USB hub found
+2026-10-26T15:27:59.318754-04:00 cisc-hoedus kernel: hub 7-0:1.0: 1 port detected
+2026-10-26T15:27:59.318924-04:00 cisc-hoedus kernel: usb usb8: We don't know the algorithms for LPM for this host, disabling LPM.
+2026-10-26T15:27:59.319082-04:00 cisc-hoedus kernel: usb usb8: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 7.00
+2026-10-26T15:27:59.319233-04:00 cisc-hoedus kernel: usb usb8: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.319381-04:00 cisc-hoedus kernel: usb usb8: Product: xHCI Host Controller
+2026-10-26T15:27:59.319529-04:00 cisc-hoedus kernel: usb usb8: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.319682-04:00 cisc-hoedus kernel: usb usb8: SerialNumber: NVDA8000:03
+2026-10-26T15:27:59.319807-04:00 cisc-hoedus kernel: hub 8-0:1.0: USB hub found
+2026-10-26T15:27:59.319927-04:00 cisc-hoedus kernel: hub 8-0:1.0: 1 port detected
+2026-10-26T15:27:59.320028-04:00 cisc-hoedus kernel: xhci-hcd NVDA8001:00: xHCI Host Controller
+2026-10-26T15:27:59.320123-04:00 cisc-hoedus kernel: xhci-hcd NVDA8001:00: new USB bus registered, assigned bus number 9
+2026-10-26T15:27:59.320221-04:00 cisc-hoedus kernel: xhci-hcd NVDA8001:00: hcc params 0x01844f91 hci version 0x120 quirks 0x0008000000000010
+2026-10-26T15:27:59.320316-04:00 cisc-hoedus kernel: xhci-hcd NVDA8001:00: irq 36, io mem 0x1d860000
+2026-10-26T15:27:59.320412-04:00 cisc-hoedus kernel: xhci-hcd NVDA8001:00: xHCI Host Controller
+2026-10-26T15:27:59.320506-04:00 cisc-hoedus kernel: xhci-hcd NVDA8001:00: new USB bus registered, assigned bus number 10
+2026-10-26T15:27:59.320601-04:00 cisc-hoedus kernel: xhci-hcd NVDA8001:00: Host supports USB 3.2 Enhanced SuperSpeed
+2026-10-26T15:27:59.320761-04:00 cisc-hoedus kernel: usb usb9: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 7.00
+2026-10-26T15:27:59.320914-04:00 cisc-hoedus kernel: usb usb9: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.321062-04:00 cisc-hoedus kernel: usb usb9: Product: xHCI Host Controller
+2026-10-26T15:27:59.321210-04:00 cisc-hoedus kernel: usb usb9: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.321355-04:00 cisc-hoedus kernel: usb usb9: SerialNumber: NVDA8001:00
+2026-10-26T15:27:59.321486-04:00 cisc-hoedus kernel: hub 9-0:1.0: USB hub found
+2026-10-26T15:27:59.321615-04:00 cisc-hoedus kernel: hub 9-0:1.0: 1 port detected
+2026-10-26T15:27:59.321775-04:00 cisc-hoedus kernel: usb usb10: We don't know the algorithms for LPM for this host, disabling LPM.
+2026-10-26T15:27:59.321928-04:00 cisc-hoedus kernel: usb usb10: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 7.00
+2026-10-26T15:27:59.322074-04:00 cisc-hoedus kernel: usb usb10: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.322223-04:00 cisc-hoedus kernel: usb usb10: Product: xHCI Host Controller
+2026-10-26T15:27:59.322367-04:00 cisc-hoedus kernel: usb usb10: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.322516-04:00 cisc-hoedus kernel: usb usb10: SerialNumber: NVDA8001:00
+2026-10-26T15:27:59.322649-04:00 cisc-hoedus kernel: hub 10-0:1.0: USB hub found
+2026-10-26T15:27:59.322769-04:00 cisc-hoedus kernel: hub 10-0:1.0: 1 port detected
+2026-10-26T15:27:59.322868-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:04: xHCI Host Controller
+2026-10-26T15:27:59.322965-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:04: new USB bus registered, assigned bus number 11
+2026-10-26T15:27:59.323059-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:04: hcc params 0x01844f91 hci version 0x120 quirks 0x0008000000000010
+2026-10-26T15:27:59.323154-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:04: irq 37, io mem 0x1d870000
+2026-10-26T15:27:59.323248-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:04: xHCI Host Controller
+2026-10-26T15:27:59.323344-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:04: new USB bus registered, assigned bus number 12
+2026-10-26T15:27:59.323441-04:00 cisc-hoedus kernel: xhci-hcd NVDA8000:04: Host supports USB 3.2 Enhanced SuperSpeed
+2026-10-26T15:27:59.323593-04:00 cisc-hoedus kernel: usb usb11: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 7.00
+2026-10-26T15:27:59.323746-04:00 cisc-hoedus kernel: usb usb11: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.323890-04:00 cisc-hoedus kernel: usb usb11: Product: xHCI Host Controller
+2026-10-26T15:27:59.324035-04:00 cisc-hoedus kernel: usb usb11: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.324181-04:00 cisc-hoedus kernel: usb usb11: SerialNumber: NVDA8000:04
+2026-10-26T15:27:59.324193-04:00 cisc-hoedus kernel: r8127: This product is covered by one or more of the following patents: US6,570,884, US6,115,776, and US6,327,625.
+2026-10-26T15:27:59.324205-04:00 cisc-hoedus kernel: r8127  Copyright (C) 2025 Realtek NIC software team <nicfae@realtek.com> 
+                                                      This program comes with ABSOLUTELY NO WARRANTY; for details, please see <http://www.gnu.org/licenses/>. 
+                                                      This is free software, and you are welcome to redistribute it under certain conditions; see <http://www.gnu.org/licenses/>. 
+2026-10-26T15:27:59.324314-04:00 cisc-hoedus kernel: nvme nvme0: pci function 0004:01:00.0
+2026-10-26T15:27:59.324449-04:00 cisc-hoedus kernel: hub 11-0:1.0: USB hub found
+2026-10-26T15:27:59.324576-04:00 cisc-hoedus kernel: hub 11-0:1.0: 2 ports detected
+2026-10-26T15:27:59.324747-04:00 cisc-hoedus kernel: usb usb12: We don't know the algorithms for LPM for this host, disabling LPM.
+2026-10-26T15:27:59.324902-04:00 cisc-hoedus kernel: usb usb12: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 7.00
+2026-10-26T15:27:59.325049-04:00 cisc-hoedus kernel: usb usb12: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+2026-10-26T15:27:59.325196-04:00 cisc-hoedus kernel: usb usb12: Product: xHCI Host Controller
+2026-10-26T15:27:59.325343-04:00 cisc-hoedus kernel: usb usb12: Manufacturer: Linux 7.0.0-1019-nvidia xhci-hcd
+2026-10-26T15:27:59.325490-04:00 cisc-hoedus kernel: usb usb12: SerialNumber: NVDA8000:04
+2026-10-26T15:27:59.325620-04:00 cisc-hoedus kernel: hub 12-0:1.0: USB hub found
+2026-10-26T15:27:59.325739-04:00 cisc-hoedus kernel: hub 12-0:1.0: 1 port detected
+2026-10-26T15:27:59.325838-04:00 cisc-hoedus kernel: nvme nvme0: allocated 64 MiB host memory buffer (1 segment).
+2026-10-26T15:27:59.325931-04:00 cisc-hoedus kernel: nvme nvme0: 20/0/0 default/read/poll queues
+2026-10-26T15:27:59.325942-04:00 cisc-hoedus kernel:  nvme0n1: p1 p2
+2026-10-26T15:27:59.326059-04:00 cisc-hoedus kernel: r8127 0007:01:00.0 enP7s7: renamed from eth0
+2026-10-26T15:27:59.326193-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: enabling device (0000 -> 0002)
+2026-10-26T15:27:59.326310-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: firmware version: 28.50.1002
+2026-10-26T15:27:59.326423-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+2026-10-26T15:27:59.326590-04:00 cisc-hoedus kernel: usb 11-2: new high-speed USB device number 2 using xhci-hcd
+2026-10-26T15:27:59.326706-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+2026-10-26T15:27:59.326818-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+2026-10-26T15:27:59.326929-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+2026-10-26T15:27:59.327040-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: Port module event: module 0, Cable plugged
+2026-10-26T15:27:59.327151-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pcie_event:326:(pid 12): Detected insufficient power on the PCIe slot (27W).
+2026-10-26T15:27:59.327262-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5e: IPSec ESP acceleration enabled
+2026-10-26T15:27:59.327417-04:00 cisc-hoedus kernel: usb 11-2: New USB device found, idVendor=13d3, idProduct=3608, bcdDevice= 1.00
+2026-10-26T15:27:59.327568-04:00 cisc-hoedus kernel: usb 11-2: New USB device strings: Mfr=5, Product=6, SerialNumber=7
+2026-10-26T15:27:59.327723-04:00 cisc-hoedus kernel: usb 11-2: Product: Wireless_Device
+2026-10-26T15:27:59.327872-04:00 cisc-hoedus kernel: usb 11-2: Manufacturer: MediaTek Inc.
+2026-10-26T15:27:59.328019-04:00 cisc-hoedus kernel: usb 11-2: SerialNumber: 000000000
+2026-10-26T15:27:59.328134-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+2026-10-26T15:27:59.328249-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: enabling device (0000 -> 0002)
+2026-10-26T15:27:59.328361-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: firmware version: 28.50.1002
+2026-10-26T15:27:59.328473-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+2026-10-26T15:27:59.328587-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+2026-10-26T15:27:59.328703-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+2026-10-26T15:27:59.328816-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: Flow counters bulk query buffer size increased, bulk_query_len(8)
+2026-10-26T15:27:59.328927-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: Port module event: module 1, Cable plugged
+2026-10-26T15:27:59.329038-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pcie_event:326:(pid 355): Detected insufficient power on the PCIe slot (27W).
+2026-10-26T15:27:59.329150-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5e: IPSec ESP acceleration enabled
+2026-10-26T15:27:59.329260-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+2026-10-26T15:27:59.329375-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: enabling device (0000 -> 0002)
+2026-10-26T15:27:59.329488-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: firmware version: 28.50.1002
+2026-10-26T15:27:59.329599-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+2026-10-26T15:27:59.329715-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+2026-10-26T15:27:59.329826-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+2026-10-26T15:27:59.329938-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+2026-10-26T15:27:59.330050-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: Port module event: module 0, Cable plugged
+2026-10-26T15:27:59.330163-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pcie_event:326:(pid 162): Detected insufficient power on the PCIe slot (27W).
+2026-10-26T15:27:59.330272-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5e: IPSec ESP acceleration enabled
+2026-10-26T15:27:59.330382-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+2026-10-26T15:27:59.330498-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: enabling device (0000 -> 0002)
+2026-10-26T15:27:59.330608-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: firmware version: 28.50.1002
+2026-10-26T15:27:59.330770-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+2026-10-26T15:27:59.330885-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+2026-10-26T15:27:59.330995-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+2026-10-26T15:27:59.331106-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: Flow counters bulk query buffer size increased, bulk_query_len(8)
+2026-10-26T15:27:59.331220-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: Port module event: module 1, Cable plugged
+2026-10-26T15:27:59.331332-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pcie_event:326:(pid 340): Detected insufficient power on the PCIe slot (27W).
+2026-10-26T15:27:59.331444-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5e: IPSec ESP acceleration enabled
+2026-10-26T15:27:59.331554-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+2026-10-26T15:27:59.331667-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0 enP2p1s0f0np0: renamed from eth2
+2026-10-26T15:27:59.331778-04:00 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: renamed from eth3
+2026-10-26T15:27:59.331890-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: renamed from eth1
+2026-10-26T15:27:59.332004-04:00 cisc-hoedus kernel: mlx5_core 0000:01:00.0 enp1s0f0np0: renamed from eth0
+2026-10-26T15:27:59.332014-04:00 cisc-hoedus kernel: MACsec IEEE 802.1AE
+2026-10-26T15:27:59.332024-04:00 cisc-hoedus kernel: raid6: neonx8   gen() 19060 MB/s
+2026-10-26T15:27:59.332034-04:00 cisc-hoedus kernel: raid6: neonx4   gen() 15745 MB/s
+2026-10-26T15:27:59.332043-04:00 cisc-hoedus kernel: raid6: neonx2   gen() 14371 MB/s
+2026-10-26T15:27:59.332052-04:00 cisc-hoedus kernel: raid6: neonx1   gen() 13107 MB/s
+2026-10-26T15:27:59.332061-04:00 cisc-hoedus kernel: raid6: int64x8  gen()  6575 MB/s
+2026-10-26T15:27:59.332070-04:00 cisc-hoedus kernel: raid6: int64x4  gen()  6344 MB/s
+2026-10-26T15:27:59.332079-04:00 cisc-hoedus kernel: raid6: int64x2  gen()  5217 MB/s
+2026-10-26T15:27:59.332089-04:00 cisc-hoedus kernel: raid6: int64x1  gen()  4256 MB/s
+2026-10-26T15:27:59.332098-04:00 cisc-hoedus kernel: raid6: using algorithm neonx8 gen() 19060 MB/s
+2026-10-26T15:27:59.332108-04:00 cisc-hoedus kernel: raid6: .... xor() 14656 MB/s, rmw enabled
+2026-10-26T15:27:59.332117-04:00 cisc-hoedus kernel: raid6: using neon recovery algorithm
+2026-10-26T15:27:59.332128-04:00 cisc-hoedus kernel: xor: measuring software checksum speed
+2026-10-26T15:27:59.332138-04:00 cisc-hoedus kernel:    8regs           : 18455 MB/sec
+2026-10-26T15:27:59.332147-04:00 cisc-hoedus kernel:    32regs          : 18607 MB/sec
+2026-10-26T15:27:59.332156-04:00 cisc-hoedus kernel:    arm64_neon      : 24897 MB/sec
+2026-10-26T15:27:59.332165-04:00 cisc-hoedus kernel: xor: using function: arm64_neon (24897 MB/sec)
+2026-10-26T15:27:59.332174-04:00 cisc-hoedus kernel: async_tx: api initialized (async)
+2026-10-26T15:27:59.332183-04:00 cisc-hoedus kernel: Btrfs loaded, zoned=yes, fsverity=yes
+2026-10-26T15:27:59.332193-04:00 cisc-hoedus kernel: EXT4-fs (nvme0n1p2): mounted filesystem c5b1d3c5-3e56-483a-82ce-c0b5a464dbc0 ro with ordered data mode. Quota mode: none.
+2026-10-26T15:27:59.332206-04:00 cisc-hoedus systemd[1]: Inserted module 'autofs4'
+2026-10-26T15:27:59.332221-04:00 cisc-hoedus systemd[1]: systemd 255.4-1ubuntu8.18 running in system mode (+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified)
+2026-10-26T15:27:59.332234-04:00 cisc-hoedus systemd[1]: Detected architecture arm64.
+2026-10-26T15:27:59.332245-04:00 cisc-hoedus systemd[1]: Hostname set to <cisc-hoedus>.
+2026-10-26T15:27:59.332255-04:00 cisc-hoedus systemd[1]: Queued start job for default target graphical.target.
+2026-10-26T15:27:59.332265-04:00 cisc-hoedus systemd[1]: Created slice system-modprobe.slice - Slice /system/modprobe.
+2026-10-26T15:27:59.332277-04:00 cisc-hoedus systemd[1]: Created slice system-serial\x2dgetty.slice - Slice /system/serial-getty.
+2026-10-26T15:27:59.332287-04:00 cisc-hoedus systemd[1]: Created slice system-systemd\x2dfsck.slice - Slice /system/systemd-fsck.
+2026-10-26T15:27:59.332298-04:00 cisc-hoedus systemd[1]: Created slice user.slice - User and Session Slice.
+2026-10-26T15:27:59.332310-04:00 cisc-hoedus systemd[1]: Started systemd-ask-password-wall.path - Forward Password Requests to Wall Directory Watch.
+2026-10-26T15:27:59.332320-04:00 cisc-hoedus systemd[1]: Set up automount proc-sys-fs-binfmt_misc.automount - Arbitrary Executable File Formats File System Automount Point.
+2026-10-26T15:27:59.332332-04:00 cisc-hoedus systemd[1]: Expecting device dev-disk-by\x2duuid-E89A\x2dBF8F.device - /dev/disk/by-uuid/E89A-BF8F...
+2026-10-26T15:27:59.332343-04:00 cisc-hoedus systemd[1]: Expecting device dev-ttyS0.device - /dev/ttyS0...
+2026-10-26T15:27:59.332353-04:00 cisc-hoedus systemd[1]: Reached target integritysetup.target - Local Integrity Protected Volumes.
+2026-10-26T15:27:59.332364-04:00 cisc-hoedus systemd[1]: Reached target nss-user-lookup.target - User and Group Name Lookups.
+2026-10-26T15:27:59.332374-04:00 cisc-hoedus systemd[1]: Reached target resource-agents-deps.target - resource-agents dependencies.
+2026-10-26T15:27:59.332385-04:00 cisc-hoedus systemd[1]: Reached target slices.target - Slice Units.
+2026-10-26T15:27:59.332395-04:00 cisc-hoedus systemd[1]: Reached target snapd.mounts-pre.target - Mounting snaps.
+2026-10-26T15:27:59.332405-04:00 cisc-hoedus systemd[1]: Reached target veritysetup.target - Local Verity Protected Volumes.
+2026-10-26T15:27:59.332416-04:00 cisc-hoedus systemd[1]: Listening on dm-event.socket - Device-mapper event daemon FIFOs.
+2026-10-26T15:27:59.332426-04:00 cisc-hoedus systemd[1]: Listening on lvm2-lvmpolld.socket - LVM2 poll daemon socket.
+2026-10-26T15:27:59.332438-04:00 cisc-hoedus systemd[1]: Listening on multipathd.socket - multipathd control socket.
+2026-10-26T15:27:59.332448-04:00 cisc-hoedus systemd[1]: Listening on syslog.socket - Syslog Socket.
+2026-10-26T15:27:59.332458-04:00 cisc-hoedus systemd[1]: Listening on systemd-fsckd.socket - fsck to fsckd communication Socket.
+2026-10-26T15:27:59.332469-04:00 cisc-hoedus systemd[1]: Listening on systemd-initctl.socket - initctl Compatibility Named Pipe.
+2026-10-26T15:27:59.332479-04:00 cisc-hoedus systemd[1]: Listening on systemd-journald-dev-log.socket - Journal Socket (/dev/log).
+2026-10-26T15:27:59.332489-04:00 cisc-hoedus systemd[1]: Listening on systemd-journald.socket - Journal Socket.
+2026-10-26T15:27:59.332499-04:00 cisc-hoedus systemd[1]: Listening on systemd-networkd.socket - Network Service Netlink Socket.
+2026-10-26T15:27:59.332510-04:00 cisc-hoedus systemd[1]: systemd-pcrextend.socket - TPM2 PCR Extension (Varlink) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+2026-10-26T15:27:59.332520-04:00 cisc-hoedus systemd[1]: Listening on systemd-udevd-control.socket - udev Control Socket.
+2026-10-26T15:27:59.332531-04:00 cisc-hoedus systemd[1]: Listening on systemd-udevd-kernel.socket - udev Kernel Socket.
+2026-10-26T15:27:59.332541-04:00 cisc-hoedus systemd[1]: Mounting dev-hugepages.mount - Huge Pages File System...
+2026-10-26T15:27:59.332553-04:00 cisc-hoedus systemd[1]: Mounting dev-mqueue.mount - POSIX Message Queue File System...
+2026-10-26T15:27:59.332563-04:00 cisc-hoedus systemd[1]: Mounting sys-kernel-debug.mount - Kernel Debug File System...
+2026-10-26T15:27:59.332573-04:00 cisc-hoedus systemd[1]: Mounting sys-kernel-tracing.mount - Kernel Trace File System...
+2026-10-26T15:27:59.332583-04:00 cisc-hoedus systemd[1]: Starting systemd-journald.service - Journal Service...
+2026-10-26T15:27:59.332593-04:00 cisc-hoedus systemd[1]: auth-rpcgss-module.service - Kernel Module supporting RPCSEC_GSS was skipped because of an unmet condition check (ConditionPathExists=/etc/krb5.keytab).
+2026-10-26T15:27:59.332604-04:00 cisc-hoedus systemd[1]: Starting keyboard-setup.service - Set the console keyboard layout...
+2026-10-26T15:27:59.332619-04:00 cisc-hoedus systemd[1]: Starting kmod-static-nodes.service - Create List of Static Device Nodes...
+2026-10-26T15:27:59.332629-04:00 cisc-hoedus systemd[1]: Starting lvm2-monitor.service - Monitoring of LVM2 mirrors, snapshots etc. using dmeventd or progress polling...
+2026-10-26T15:27:59.332640-04:00 cisc-hoedus systemd[1]: Starting modprobe@configfs.service - Load Kernel Module configfs...
+2026-10-26T15:27:59.332652-04:00 cisc-hoedus systemd[1]: Starting modprobe@dm_mod.service - Load Kernel Module dm_mod...
+2026-10-26T15:27:59.332662-04:00 cisc-hoedus systemd[1]: Starting modprobe@drm.service - Load Kernel Module drm...
+2026-10-26T15:27:59.332672-04:00 cisc-hoedus systemd[1]: Starting modprobe@efi_pstore.service - Load Kernel Module efi_pstore...
+2026-10-26T15:27:59.332682-04:00 cisc-hoedus systemd[1]: Starting modprobe@fuse.service - Load Kernel Module fuse...
+2026-10-26T15:27:59.332692-04:00 cisc-hoedus systemd[1]: Starting modprobe@loop.service - Load Kernel Module loop...
+2026-10-26T15:27:59.332703-04:00 cisc-hoedus systemd[1]: Starting modprobe@nvme_fabrics.service - Load Kernel Module nvme_fabrics...
+2026-10-26T15:27:59.332713-04:00 cisc-hoedus systemd[1]: netplan-ovs-cleanup.service - OpenVSwitch configuration for cleanup was skipped because of an unmet condition check (ConditionFileIsExecutable=/usr/bin/ovs-vsctl).
+2026-10-26T15:27:59.332726-04:00 cisc-hoedus systemd[1]: systemd-fsck-root.service - File System Check on Root Device was skipped because of an unmet condition check (ConditionPathExists=!/run/initramfs/fsck-root).
+2026-10-26T15:27:59.332736-04:00 cisc-hoedus systemd[1]: Starting systemd-modules-load.service - Load Kernel Modules...
+2026-10-26T15:27:59.332746-04:00 cisc-hoedus systemd[1]: systemd-pcrmachine.service - TPM2 PCR Machine ID Measurement was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+2026-10-26T15:27:59.332758-04:00 cisc-hoedus systemd[1]: Starting systemd-remount-fs.service - Remount Root and Kernel File Systems...
+2026-10-26T15:27:59.332769-04:00 cisc-hoedus systemd[1]: systemd-tpm2-setup-early.service - TPM2 SRK Setup (Early) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+2026-10-26T15:27:59.332779-04:00 cisc-hoedus systemd[1]: Starting systemd-udev-trigger.service - Coldplug All udev Devices...
+2026-10-26T15:27:59.332789-04:00 cisc-hoedus systemd[1]: Mounted dev-hugepages.mount - Huge Pages File System.
+2026-10-26T15:27:59.332799-04:00 cisc-hoedus systemd[1]: Mounted dev-mqueue.mount - POSIX Message Queue File System.
+2026-10-26T15:27:59.332809-04:00 cisc-hoedus systemd[1]: Mounted sys-kernel-debug.mount - Kernel Debug File System.
+2026-10-26T15:27:59.332819-04:00 cisc-hoedus systemd[1]: Mounted sys-kernel-tracing.mount - Kernel Trace File System.
+2026-10-26T15:27:59.332829-04:00 cisc-hoedus systemd[1]: Finished kmod-static-nodes.service - Create List of Static Device Nodes.
+2026-10-26T15:27:59.332839-04:00 cisc-hoedus systemd[1]: modprobe@configfs.service: Deactivated successfully.
+2026-10-26T15:27:59.332849-04:00 cisc-hoedus systemd[1]: Finished modprobe@configfs.service - Load Kernel Module configfs.
+2026-10-26T15:27:59.332861-04:00 cisc-hoedus systemd[1]: modprobe@dm_mod.service: Deactivated successfully.
+2026-10-26T15:27:59.332871-04:00 cisc-hoedus systemd[1]: Finished modprobe@dm_mod.service - Load Kernel Module dm_mod.
+2026-10-26T15:27:59.332881-04:00 cisc-hoedus systemd[1]: modprobe@drm.service: Deactivated successfully.
+2026-10-26T15:27:59.332891-04:00 cisc-hoedus systemd[1]: Finished modprobe@drm.service - Load Kernel Module drm.
+2026-10-26T15:27:59.332900-04:00 cisc-hoedus kernel: pstore: Using crash dump compression: deflate
+2026-10-26T15:27:59.332910-04:00 cisc-hoedus systemd[1]: Mounting sys-kernel-config.mount - Kernel Configuration File System...
+2026-10-26T15:27:59.332920-04:00 cisc-hoedus systemd[1]: Starting systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully...
+2026-10-26T15:27:59.332930-04:00 cisc-hoedus systemd[1]: modprobe@fuse.service: Deactivated successfully.
+2026-10-26T15:27:59.332940-04:00 cisc-hoedus systemd[1]: Finished modprobe@fuse.service - Load Kernel Module fuse.
+2026-10-26T15:27:59.332949-04:00 cisc-hoedus kernel: pstore: Registered efi_pstore as persistent store backend
+2026-10-26T15:27:59.332959-04:00 cisc-hoedus systemd[1]: Mounting sys-fs-fuse-connections.mount - FUSE Control File System...
+2026-10-26T15:27:59.332971-04:00 cisc-hoedus systemd[1]: modprobe@loop.service: Deactivated successfully.
+2026-10-26T15:27:59.332981-04:00 cisc-hoedus systemd[1]: Finished modprobe@loop.service - Load Kernel Module loop.
+2026-10-26T15:27:59.332991-04:00 cisc-hoedus systemd[1]: modprobe@efi_pstore.service: Deactivated successfully.
+2026-10-26T15:27:59.333001-04:00 cisc-hoedus systemd[1]: Finished modprobe@efi_pstore.service - Load Kernel Module efi_pstore.
+2026-10-26T15:27:59.333011-04:00 cisc-hoedus systemd[1]: modprobe@nvme_fabrics.service: Deactivated successfully.
+2026-10-26T15:27:59.333020-04:00 cisc-hoedus systemd[1]: Finished modprobe@nvme_fabrics.service - Load Kernel Module nvme_fabrics.
+2026-10-26T15:27:59.333031-04:00 cisc-hoedus systemd[1]: systemd-repart.service - Repartition Root Disk was skipped because no trigger condition checks were met.
+2026-10-26T15:27:59.333041-04:00 cisc-hoedus systemd[1]: Mounted sys-kernel-config.mount - Kernel Configuration File System.
+2026-10-26T15:27:59.333051-04:00 cisc-hoedus kernel: IPMI message handler: version 39.2
+2026-10-26T15:27:59.333084-04:00 cisc-hoedus systemd-journald[602]: Collecting audit messages is disabled.
+2026-10-26T15:27:59.333114-04:00 cisc-hoedus systemd[1]: Mounted sys-fs-fuse-connections.mount - FUSE Control File System.
+2026-10-26T15:27:59.333124-04:00 cisc-hoedus kernel: ipmi device interface
+2026-10-26T15:27:59.333133-04:00 cisc-hoedus kernel: mstflint_access: loading out-of-tree module taints kernel.
+2026-10-26T15:27:59.333143-04:00 cisc-hoedus kernel:   MST::  : mst_init 1963: Mellanox Technologies Software Tools Driver - version 2.0.0
+2026-10-26T15:27:59.333153-04:00 cisc-hoedus kernel:   MST::  : mst_init 1976: found device - domain=0x0, bus=0x1, slot=0x0, func=0x0, vendor=0x15b3, device=0x1021
+2026-10-26T15:27:59.333162-04:00 cisc-hoedus kernel:   MST::  : mst_init 1976: found device - domain=0x0, bus=0x1, slot=0x0, func=0x1, vendor=0x15b3, device=0x1021
+2026-10-26T15:27:59.333172-04:00 cisc-hoedus kernel:   MST::  : mst_init 1976: found device - domain=0x2, bus=0x1, slot=0x0, func=0x0, vendor=0x15b3, device=0x1021
+2026-10-26T15:27:59.333183-04:00 cisc-hoedus kernel:   MST::  : mst_init 1976: found device - domain=0x2, bus=0x1, slot=0x0, func=0x1, vendor=0x15b3, device=0x1021
+2026-10-26T15:27:59.333192-04:00 cisc-hoedus kernel: EXT4-fs (nvme0n1p2): re-mounted c5b1d3c5-3e56-483a-82ce-c0b5a464dbc0 r/w.
+2026-10-26T15:27:59.333202-04:00 cisc-hoedus systemd[1]: Finished systemd-modules-load.service - Load Kernel Modules.
+2026-10-26T15:27:59.333212-04:00 cisc-hoedus systemd[1]: Starting systemd-sysctl.service - Apply Kernel Variables...
+2026-10-26T15:27:59.333223-04:00 cisc-hoedus systemd[1]: Finished systemd-remount-fs.service - Remount Root and Kernel File Systems.
+2026-10-26T15:27:59.333233-04:00 cisc-hoedus systemd[1]: Activating swap swap.img.swap - /swap.img...
+2026-10-26T15:27:59.333243-04:00 cisc-hoedus systemd[1]: Starting multipathd.service - Device-Mapper Multipath Device Controller...
+2026-10-26T15:27:59.333253-04:00 cisc-hoedus systemd[1]: systemd-hwdb-update.service - Rebuild Hardware Database was skipped because of an unmet condition check (ConditionNeedsUpdate=/etc).
+2026-10-26T15:27:59.333264-04:00 cisc-hoedus systemd[1]: systemd-pstore.service - Platform Persistent Storage Archival was skipped because of an unmet condition check (ConditionDirectoryNotEmpty=/sys/fs/pstore).
+2026-10-26T15:27:59.333275-04:00 cisc-hoedus systemd[1]: Starting systemd-random-seed.service - Load/Save OS Random Seed...
+2026-10-26T15:27:59.333287-04:00 cisc-hoedus systemd[1]: systemd-tpm2-setup.service - TPM2 SRK Setup was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+2026-10-26T15:27:59.333298-04:00 cisc-hoedus systemd[1]: Finished systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully.
+2026-10-26T15:27:59.333308-04:00 cisc-hoedus systemd[1]: systemd-sysusers.service - Create System Users was skipped because no trigger condition checks were met.
+2026-10-26T15:27:59.333320-04:00 cisc-hoedus systemd[1]: Starting systemd-tmpfiles-setup-dev.service - Create Static Device Nodes in /dev...
+2026-10-26T15:27:59.333330-04:00 cisc-hoedus kernel: Adding 16777212k swap on /swap.img.  Priority:-1 extents:12 across:24657916k SS
+2026-10-26T15:27:59.333340-04:00 cisc-hoedus systemd[1]: Activated swap swap.img.swap - /swap.img.
+2026-10-26T15:27:59.333350-04:00 cisc-hoedus systemd[1]: Finished systemd-random-seed.service - Load/Save OS Random Seed.
+2026-10-26T15:27:59.333360-04:00 cisc-hoedus systemd[1]: Reached target swap.target - Swaps.
+2026-10-26T15:27:59.333370-04:00 cisc-hoedus systemd[1]: Finished systemd-tmpfiles-setup-dev.service - Create Static Device Nodes in /dev.
+2026-10-26T15:27:59.333380-04:00 cisc-hoedus systemd[1]: Starting systemd-udevd.service - Rule-based Manager for Device Events and Files...
+2026-10-26T15:27:59.333390-04:00 cisc-hoedus systemd[1]: Finished keyboard-setup.service - Set the console keyboard layout.
+2026-10-26T15:27:59.333401-04:00 cisc-hoedus systemd[1]: Finished systemd-sysctl.service - Apply Kernel Variables.
+2026-10-26T15:27:59.333411-04:00 cisc-hoedus systemd[1]: Finished lvm2-monitor.service - Monitoring of LVM2 mirrors, snapshots etc. using dmeventd or progress polling.
+2026-10-26T15:27:59.333504-04:00 cisc-hoedus kernel: nvme nvme0: using unchecked data buffer
+2026-10-26T15:27:59.333517-04:00 cisc-hoedus systemd[1]: Started multipathd.service - Device-Mapper Multipath Device Controller.
+2026-10-26T15:27:59.333528-04:00 cisc-hoedus systemd-journald[602]: Journal started
+2026-10-26T15:27:59.333555-04:00 cisc-hoedus systemd-journald[602]: Runtime Journal (/run/log/journal/1737094ace5e4d4f8fb74559130b254f) is 8.0M, max 1.2G, 1.2G free.
+2026-10-26T15:27:59.251793-04:00 cisc-hoedus systemd-modules-load[615]: Module 'i2c_dev' is built in
+2026-10-26T15:27:59.259800-04:00 cisc-hoedus systemd-modules-load[615]: Inserted module 'ipmi_devintf'
+2026-10-26T15:27:59.264137-04:00 cisc-hoedus systemd-modules-load[615]: Inserted module 'dm_multipath'
+2026-10-26T15:27:59.268278-04:00 cisc-hoedus systemd-modules-load[615]: Inserted module 'mstflint_access'
+2026-10-26T15:27:59.334623-04:00 cisc-hoedus systemd[1]: Started systemd-journald.service - Journal Service.
+2026-10-26T15:27:59.335248-04:00 cisc-hoedus multipathd[644]: multipathd v0.9.4: start up
+2026-10-26T15:27:59.335248-04:00 cisc-hoedus multipathd[644]: reconfigure: setting up paths and maps
+2026-10-26T15:27:59.338830-04:00 cisc-hoedus systemd-udevd[646]: Using default interface naming scheme 'v255'.
+2026-10-26T15:27:59.353905-04:00 cisc-hoedus systemd[1]: Starting systemd-journal-flush.service - Flush Journal to Persistent Storage...
+2026-10-26T15:27:59.359994-04:00 cisc-hoedus systemd-journald[602]: Time spent on flushing to /var/log/journal/1737094ace5e4d4f8fb74559130b254f is 11.173ms for 1249 entries.
+
+[exit 0]

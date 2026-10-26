@@ -1035,8 +1035,23 @@ single-repeat level, at the price of noisier p99 values at mid load.
 
 Raw telemetry (`*.raw.jsonl`, `*.power.jsonl`, `*.vllm_metrics.jsonl`) is
 ~14 MB per measurement window, ~16 GB for a full replicated campaign, so
-`.gitignore` keeps it, the server logs, and the job logs out of git. Commit
-`OUT_DIR/results/index.csv`, `OUT_DIR/results/*.summary.json`, the
+`.gitignore` keeps it and plain `.log` files out of git. To preserve logs in a
+campaign commit, create one sibling ZIP per ignored log:
+
+```bash
+scripts/archive_logs.py zip results/benchmark-2026-10-26
+```
+
+Each `name.log.zip` contains `name.log` and stays beside it. The source log
+remains on disk and stays ignored. Add the ZIP files to the campaign commit.
+Restore plain logs from ZIPs with:
+
+```bash
+scripts/archive_logs.py unzip results/benchmark-2026-10-26
+```
+
+Unzip leaves the ZIP files in place and does not overwrite an existing log.
+Commit `OUT_DIR/results/index.csv`, `OUT_DIR/results/*.summary.json`, the
 `OUT_DIR/results/serving_policy_*.json` files, the interconnect CSVs,
 `OUT_DIR/results/client_environment.json`, `OUT_DIR/results/campaign_manifest.json`,
 and `OUT_DIR/figs/`. Archive the raw data outside the repository:
