@@ -427,6 +427,9 @@ export MAXLEN=8704
 #                             # of prefill work in some models but not others
 # export GENERATION_CONFIG=vllm  # default: use request sampling settings rather
 #                                # than model-repository generation defaults
+# export FLASHINFER_AUTOTUNE=1   # autotune is OFF by default in every config:
+#                                # vLLM 0.29.0 deadlocks pp2 startup while tuning
+#                                # (see Troubleshooting)
 # export QUANT=fp8
 # export TOKENIZER=Qwen/Qwen3-8B
 # export TOKENIZER_REVISION="$REVISION"
@@ -465,6 +468,12 @@ export REPEATS="${REPEATS:-3}"
 # export POWER_BACKEND=nvidia_smi
 export MODELS_YAML=configs/models.yaml
 export READY_TIMEOUT=1800
+<<<<<<< HEAD
+=======
+# Seconds of startup with nothing new in the server log but engine heartbeats
+# before run_models.sh declares the launch hung (0 disables).
+# export READY_STALL_TIMEOUT=900
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 # Installed into Ray containers by start_ray.sh. Keep it aligned with
 # scripts/ray-runtime-constraints.txt and VLLM_IMAGE.
 export RAY_VERSION=2.56.1
@@ -966,6 +975,10 @@ Key environment variables for the multi-model wrapper: `MODELS_YAML` (default
 `CONCURRENCIES`, `CONFIG_YAML`, `REPEATS` (default `3`), `ONLY_REPEAT`,
 `STATUS_ONLY`, `SINGLE_CONTAINER`, `CANARY_ONLY`, `MODEL_LABELS`, and
 `READY_TIMEOUT` (seconds to wait for a model to load, default `1800`).
+`READY_STALL_TIMEOUT` (default `900`, `0` disables) fails a launch early when
+its server log gains nothing but the EngineCore's once-a-minute
+`shm_broadcast` heartbeat for that long; workers that fall silent while the
+engine keeps waiting are deadlocked, not slow.
 `PROBE_TIMEOUT` bounds the two-token streaming canary (default `600`), and
 `CACHE_PREFLIGHT=1` is the default; do not disable that local revision check for
 a full run. The wrapper also
@@ -1111,6 +1124,14 @@ also disables vLLM prefix caching by default (`PREFIX_CACHING=1` re-enables):
 random slices alone repeated often enough that cache hits skipped up to a third
 of prefill work in some models while models whose launch had caching disabled
 did all of it, which contaminated cross-model comparisons.
+
+FlashInfer autotuning is also off by default (`FLASHINFER_AUTOTUNE=1`
+restores vLLM's default) and recorded in the serving policy as
+`flashinfer_autotune: "0"`. The pinned vLLM 0.29.0 averages autotune timings
+over the world process group, which deadlocks pipeline-parallel startup when
+the two stages tune different kernels (see Troubleshooting). One setting for
+single, tp2, and pp2 keeps kernel selection comparable across configs; report
+it with the results.
 
 A JSONL trace can replace buckets by setting `trace_path` in the YAML. Each
 line can contain:
@@ -1554,6 +1575,23 @@ using temperature to interpret a hardware failure.
   worker node's HF cache (each node has its own; acquisition runs on the head).
   `run_models.sh` mirrors automatically; a direct `launch_server.sh` requires
   `scripts/mirror_worker_cache.sh tp2|pp2|all` from the head before relaunch.
+<<<<<<< HEAD
+=======
+- `pp2` launch stops logging during `[AutoTuner]: Tuning ...` and the server
+  log then shows only `No available shared memory broadcast block found in 60
+  seconds` once a minute until the readiness timeout: the two pipeline stages
+  deadlocked in FlashInfer autotuning. vLLM 0.29.0 synchronizes per-tactic
+  timings, the cache broadcast, and a barrier over the world group, so when
+  the stages tune different kernels (hybrid Mamba/attention/MoE models such as
+  Nemotron 3 Super) one stage waits on a collective the other never joins. The
+  signature is one stage logging `Autotuning process ends` while the other
+  stops mid-tuning, and neither logging `Graph capturing finished` afterward.
+  Upstream fixed this in vllm-project/vllm#57197 (first released in v0.32.0;
+  the cache-hit variant in #57635). Keep `FLASHINFER_AUTOTUNE=0` (the default)
+  on the pinned 26.09 image. The vLLM `[shutdown]` and `SIGTERM received`
+  lines at the end of such a log are run_models.sh stopping the server, not
+  a host shutdown.
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 - `tp2`/`pp2` launch passes the cache preflight but hangs during model load
   with no engine output: NCCL cannot finish the RDMA handshake. Run
   `ibdev2netdev` on both nodes and confirm one UP device per port. Run
