@@ -1,0 +1,5 @@
+$ bash -c journalctl -b -1 --no-pager -o short-iso-precise | grep -iE 'shutdown|reboot|poweroff|power-off|unattended-upgrade|dgx-dashboard|fwupd|systemd-logind' | tail -80
+2026-10-26T15:27:59.261990-04:00 cisc-hoedus kernel: secureboot: Secure boot enabled
+2026-10-26T15:27:59.299948-04:00 cisc-hoedus kernel: ima: secureboot mode enabled
+
+[exit 0]
