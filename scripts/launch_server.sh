@@ -29,6 +29,12 @@
 #   TORCHINDUCTOR_AUTOGRAD_CACHE  defaults to 0. The pinned torch build can
 #                   crash while serializing AOT graphs for on-the-fly FP8;
 #                   disabling only that disk cache leaves compilation enabled.
+#   FLASHINFER_AUTOTUNE  0 (default) passes --no-enable-flashinfer-autotune in
+#                   every mode; 1 keeps vLLM's default (autotune on). vLLM
+#                   0.29.0 averages autotune timings over the world group, so
+#                   pp2 deadlocks at startup when its two stages tune different
+#                   kernels (vllm#57197, fixed in 0.32.0). One value for all
+#                   configs keeps single/tp2/pp2 kernel selection comparable.
 #   HF_HUB_OFFLINE  1 (default) serves purely from the local HF cache. The worker
 #                   node (Hoedus) has no DNS to huggingface.co, so an online launch
 #                   burns minutes on doomed metadata retries before falling back to
@@ -87,6 +93,11 @@ fi
 PREFIX_CACHING="${PREFIX_CACHING:-0}"
 GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+FLASHINFER_AUTOTUNE="${FLASHINFER_AUTOTUNE:-0}"
+case "$FLASHINFER_AUTOTUNE" in 0|1) ;; *)
+  echo "[launch] FLASHINFER_AUTOTUNE must be 0 or 1, got '$FLASHINFER_AUTOTUNE'" >&2
+  exit 2 ;;
+esac
 SINGLE_CONTAINER="${SINGLE_CONTAINER:-standalone}"
 case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
   echo "[launch] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
@@ -117,6 +128,9 @@ common=( --host "$HOST" --port "$PORT" --dtype "$DTYPE"
          --no-enable-log-requests )
 if [[ "$PREFIX_CACHING" != "1" ]]; then
   common+=( --no-enable-prefix-caching )
+fi
+if [[ "$FLASHINFER_AUTOTUNE" != "1" ]]; then
+  common+=( --no-enable-flashinfer-autotune )
 fi
 if [[ -n "$QUANT" ]]; then common+=( --quantization "$QUANT" ); fi
 if [[ -n "$MAX_NUM_SEQS" ]]; then common+=( --max-num-seqs "$MAX_NUM_SEQS" ); fi

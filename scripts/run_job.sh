@@ -203,6 +203,10 @@ if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
     --value "worker_ip=$HOEDUS_IP" --value "connectx_iface=$CX_IFACE" \
     --value "dtype=${DTYPE:-auto}" \
     --value "prefix_caching=${PREFIX_CACHING:-0}" \
+<<<<<<< HEAD
+=======
+    --value "flashinfer_autotune=${FLASHINFER_AUTOTUNE:-0}" \
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
     --value "generation_config=${GENERATION_CONFIG:-vllm}" \
     --value "inductor_cache=${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
     --value "single_container=$SINGLE_CONTAINER")" || exit 1
@@ -420,6 +424,7 @@ canary_identity() {
       "$CLUSTER_RUNTIME_FINGERPRINT" "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" \
       "$NCCL_IB_DISABLE" "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" \
       "${NCCL_NET_PLUGIN:-}" "${DTYPE:-auto}" "${PREFIX_CACHING:-0}" \
+      "${FLASHINFER_AUTOTUNE:-0}" \
       "${GENERATION_CONFIG:-vllm}" "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
       "${GPU_UTIL:-}" \
       "${HF_HUB_OFFLINE:-1}" "$SINGLE_CONTAINER" \

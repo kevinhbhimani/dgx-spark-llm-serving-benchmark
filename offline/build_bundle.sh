@@ -70,6 +70,7 @@ if (( INCLUDE_MODELS )); then
   fi
 fi
 
+<<<<<<< HEAD
 TARGET_PLATFORM="${TARGET_PLATFORM:-linux/arm64}"
 case "$TARGET_PLATFORM" in
   linux/arm64)
@@ -79,6 +80,18 @@ case "$TARGET_PLATFORM" in
   linux/amd64)
     TARGET_ARCH="x86_64"
     TARGET_IMAGE_ARCH="amd64"
+=======
+case "$TARGET_PLATFORM" in
+  linux/arm64)
+    TARGET_ARCH=aarch64
+    TARGET_PLATFORM_TAGS=(manylinux2014_aarch64 manylinux_2_17_aarch64
+      manylinux_2_28_aarch64 manylinux_2_34_aarch64 linux_aarch64)
+    ;;
+  linux/amd64)
+    TARGET_ARCH=x86_64
+    TARGET_PLATFORM_TAGS=(manylinux2014_x86_64 manylinux_2_17_x86_64
+      manylinux_2_28_x86_64 manylinux_2_34_x86_64 linux_x86_64)
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
     ;;
   *)
     echo "[offline] unsupported TARGET_PLATFORM: $TARGET_PLATFORM" >&2
@@ -87,6 +100,7 @@ case "$TARGET_PLATFORM" in
 esac
 
 command -v docker >/dev/null 2>&1 || { echo "[offline] docker is required" >&2; exit 1; }
+<<<<<<< HEAD
 docker buildx version >/dev/null 2>&1 || { echo "[offline] Docker Buildx is required" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "[offline] python3 is required" >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { echo "[offline] tar is required" >&2; exit 1; }
@@ -217,6 +231,104 @@ if [[ -n "$MODEL_CACHE_DIR" && -d "$MODEL_CACHE_DIR/hub" && ! -L "$MODEL_CACHE_D
 else
   echo "[offline] no Hugging Face hub cache found; model weights are not included"
 fi
+=======
+command -v python3 >/dev/null 2>&1 || { echo "[offline] python3 is required" >&2; exit 1; }
+
+mkdir -p "$OUTPUT_DIR"
+
+echo "[offline] pulling $VLLM_IMAGE for $TARGET_PLATFORM"
+docker pull --platform "$TARGET_PLATFORM" "$VLLM_IMAGE"
+
+echo "[offline] building $DERIVED_IMAGE"
+# --load imports the result into the local image store so `docker save` can read
+# it. It is the default for the docker driver and required for a
+# docker-container buildx builder.
+docker build --platform "$TARGET_PLATFORM" --load \
+  --build-arg "BASE_IMAGE=$VLLM_IMAGE" \
+  --build-arg "RAY_VERSION=$RAY_VERSION" \
+  -t "$DERIVED_IMAGE" \
+  -f "$HERE/Dockerfile.ray" "$HERE"
+
+echo "[offline] verifying Ray in the derived image"
+if docker run --rm --platform "$TARGET_PLATFORM" --entrypoint python3 "$DERIVED_IMAGE" \
+     -c 'import ray; print("ray", ray.__version__)'; then
+  :
+else
+  echo "[offline] could not run the derived image locally; verify on the Spark" >&2
+fi
+
+echo "[offline] saving image"
+if command -v zstd >/dev/null 2>&1; then
+  IMAGE_ARCHIVE="vllm-ray-image.tar.zst"
+  docker save "$DERIVED_IMAGE" | zstd -T0 "-$ZSTD_LEVEL" -o "$OUTPUT_DIR/$IMAGE_ARCHIVE"
+else
+  IMAGE_ARCHIVE="vllm-ray-image.tar.gz"
+  docker save "$DERIVED_IMAGE" | gzip -1 > "$OUTPUT_DIR/$IMAGE_ARCHIVE"
+fi
+
+echo "[offline] downloading client wheels for $TARGET_ARCH python $TARGET_PYTHON"
+WHEEL_DIR="$OUTPUT_DIR/wheels"
+mkdir -p "$WHEEL_DIR"
+host_arch="$(uname -m)"
+host_python="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+wheel_platform_args=()
+if [[ "$host_arch" != "$TARGET_ARCH" || "$host_python" != "$TARGET_PYTHON" ]]; then
+  # pip download fetches wheels for the running interpreter unless the target is
+  # named explicitly. --platform requires --only-binary=:all:.
+  for tag in "${TARGET_PLATFORM_TAGS[@]}"; do
+    wheel_platform_args+=(--platform "$tag")
+  done
+  wheel_platform_args+=(--python-version "$TARGET_PYTHON" --implementation cp)
+fi
+PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip download \
+  -r "$REPO_ROOT/requirements.lock" \
+  --dest "$WHEEL_DIR" \
+  --only-binary=:all: \
+  "${wheel_platform_args[@]}"
+
+echo "[offline] verifying the wheelhouse covers requirements.lock"
+python3 - "$REPO_ROOT/requirements.lock" "$WHEEL_DIR" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+lock_path = Path(sys.argv[1])
+wheel_dir = Path(sys.argv[2])
+pin_re = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9][A-Za-z0-9._+!-]*)$")
+
+
+def normalize(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+# Wheel filenames use the normalized distribution name with '-' replaced by '_'.
+available = {normalize(path.name.split("-")[0]) for path in wheel_dir.glob("*.whl")}
+missing = []
+for line in lock_path.read_text().splitlines():
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    match = pin_re.match(line)
+    if match is None:
+        raise SystemExit(f"unexpected lock line: {line}")
+    if normalize(match.group(1)) not in available:
+        missing.append(line)
+if missing:
+    raise SystemExit("no wheel for: " + ", ".join(missing))
+print(f"wheelhouse covers {len(available)} distributions")
+PY
+
+echo "[offline] archiving source"
+SOURCE_ARCHIVE="dgx-spark-benchmark-src.tar.gz"
+tar -C "$REPO_ROOT" \
+  --exclude='.venv' --exclude='.git' --exclude='offline-bundle' \
+  --exclude='results*' --exclude='figs' \
+  --exclude='__pycache__' --exclude='*.pyc' \
+  -czf "$OUTPUT_DIR/$SOURCE_ARCHIVE" .
+
+cp "$HERE/install_offline.sh" "$OUTPUT_DIR/install_offline.sh"
+chmod +x "$OUTPUT_DIR/install_offline.sh"
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 
 if (( INCLUDE_MODELS )); then
   MODEL_CACHE_ARCHIVE=model-cache.tar
@@ -229,14 +341,20 @@ fi
 cat > "$OUTPUT_DIR/BUNDLE_INFO" <<EOF
 derived_image=$DERIVED_IMAGE
 base_image=$VLLM_IMAGE
+<<<<<<< HEAD
 base_image_id=$BASE_IMAGE_ID
+=======
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 ray_version=$RAY_VERSION
 target_platform=$TARGET_PLATFORM
 target_arch=$TARGET_ARCH
 target_python=$TARGET_PYTHON
+<<<<<<< HEAD
 target_manylinux=$TARGET_MANYLINUX
 requirements_file=$(basename "$REQUIREMENTS_FILE")
 requirements_sha256=$(sha256sum "$REQUIREMENTS_FILE" | awk '{print $1}')
+=======
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 image_archive=$IMAGE_ARCHIVE
 source_archive=$SOURCE_ARCHIVE
 model_cache_archive=$MODEL_CACHE_ARCHIVE
@@ -244,10 +362,16 @@ image_id=$(docker image inspect --format '{{.Id}}' "$DERIVED_IMAGE")
 built_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
+<<<<<<< HEAD
 ( cd "$STAGING_DIR" && find . -type f ! -name SHA256SUMS -print0 \
     | sort -z | xargs -0 sha256sum > SHA256SUMS )
 
 mv "$STAGING_DIR" "$OUTPUT_DIR"
 STAGING_DIR=""
+=======
+( cd "$OUTPUT_DIR" && find . -type f ! -name SHA256SUMS -print0 \
+    | sort -z | xargs -0 sha256sum > SHA256SUMS )
+
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 echo "[offline] bundle written to $OUTPUT_DIR"
 ls -lh "$OUTPUT_DIR"

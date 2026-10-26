@@ -273,7 +273,7 @@ class AtomicArtifactTests(unittest.TestCase):
 
 class ServingPolicyTests(unittest.TestCase):
     @staticmethod
-    def make_policy(max_num_seqs=None):
+    def make_policy(max_num_seqs=None, flashinfer_autotune=None):
         runtime_facts = {
             "gpus": [{"gpu_name": "GB10", "power_limit_w": "N/A"}],
             "source": "host-nvidia-smi",
@@ -337,6 +337,9 @@ class ServingPolicyTests(unittest.TestCase):
         if max_num_seqs is not None:
             policy["max_num_seqs"] = max_num_seqs
             legacy += f"max_num_seqs={max_num_seqs}\n"
+        if flashinfer_autotune is not None:
+            policy["flashinfer_autotune"] = flashinfer_autotune
+            legacy += f"flashinfer_autotune={flashinfer_autotune}\n"
         policy["serving_fingerprint"] = hashlib.sha256(legacy.encode()).hexdigest()
         return policy
 
@@ -404,6 +407,39 @@ class ServingPolicyTests(unittest.TestCase):
                     policy["max_num_seqs"] = value
                     path.write_text(json.dumps(policy))
                     with self.assertRaisesRegex(RuntimeError, "max_num_seqs"):
+                        _load_serving_policy(str(path), cfg)
+
+    def test_disabled_flashinfer_autotune_is_part_of_launch_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = self.make_policy(max_num_seqs="4", flashinfer_autotune="0")
+            path = Path(tmp) / "serving_policy.json"
+            path.write_text(json.dumps(policy))
+            cfg = ExperimentConfig(
+                require_provenance=True, out_dir=tmp,
+                config_label=policy["config"], model=policy["model"],
+                model_revision=policy["revision"], tokenizer=policy["tokenizer"],
+                tokenizer_revision=policy["tokenizer_revision"],
+                serving_fingerprint=policy["serving_fingerprint"],
+            )
+            loaded, _ = _load_serving_policy(str(path), cfg)
+            self.assertEqual(loaded["flashinfer_autotune"], "0")
+            # Autotune left at vLLM's default keeps the field, and therefore
+            # the earlier fingerprint, out of the policy.
+            self.assertNotEqual(
+                policy["serving_fingerprint"],
+                self.make_policy(max_num_seqs="4")["serving_fingerprint"],
+            )
+
+            del policy["flashinfer_autotune"]
+            path.write_text(json.dumps(policy))
+            with self.assertRaisesRegex(RuntimeError, "reproduce"):
+                _load_serving_policy(str(path), cfg)
+
+            for value in ("1", 0, False, None, "off"):
+                with self.subTest(value=value):
+                    policy["flashinfer_autotune"] = value
+                    path.write_text(json.dumps(policy))
+                    with self.assertRaisesRegex(RuntimeError, "flashinfer_autotune"):
                         _load_serving_policy(str(path), cfg)
 
 

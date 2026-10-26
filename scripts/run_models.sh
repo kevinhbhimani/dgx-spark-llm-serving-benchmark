@@ -31,7 +31,12 @@
 #      REPEATS (independent server launches for spread, default 3)
 #      READY_TIMEOUT (seconds to wait for a model to come up, default 1800;
 #      large models on tp2/pp2 can take >20 min to load weights + capture graphs)
+#      READY_STALL_TIMEOUT (seconds without new server-log output, ignoring
+#      the EngineCore's once-a-minute shm_broadcast heartbeat, before a
+#      launch is declared hung; default 900, 0 disables)
 #      PROBE_TIMEOUT (seconds for the strict two-token streaming canary, default 600)
+#      FLASHINFER_AUTOTUNE (0 default: launch with --no-enable-flashinfer-autotune;
+#      1 keeps vLLM's default; recorded in the serving policy, see launch_server.sh)
 #      SKIP_DONE (1 behaves like --skip-done, default 0)
 #      CANARY_ONLY=1 launches each selected model, validates the exact streaming
 #      contract, and tears it down without starting the long measurement sweep.
@@ -89,7 +94,12 @@ CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
 EXPECTED_CONCURRENCIES="${EXPECTED_CONCURRENCIES:-$CONCURRENCIES}"
 REPEATS="${REPEATS:-3}"
 READY_TIMEOUT="${READY_TIMEOUT:-1800}"
+READY_STALL_TIMEOUT="${READY_STALL_TIMEOUT:-900}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-600}"
+<<<<<<< HEAD
+=======
+FLASHINFER_AUTOTUNE="${FLASHINFER_AUTOTUNE:-0}"
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
 CANARY_ONLY="${CANARY_ONLY:-0}"
 MODEL_LABELS="${MODEL_LABELS:-}"
 ONLY_REPEAT="${ONLY_REPEAT:-}"
@@ -102,7 +112,11 @@ case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
   echo "[models] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
   exit 1 ;;
 esac
+<<<<<<< HEAD
 for flag_name in SKIP_DONE CANARY_ONLY STATUS_ONLY RUN_JOB_CACHE_READY; do
+=======
+for flag_name in SKIP_DONE CANARY_ONLY STATUS_ONLY RUN_JOB_CACHE_READY FLASHINFER_AUTOTUNE; do
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
   flag_value="${!flag_name}"
   if [[ "$flag_value" != "0" && "$flag_value" != "1" ]]; then
     echo "[models] $flag_name must be 0 or 1, got '$flag_value'" >&2
@@ -135,6 +149,10 @@ for timeout_name in READY_TIMEOUT PROBE_TIMEOUT; do
     exit 1
   fi
 done
+if [[ ! "$READY_STALL_TIMEOUT" =~ ^[0-9]+$ ]]; then
+  echo "[models] READY_STALL_TIMEOUT must be a non-negative integer, got '$READY_STALL_TIMEOUT'" >&2
+  exit 1
+fi
 declare -A EXPECTED_SET=()
 for c in $EXPECTED_CONCURRENCIES; do
   if [[ ! "$c" =~ ^[1-9][0-9]*$ || -n "${EXPECTED_SET[$c]:-}" ]]; then
@@ -433,8 +451,12 @@ print("[models] strict stream contract OK: exact token_ids, usage, length, [DONE
 PY
 }
 
+# The EngineCore logs this once a minute while it waits on its workers, so it is
+# not evidence of startup progress.
+STARTUP_HEARTBEAT_PATTERN='No available shared memory broadcast block found'
+
 wait_ready() {
-  local name="$1" waited=0
+  local name="$1" log="${2:-}" waited=0 quiet=0 progress=-1 output=0
   echo "[models] waiting for $name (up to ${READY_TIMEOUT}s)"
   while (( waited < READY_TIMEOUT )); do
     if server_ready "$name"; then
@@ -447,7 +469,23 @@ wait_ready() {
       echo "[models] launcher for $name exited before the server was ready" >&2
       return 1
     fi
-    sleep 5; waited=$((waited + 5))
+    # Workers that go silent while the engine keeps logging heartbeats are
+    # deadlocked (for example pp2 stages blocked in FlashInfer autotune
+    # collectives), so stop waiting instead of running out READY_TIMEOUT.
+    # Count bytes, not lines: progress bars redraw with "\r" and no newline.
+    if [[ -n "$log" && "$READY_STALL_TIMEOUT" != "0" ]]; then
+      output="$(grep -v "$STARTUP_HEARTBEAT_PATTERN" "$log" 2>/dev/null | wc -c)"
+      if [[ "$output" != "$progress" ]]; then
+        progress="$output"
+        quiet=0
+      elif (( quiet >= READY_STALL_TIMEOUT )); then
+        echo "[models] $name logged nothing but engine heartbeats for ${quiet}s;" \
+             "treating the launch as hung. Last startup output in $log:" >&2
+        grep -v "$STARTUP_HEARTBEAT_PATTERN" "$log" 2>/dev/null | tail -n 3 >&2 || true
+        return 1
+      fi
+    fi
+    sleep 5; waited=$((waited + 5)); quiet=$((quiet + 5))
   done
   echo "[models] timed out after ${READY_TIMEOUT}s waiting for $name" >&2
   return 1
@@ -612,6 +650,9 @@ serving_fingerprint() {
       "$HEAD_IP" "$HOEDUS_IP" "$EFFECTIVE_POWER_BACKEND"
     printf 'cluster_runtime=%s\n' "$CLUSTER_RUNTIME_FINGERPRINT"
     [[ -z "$max_num_seqs" ]] || printf 'max_num_seqs=%s\n' "$max_num_seqs"
+    # Recorded only when it departs from vLLM's default (autotune on), so a
+    # policy that keeps the default reproduces its earlier fingerprint.
+    [[ "$FLASHINFER_AUTOTUNE" == "1" ]] || printf 'flashinfer_autotune=0\n'
   } | sha256sum | awk '{print $1}'
 }
 
@@ -629,7 +670,7 @@ write_serving_policy() {
     "$trust" "$RAY_VERSION" "$CX_IFACE" "$NCCL_IB_DISABLE" \
     "$HEAD_IP" "$HOEDUS_IP" "$EFFECTIVE_POWER_BACKEND" \
     "$CLUSTER_RUNTIME_FINGERPRINT" "$RUNTIME_SCOPE" \
-    "$RUNTIME_FACTS_JSON" "$max_num_seqs" <<'PY'
+    "$RUNTIME_FACTS_JSON" "$max_num_seqs" "$FLASHINFER_AUTOTUNE" <<'PY'
 import hashlib
 import json
 import os
@@ -666,6 +707,7 @@ from pathlib import Path
     runtime_scope,
     runtime_json,
     max_num_seqs,
+    flashinfer_autotune,
 ) = sys.argv[1:]
 
 try:
@@ -705,6 +747,10 @@ if max_num_seqs:
     if not max_num_seqs.isascii() or not max_num_seqs.isdigit() or int(max_num_seqs) <= 0:
         raise SystemExit("[models] max_num_seqs must be a positive integer")
     legacy_input += f"max_num_seqs={max_num_seqs}\n"
+if flashinfer_autotune not in ("0", "1"):
+    raise SystemExit("[models] flashinfer_autotune must be 0 or 1")
+if flashinfer_autotune == "0":
+    legacy_input += "flashinfer_autotune=0\n"
 computed_fingerprint = hashlib.sha256(legacy_input.encode()).hexdigest()
 if computed_fingerprint != fingerprint:
     raise SystemExit(
@@ -743,6 +789,8 @@ policy = {
 }
 if max_num_seqs:
     policy["max_num_seqs"] = max_num_seqs
+if flashinfer_autotune == "0":
+    policy["flashinfer_autotune"] = "0"
 encoded = (
     json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
 ).encode()
@@ -892,6 +940,7 @@ run_one() {
                     PREFIX_CACHING="${PREFIX_CACHING:-0}"
                     GENERATION_CONFIG="${GENERATION_CONFIG:-vllm}"
                     TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+                    FLASHINFER_AUTOTUNE="$FLASHINFER_AUTOTUNE"
                     HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
                     SINGLE_CONTAINER="$SINGLE_CONTAINER")
   LAST_FAILURE_STAGE="resource-availability"
@@ -940,7 +989,11 @@ run_one() {
   LAUNCH_PID=$!
 
   LAST_FAILURE_STAGE="readiness-canary"
+<<<<<<< HEAD
   if ! wait_ready "$name"; then
+=======
+  if ! wait_ready "$name" "$log"; then
+>>>>>>> e645017f15a9a2d16ceb6997e594467fbefa20a2
     echo "[models] skipping $label; see $log" >&2
     cleanup_server || return 1
     return 1
