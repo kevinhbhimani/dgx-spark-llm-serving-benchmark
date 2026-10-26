@@ -282,9 +282,17 @@ results/xyz/
   logs/                     server and job logs
   preflight/<run-id>/       all artifacts from one preflight run
     logs/                    preflight stage logs
+      system_snapshot.json   read-only head and worker host/runtime inventory
     hardware-smoke/          smoke results and logs
     campaign/                campaign canary results and logs
 ```
+
+Each preflight run and campaign invocation records a JSON system snapshot in
+its `logs/` directory. The snapshot includes host OS, kernel, package versions,
+selected firmware identifiers, GPU and network interface details, and serving
+container versions on both nodes. Collection uses the current account without
+`sudo`. Worker collection uses noninteractive SSH; unreachable fields are
+recorded as unavailable and do not stop the benchmark.
 
 The preflight checks that the campaign results and logs directories can create,
 write, read, and remove a file before running the hardware stages. The smoke

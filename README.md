@@ -837,6 +837,10 @@ in `OUT_DIR/figs/`, and logs in `OUT_DIR/logs/`. Plotting accepts a campaign
 directory or an explicit `index.csv` path. When `--out` is omitted, figures and
 tables go under `OUT_DIR/figs/`. The campaign manifest records the campaign
 name, date when present in the directory name, and resolved absolute path.
+Each campaign invocation also saves a read-only system inventory JSON under
+`OUT_DIR/logs/`; preflight runs save one under their unique preflight log
+directory. The inventory records host and serving-container software and
+selected hardware firmware versions for both nodes when available.
 
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
