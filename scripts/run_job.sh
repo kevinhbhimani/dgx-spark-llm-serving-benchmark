@@ -284,6 +284,22 @@ log() { echo "[job $(date '+%F %T')] $*"; }
 FAILED=()
 ACTIVE_CHILD=""
 
+capture_system_snapshot() {
+  local timestamp snapshot_path status
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  snapshot_path="$CAMPAIGN_LOGS_DIR/system_snapshot_${timestamp}_pid$$.json"
+  if "$PYTHON" scripts/system_snapshot.py \
+      --output "$snapshot_path" --container "$VLLM_CONTAINER" \
+      --image "$VLLM_IMAGE" --head-host "$HEAD_HOST" \
+      --worker-host "$HOEDUS_HOST" --head-ip "$HEAD_IP" \
+      --worker-ip "$HOEDUS_IP"; then
+    log "system snapshot saved: $snapshot_path"
+  else
+    status=$?
+    log "system snapshot collection failed (rc=$status); continuing"
+  fi
+}
+
 run_child() {
   local status=0
   "$@" &
@@ -569,6 +585,7 @@ trap 'handle_signal 130' INT
 trap 'handle_signal 143' TERM
 
 log "campaign start; log: $LOG"
+capture_system_snapshot
 print_plan
 
 prep "clean committed benchmark source tree" source_tree_ok

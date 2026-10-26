@@ -100,6 +100,21 @@ run_step() {
   fi
 }
 
+capture_preflight_system_snapshot() {
+  local snapshot_path="$PREFLIGHT_LOG_DIR/system_snapshot.json"
+  echo "[preflight] === Capture read-only system snapshot ==="
+  if "$PYTHON" "$HERE/scripts/system_snapshot.py" \
+      --output "$snapshot_path" --container "$VLLM_CONTAINER" \
+      --image "$VLLM_IMAGE" --head-host "$HEAD_HOST" \
+      --worker-host "$HOEDUS_HOST" --head-ip "$HEAD_IP" \
+      --worker-ip "$HOEDUS_IP" 2>&1 \
+      | tee "$PREFLIGHT_LOG_DIR/system-snapshot.log"; then
+    echo "[preflight] system snapshot collection completed"
+  else
+    echo "[preflight] WARNING: system snapshot could not be saved; continuing"
+  fi
+}
+
 verify_campaign_output_writes() {
   local directory probe_file expected_content written_content
   expected_content="preflight-write-check"
@@ -176,6 +191,8 @@ finish_preflight() {
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap finish_preflight EXIT
+
+capture_preflight_system_snapshot
 
 run_step "Verify campaign results and logs are writable" "output-writes" \
   verify_campaign_output_writes
