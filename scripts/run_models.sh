@@ -449,7 +449,7 @@ PY
 STARTUP_HEARTBEAT_PATTERN='No available shared memory broadcast block found'
 
 wait_ready() {
-  local name="$1" log="${2:-}" waited=0 quiet=0 progress=-1 lines=0
+  local name="$1" log="${2:-}" waited=0 quiet=0 progress=-1 output=0
   echo "[models] waiting for $name (up to ${READY_TIMEOUT}s)"
   while (( waited < READY_TIMEOUT )); do
     if server_ready "$name"; then
@@ -465,10 +465,11 @@ wait_ready() {
     # Workers that go silent while the engine keeps logging heartbeats are
     # deadlocked (for example pp2 stages blocked in FlashInfer autotune
     # collectives), so stop waiting instead of running out READY_TIMEOUT.
+    # Count bytes, not lines: progress bars redraw with "\r" and no newline.
     if [[ -n "$log" && "$READY_STALL_TIMEOUT" != "0" ]]; then
-      lines="$(grep -cv "$STARTUP_HEARTBEAT_PATTERN" "$log" 2>/dev/null || true)"
-      if [[ "$lines" != "$progress" ]]; then
-        progress="$lines"
+      output="$(grep -v "$STARTUP_HEARTBEAT_PATTERN" "$log" 2>/dev/null | wc -c)"
+      if [[ "$output" != "$progress" ]]; then
+        progress="$output"
         quiet=0
       elif (( quiet >= READY_STALL_TIMEOUT )); then
         echo "[models] $name logged nothing but engine heartbeats for ${quiet}s;" \
