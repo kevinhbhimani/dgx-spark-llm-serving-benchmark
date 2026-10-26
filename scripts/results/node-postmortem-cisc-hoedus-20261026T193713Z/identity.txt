@@ -1,0 +1,8 @@
+$ bash -c hostname; date -u; uname -a; echo "booted at: $(uptime -s)"; cat /proc/uptime
+cisc-hoedus
+Mon Oct 26 07:37:13 PM UTC 2026
+Linux cisc-hoedus 7.0.0-1019-nvidia #19~24.04.2-Ubuntu SMP PREEMPT_DYNAMIC Sun Sep  6 18:35:11 UTC 2 aarch64 aarch64 aarch64 GNU/Linux
+booted at: 2026-10-26 15:29:36
+456.57 8782.97
+
+[exit 0]
