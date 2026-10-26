@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import hashlib
 import json
@@ -42,6 +44,7 @@ class CampaignFixture:
         self.models.write_text(
             yaml.safe_dump(
                 {
+                    "gpu_util_default": 0.8,
                     "models": [
                         {
                             "name": "org/model",
@@ -78,6 +81,7 @@ class CampaignFixture:
         self._write_environment_manifest()
         self.policy_path = None
         self.policy = None
+        self.flashinfer_autotune = None
 
     def _write_environment_manifest(self):
         if CampaignFixture._environment_manifest is None:
@@ -175,6 +179,9 @@ class CampaignFixture:
                 f"cluster_runtime={runtime_hash}\n",
             )
         )
+        if self.flashinfer_autotune is not None:
+            policy["flashinfer_autotune"] = self.flashinfer_autotune
+            legacy_input += f"flashinfer_autotune={self.flashinfer_autotune}\n"
         policy["serving_fingerprint"] = hashlib.sha256(
             legacy_input.encode()
         ).hexdigest()
@@ -240,8 +247,16 @@ class CampaignFixture:
             "power_scope": "gpu_devices",
         }
 
-    def add_point(self, *, failed=0, run_tag="model-a-run", repeat_id=1,
-                  repeat_count=1, gpu_blocks=10):
+    def add_point(
+        self: CampaignFixture,
+        *,
+        failed: int = 0,
+        run_tag: str = "model-a-run",
+        repeat_id: int = 1,
+        repeat_count: int = 1,
+        gpu_blocks: int = 10,
+        gpu_memory_utilization: float = 0.8,
+    ) -> None:
         cfg = ExperimentConfig.from_yaml(str(self.experiment))
         cfg.model = "org/model"
         cfg.model_label = "model-a"
@@ -265,7 +280,7 @@ class CampaignFixture:
             "total_kv_tokens": gpu_blocks * 16,
             "total_kv_tokens_source": "server-log",
             "kv_cache_dtype": "auto",
-            "gpu_memory_utilization": 0.8,
+            "gpu_memory_utilization": gpu_memory_utilization,
             "enable_prefix_caching": False,
             "hybrid_cache": False,
             "worker_weight_gb": None,
@@ -403,6 +418,26 @@ class CampaignFixture:
                 )
         return path
 
+    def move_to_campaign_subdirectories(
+        self: CampaignFixture,
+    ) -> tuple[Path, Path]:
+        campaign_root = self.root / "campaign"
+        result_directory = campaign_root / "results"
+        log_directory = campaign_root / "logs"
+        result_directory.mkdir(parents=True)
+        log_directory.mkdir()
+        for artifact in self.results.iterdir():
+            destination = (
+                log_directory if artifact.suffix == ".log" else result_directory
+            )
+            artifact.replace(destination / artifact.name)
+        self.results.rmdir()
+        self.results = result_directory
+        self.environment_path = result_directory / "client_environment.json"
+        if self.policy_path is not None:
+            self.policy_path = result_directory / self.policy_path.name
+        return campaign_root, log_directory
+
 
 class PlanTests(unittest.TestCase):
     def test_plan_validates_and_counts_the_cross_product(self):
@@ -413,6 +448,7 @@ class PlanTests(unittest.TestCase):
             models.write_text(
                 yaml.safe_dump(
                     {
+                        "gpu_util_default": 0.8,
                         "models": [
                             {
                                 "name": "org/model",
@@ -420,7 +456,6 @@ class PlanTests(unittest.TestCase):
                                 "revision": REVISION,
                                 "configs": ["single", "tp2"],
                                 "max_model_len": 32,
-                                "gpu_util": {"single": 0.8, "tp2": 0.8},
                             }
                         ]
                     }
@@ -441,6 +476,8 @@ class PlanTests(unittest.TestCase):
             )
 
         self.assertEqual(plan["largest_request_tokens"], 32)
+        self.assertEqual(plan["gpu_utilization"], 0.8)
+        self.assertEqual(plan["matrix"][0]["gpu_utilization"], 0.8)
         self.assertEqual(plan["model_config_count"], 2)
         self.assertEqual(plan["expected_count"], 8)
         self.assertEqual(plan["matrix"][0]["repeat_ids"], [1, 2])
@@ -484,6 +521,26 @@ class PlanTests(unittest.TestCase):
                 validator.load_campaign(models, experiment)
 
 
+class SharedLockContractTests(unittest.TestCase):
+    def test_campaign_lock_diagnostics_match_existing_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "requirements.lock"
+            cases = (
+                ("invalid pin\n", f"{path}:1 is not an exact name==version pin"),
+                (
+                    "Foo.Bar==1\nfoo-bar==2\n",
+                    f"{path}:2 repeats distribution 'foo-bar'",
+                ),
+                ("# no pins\n", f"dependency lock has no pins: {path}"),
+            )
+            for contents, message in cases:
+                with self.subTest(contents=contents):
+                    path.write_text(contents)
+                    with self.assertRaises(validator.CampaignValidationError) as caught:
+                        validator._locked_distributions_from_file(path)
+                    self.assertEqual(str(caught.exception), message)
+
+
 class AllreduceCsvTests(unittest.TestCase):
     @staticmethod
     def _write_csv(path, *, small_bw="0.000", extra_rows=()):
@@ -521,7 +578,51 @@ class AllreduceCsvTests(unittest.TestCase):
 
 
 class VerifyTests(unittest.TestCase):
-    def test_verify_checks_artifacts_and_atomically_writes_hash_manifest(self):
+    def test_verify_new_campaign_layout_seals_result_and_log_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point()
+            campaign_root, log_directory = fixture.move_to_campaign_subdirectories()
+            manifest = fixture.results / "campaign_manifest.json"
+
+            report = validator.verify_campaign(
+                fixture.models,
+                fixture.experiment,
+                campaign_root,
+                [1],
+                1,
+                manifest,
+            )
+            payload = json.loads(manifest.read_text())
+
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(
+                payload["campaign"]["resolved_out_dir"], str(campaign_root.resolve())
+            )
+            self.assertEqual(
+                payload["artifacts"]["index"][0]["path"], "results/index.csv"
+            )
+            self.assertEqual(
+                payload["artifacts"]["log"][0]["path"],
+                f"logs/{next(log_directory.glob('server_*.log')).name}",
+            )
+
+    def test_live_gpu_memory_fraction_over_budget_is_rejected(
+        self: VerifyTests,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.add_point(gpu_memory_utilization=0.9)
+
+            with self.assertRaisesRegex(
+                validator.CampaignValidationError,
+                "live gpu_memory_utilization=0.9, expected 0.8",
+            ):
+                validator.verify_campaign(
+                    fixture.models, fixture.experiment, fixture.results, [1], 1
+                )
+
+    def test_verify_checks_artifacts_and_atomically_writes_hash_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = CampaignFixture(Path(tmp))
             fixture.add_point()
@@ -555,6 +656,17 @@ class VerifyTests(unittest.TestCase):
             self.assertEqual(
                 [item["path"] for item in payload["artifacts"]["environment"]],
                 [fixture.environment_path.name],
+            )
+            source_paths = {item["path"] for item in payload["artifacts"]["source"]}
+            self.assertTrue(
+                {
+                    "bench/artifacts.py",
+                    "bench/provenance.py",
+                    "bench/release_contracts.py",
+                    "scripts/campaign/manifest.py",
+                    "scripts/campaign/plan.py",
+                    "scripts/contracts/dependency_lock.py",
+                }.issubset(source_paths)
             )
             self.assertNotIn(
                 unrelated_policy.name,
@@ -602,6 +714,39 @@ class VerifyTests(unittest.TestCase):
             self.assertEqual(
                 len({row["experiment_fingerprint"] for row in rows}), 1
             )
+
+    def test_disabled_flashinfer_autotune_policy_verifies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.flashinfer_autotune = "0"
+            fixture.add_point(run_tag="model-a-r1", repeat_id=1,
+                              repeat_count=2, gpu_blocks=10)
+            fixture.add_point(run_tag="model-a-r2", repeat_id=2,
+                              repeat_count=2, gpu_blocks=11)
+            report = validator.verify_campaign(
+                fixture.models, fixture.experiment, fixture.results, [1], 2
+            )
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(fixture.policy["flashinfer_autotune"], "0")
+
+    def test_repeats_cannot_mix_flashinfer_autotune_policies(self):
+        # The autotune policy feeds the serving and experiment fingerprints, so
+        # repeats of one point that disagree on it never verify together.
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = CampaignFixture(Path(tmp))
+            fixture.flashinfer_autotune = "0"
+            fixture.add_point(run_tag="model-a-r1", repeat_id=1,
+                              repeat_count=2, gpu_blocks=10)
+            fixture.flashinfer_autotune = None
+            fixture.add_point(run_tag="model-a-r2", repeat_id=2,
+                              repeat_count=2, gpu_blocks=11)
+            with self.assertRaisesRegex(
+                validator.CampaignValidationError,
+                "flashinfer_autotune|serving[ _]fingerprint|experiment",
+            ):
+                validator.verify_campaign(
+                    fixture.models, fixture.experiment, fixture.results, [1], 2
+                )
 
     def test_completed_only_verifies_present_combos_and_skips_absent(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -667,7 +812,7 @@ class VerifyTests(unittest.TestCase):
             fixture.add_point()
             # Simulate verifying from a HEAD that advanced past the run's commit
             # (results committed incrementally) while the source is unchanged.
-            with mock.patch("bench.run_benchmark._git_commit", return_value="b" * 40):
+            with mock.patch("bench.provenance.git_commit", return_value="b" * 40):
                 with self.assertRaises(validator.CampaignValidationError) as ctx:
                     validator.verify_campaign(
                         fixture.models, fixture.experiment, fixture.results, [1], 1
@@ -823,7 +968,11 @@ class VerifyTests(unittest.TestCase):
                 fixture.models, fixture.experiment, fixture.results, [1], 1,
                 manifest,
             )
-            sealed = json.loads(manifest.read_text())["artifacts"]
+            manifest_data = json.loads(manifest.read_text())
+            sealed = manifest_data["artifacts"]
+            self.assertEqual(
+                manifest_data["campaign"]["gpu_utilization"], 0.8
+            )
             self.assertEqual(
                 [record["path"] for record in sealed["allreduce_log"]],
                 [evidence[0].name],

@@ -1,4 +1,6 @@
 """Tests for the steady-exact-v4 campaign helpers in scripts/."""
+from __future__ import annotations
+
 import io
 import json
 import os
@@ -17,7 +19,7 @@ import audit_nccl_transport  # noqa: E402
 import campaign_schedule  # noqa: E402
 import compare_campaigns  # noqa: E402
 import hf_snapshot_size  # noqa: E402
-import purge_model_cache  # noqa: E402
+import purge_model_cache_container  # noqa: E402
 
 
 def _entry(label, name, configs):
@@ -79,20 +81,22 @@ class CampaignScheduleTests(unittest.TestCase):
 
 
 class PurgeModelCacheTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self: PurgeModelCacheTests) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.hub = Path(self.tmp.name) / "hub"
-        for repo in ("org--keep", "org--gone"):
+        for repo, revision in (("org--keep", "b" * 40), ("org--gone", "a" * 40)):
             blobs = self.hub / f"models--{repo}" / "blobs"
             blobs.mkdir(parents=True)
             (blobs / "abc").write_bytes(b"x" * 1000)
-            snap = self.hub / f"models--{repo}" / "snapshots" / ("0" * 40)
+            snap = self.hub / f"models--{repo}" / "snapshots" / revision
             snap.mkdir(parents=True)
             (snap / "model.safetensors").symlink_to(blobs / "abc")
         (self.hub / ".locks" / "models--org--gone").mkdir(parents=True)
         self.patches = [
-            mock.patch.object(purge_model_cache, "HUB", str(self.hub)),
-            mock.patch.object(purge_model_cache, "busy_processes", return_value=[]),
+            mock.patch.object(purge_model_cache_container, "HUB", str(self.hub)),
+            mock.patch.object(
+                purge_model_cache_container, "busy_processes", return_value=[]
+            ),
         ]
         for patch in self.patches:
             patch.start()
@@ -102,8 +106,12 @@ class PurgeModelCacheTests(unittest.TestCase):
             patch.stop()
         self.tmp.cleanup()
 
-    def test_deletes_only_the_named_repo_and_counts_blob_bytes(self):
-        report = purge_model_cache.purge_node(["org/gone", "org/absent"], False, False)
+    def test_deletes_only_the_named_repo_and_counts_blob_bytes(
+        self: PurgeModelCacheTests,
+    ) -> None:
+        report = purge_model_cache_container.purge_node(
+            ["org/gone", "org/absent"], False, False, prune_garbage=False
+        )
 
         self.assertNotIn("error", report)
         self.assertFalse((self.hub / "models--org--gone").exists())
@@ -112,29 +120,113 @@ class PurgeModelCacheTests(unittest.TestCase):
         self.assertEqual(report["freed_bytes"], 1000)
         self.assertEqual([r["status"] for r in report["repos"]], ["deleted", "absent"])
 
-    def test_dry_run_deletes_nothing(self):
-        report = purge_model_cache.purge_node(["org/gone"], False, True)
+    def test_dry_run_deletes_nothing(self: PurgeModelCacheTests) -> None:
+        report = purge_model_cache_container.purge_node(
+            ["org/gone"], False, True, prune_garbage=False
+        )
         self.assertTrue((self.hub / "models--org--gone").exists())
         self.assertEqual(report["repos"][0]["status"], "would delete")
 
-    def test_unsafe_ids_and_symlinked_entries_are_refused(self):
+    def test_unsafe_ids_and_symlinked_entries_are_refused(
+        self: PurgeModelCacheTests,
+    ) -> None:
         for bad in ("../etc", "org/../x", "org", "/abs/path", "org/a/b"):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
-                    purge_model_cache.repo_dir(bad)
+                    purge_model_cache_container.repo_dir(bad)
         outside = Path(self.tmp.name) / "outside"
         outside.mkdir()
         (self.hub / "models--org--link").symlink_to(outside)
-        report = purge_model_cache.purge_node(["org/link"], False, False)
+        report = purge_model_cache_container.purge_node(
+            ["org/link"], False, False, prune_garbage=False
+        )
         self.assertIn("symlinked", report["error"])
         self.assertTrue(outside.exists())
 
-    def test_busy_node_refuses(self):
-        with mock.patch.object(purge_model_cache, "busy_processes",
+    def test_busy_node_refuses(self: PurgeModelCacheTests) -> None:
+        with mock.patch.object(purge_model_cache_container, "busy_processes",
                                return_value=["42: vllm serve x"]):
-            report = purge_model_cache.purge_node(["org/gone"], False, False)
+            report = purge_model_cache_container.purge_node(
+                ["org/gone"], False, False, prune_garbage=False
+            )
         self.assertIn("serving processes", report["error"])
         self.assertTrue((self.hub / "models--org--gone").exists())
+
+    def test_cache_garbage_pruning_is_enabled_by_default(
+        self: PurgeModelCacheTests,
+    ) -> None:
+        with (
+            mock.patch.object(purge_model_cache_container, "scan_cache_dir") as scan,
+            mock.patch.object(
+                purge_model_cache_container,
+                "prune_cache_garbage",
+                return_value=("pruned detached revisions", 2048),
+            ) as prune,
+        ):
+            report = purge_model_cache_container.purge_node([], False, False)
+
+        scan.assert_not_called()
+        prune.assert_called_once_with(False)
+        self.assertEqual(report["cache_prune_output"], "pruned detached revisions")
+        self.assertEqual(report["freed_bytes"], 2048)
+
+    def test_cache_garbage_pruning_can_be_disabled(
+        self: PurgeModelCacheTests,
+    ) -> None:
+        with mock.patch.object(
+            purge_model_cache_container, "prune_cache_garbage"
+        ) as prune:
+            report = purge_model_cache_container.purge_node(
+                [], False, False, prune_garbage=False
+            )
+
+        prune.assert_not_called()
+        self.assertNotIn("cache_prune_output", report)
+
+    def test_purge_keeps_nonempty_cache_lock_directories(
+        self: PurgeModelCacheTests,
+    ) -> None:
+        lock_directory = self.hub / ".locks" / "models--org--gone"
+        lock_file = lock_directory / "active.lock"
+        lock_file.write_text("")
+
+        purge_model_cache_container.purge_node(
+            ["org/gone"], False, False, prune_garbage=False
+        )
+
+        self.assertTrue(lock_file.exists())
+
+    def test_cli_defaults_to_pruning_and_accepts_explicit_opt_out(
+        self: PurgeModelCacheTests,
+    ) -> None:
+        cases = (
+            (["org/model"], True),
+            (["--prune-cache-garbage", "org/model"], True),
+            (["--no-prune-cache-garbage", "org/model"], False),
+        )
+        for arguments, expected_prune in cases:
+            with self.subTest(arguments=arguments):
+                with (
+                    mock.patch.object(
+                        purge_model_cache_container,
+                        "busy_processes",
+                        return_value=[],
+                    ),
+                    mock.patch.object(
+                        purge_model_cache_container,
+                        "purge_node",
+                        return_value={"repos": [], "freed_bytes": 0, "dry_run": False},
+                    ) as purge,
+                    mock.patch.object(
+                        purge_model_cache_container, "show", return_value=True
+                    ),
+                ):
+                    self.assertEqual(purge_model_cache_container.main(arguments), 0)
+
+                self.assertEqual(
+                    purge.call_args.args,
+                    (["org/model"], False, False, expected_prune),
+                )
 
 
 class SnapshotSizeTests(unittest.TestCase):
@@ -195,6 +287,36 @@ class TransportAuditTests(unittest.TestCase):
     def _run(self, out):
         with mock.patch("sys.stdout", io.StringIO()):
             return audit_nccl_transport.main([str(out), "--md", str(out / "a.md")])
+
+    def test_new_layout_reads_policies_and_logs_from_separate_directories(
+        self: TransportAuditTests,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            campaign = Path(temporary) / "campaign"
+            results = campaign / "results"
+            logs = campaign / "logs"
+            results.mkdir(parents=True)
+            logs.mkdir()
+            policy: dict[str, str] = {
+                "config": "tp2",
+                "serving_fingerprint": self.FP,
+                "nccl_ib_disable": "0",
+            }
+            (results / f"serving_policy_m_tp2_{self.FP}.json").write_text(
+                json.dumps(policy)
+            )
+            server_log = logs / (
+                f"server_m_tp2_{self.FP[:16]}_20261016T000000Z_pid1.log"
+            )
+            server_log.write_text("via NET/IB/0\n")
+            report_path = results / "audit.md"
+            with mock.patch("sys.stdout", io.StringIO()):
+                status: int = audit_nccl_transport.main(
+                    [str(campaign), "--md", str(report_path)]
+                )
+
+            self.assertEqual(status, 0)
+            self.assertIn("| ok |", report_path.read_text())
 
     def test_rdma_launch_is_verified_with_devices_and_gdr(self):
         with tempfile.TemporaryDirectory() as tmp:

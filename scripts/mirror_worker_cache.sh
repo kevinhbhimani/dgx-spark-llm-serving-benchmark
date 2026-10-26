@@ -2,9 +2,9 @@
 # Mirror model weights from the head node's HF cache to the worker's, so
 # tp2/pp2 launches find the same snapshot revision on every Ray node.
 #
-# Why: each node mounts its OWN local HF cache into the container
-# (start_ray.sh); scripts/predownload.sh only ever warms the node it runs on,
-# and the worker (Hoedus) cannot download from huggingface.co (no DNS).
+# Why: each node mounts its own local HF cache into the container
+# (start_ray.sh); scripts/predownload.sh only acquires snapshots on the node
+# where it runs, and the worker (Hoedus) cannot download from huggingface.co.
 # With HF_HUB_OFFLINE=1 the head resolves the model to a local snapshot path
 # and ships the exact pinned snapshot to the remote Ray worker over Ray, so the
 # transfer does not depend on a separately configured SSH path.
@@ -13,7 +13,7 @@
 #   scripts/mirror_worker_cache.sh pp2
 #   scripts/mirror_worker_cache.sh all    # union of tp2 and pp2
 #
-# Predownload the repos on the head first (scripts/predownload.sh); this script
+# Acquire the repos on the head first (scripts/predownload.sh); this script
 # refuses metadata-only stubs. Transfers are resumable at file granularity and
 # repos already complete on the worker are skipped, so rerunning is cheap.
 # Requires the Ray cluster to be up on both nodes (scripts/start_ray.sh).
@@ -27,6 +27,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+acquire_resource_lock || exit 1
 
 CONFIG="${1:-tp2}"
 case "$CONFIG" in tp2|pp2|all) ;;
@@ -99,16 +100,13 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-# Refuse to mirror a metadata stub or partial weight set. This validates the
-# exact revisions selected above, not merely the presence of a repo directory.
-CHECK_ONLY=1 MODELS_YAML="$MODELS_YAML" PYTHON="$PYTHON" \
-  MODEL_LABELS="$MODEL_LABELS" "$HERE/predownload.sh" "$CONFIG"
-
 if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
   echo "[mirror] ERROR: Ray cluster is not active in $VLLM_CONTAINER" >&2
   echo "[mirror] Start Ray first: scripts/start_ray.sh head (Diya), worker (Hoedus)" >&2
   exit 1
 fi
+
+wait_for_resources_idle required || exit 1
 
 docker cp "$HERE/mirror_worker_cache.py" "$VLLM_CONTAINER":/tmp/mirror_worker_cache.py
 docker exec -e MIRROR_MARGIN_GB="${MIRROR_MARGIN_GB:-10}" \

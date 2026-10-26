@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from bench import provenance
 from bench.config import ExperimentConfig
 from bench.monitors import VLLMMetricsScraper, WorkerPowerSampler
 from bench.run_benchmark import (
@@ -16,6 +17,7 @@ from bench.run_benchmark import (
     _load_serving_policy,
     _model_slug,
     _validate_result_quality,
+    client_environment,
     client_environment_fingerprint,
     config_file_fingerprint,
     deployment_fingerprint,
@@ -123,6 +125,19 @@ class ConfigurationReadinessTests(unittest.TestCase):
 
 
 class ClientEnvironmentTests(unittest.TestCase):
+    def test_distribution_names_use_shared_normalization(self):
+        distribution = SimpleNamespace(
+            metadata={"Name": "Foo_Bar"}, version="2.0"
+        )
+        with mock.patch(
+            "bench.provenance.importlib.metadata.distributions",
+            return_value=[distribution],
+        ), mock.patch(
+            "bench.provenance.importlib.metadata.version", return_value="1.0"
+        ):
+            environment = client_environment()
+        self.assertEqual(environment["installed_distributions"], ["foo-bar==2.0"])
+
     def test_snapshot_is_captured_once_and_that_exact_object_is_hashed(self):
         environment = {
             "python_version": "3.12.3",
@@ -160,6 +175,32 @@ class ClientEnvironmentTests(unittest.TestCase):
         ) as capture:
             self.assertEqual(client_environment_fingerprint(), expected)
         capture.assert_called_once_with()
+
+
+class SourceFingerprintTests(unittest.TestCase):
+    def test_new_contract_modules_change_the_source_fingerprint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bench = root / "bench"
+            scripts = root / "scripts"
+            bench.mkdir()
+            scripts.mkdir()
+            sources = (
+                bench / "release_contracts.py",
+                scripts / "contracts/dependency_lock.py",
+                scripts / "campaign/plan.py",
+                scripts / "campaign/manifest.py",
+            )
+            for source in sources:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("before\n")
+            with mock.patch.object(
+                provenance, "__file__", str(bench / "provenance.py")
+            ):
+                for source in sources:
+                    before = provenance.source_fingerprint()
+                    source.write_text("after\n")
+                    self.assertNotEqual(before, provenance.source_fingerprint())
 
 
 class ResultQualityTests(unittest.TestCase):
@@ -232,7 +273,7 @@ class AtomicArtifactTests(unittest.TestCase):
 
 class ServingPolicyTests(unittest.TestCase):
     @staticmethod
-    def make_policy(max_num_seqs=None):
+    def make_policy(max_num_seqs=None, flashinfer_autotune=None):
         runtime_facts = {
             "gpus": [{"gpu_name": "GB10", "power_limit_w": "N/A"}],
             "source": "host-nvidia-smi",
@@ -296,6 +337,9 @@ class ServingPolicyTests(unittest.TestCase):
         if max_num_seqs is not None:
             policy["max_num_seqs"] = max_num_seqs
             legacy += f"max_num_seqs={max_num_seqs}\n"
+        if flashinfer_autotune is not None:
+            policy["flashinfer_autotune"] = flashinfer_autotune
+            legacy += f"flashinfer_autotune={flashinfer_autotune}\n"
         policy["serving_fingerprint"] = hashlib.sha256(legacy.encode()).hexdigest()
         return policy
 
@@ -363,6 +407,39 @@ class ServingPolicyTests(unittest.TestCase):
                     policy["max_num_seqs"] = value
                     path.write_text(json.dumps(policy))
                     with self.assertRaisesRegex(RuntimeError, "max_num_seqs"):
+                        _load_serving_policy(str(path), cfg)
+
+    def test_disabled_flashinfer_autotune_is_part_of_launch_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = self.make_policy(max_num_seqs="4", flashinfer_autotune="0")
+            path = Path(tmp) / "serving_policy.json"
+            path.write_text(json.dumps(policy))
+            cfg = ExperimentConfig(
+                require_provenance=True, out_dir=tmp,
+                config_label=policy["config"], model=policy["model"],
+                model_revision=policy["revision"], tokenizer=policy["tokenizer"],
+                tokenizer_revision=policy["tokenizer_revision"],
+                serving_fingerprint=policy["serving_fingerprint"],
+            )
+            loaded, _ = _load_serving_policy(str(path), cfg)
+            self.assertEqual(loaded["flashinfer_autotune"], "0")
+            # Autotune left at vLLM's default keeps the field, and therefore
+            # the earlier fingerprint, out of the policy.
+            self.assertNotEqual(
+                policy["serving_fingerprint"],
+                self.make_policy(max_num_seqs="4")["serving_fingerprint"],
+            )
+
+            del policy["flashinfer_autotune"]
+            path.write_text(json.dumps(policy))
+            with self.assertRaisesRegex(RuntimeError, "reproduce"):
+                _load_serving_policy(str(path), cfg)
+
+            for value in ("1", 0, False, None, "off"):
+                with self.subTest(value=value):
+                    policy["flashinfer_autotune"] = value
+                    path.write_text(json.dumps(policy))
+                    with self.assertRaisesRegex(RuntimeError, "flashinfer_autotune"):
                         _load_serving_policy(str(path), cfg)
 
 

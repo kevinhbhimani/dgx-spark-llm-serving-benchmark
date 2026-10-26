@@ -25,7 +25,7 @@ import time
 import ray
 from ray.exceptions import GetTimeoutError
 
-HUB = "/root/.cache/huggingface/hub"
+HUB = os.environ.get("HF_HUB_CACHE", "/hf-cache/hub")
 MARGIN = int(os.environ.get("MIRROR_MARGIN_GB", "10")) << 30
 CHUNK = 4 << 20
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
@@ -54,15 +54,29 @@ def parse_spec(raw: str) -> tuple[str, str, str]:
     return repo, revision, kind
 
 
+def path_is_within(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
 def snapshot_manifest(repo: str, revision: str) -> tuple[dict[str, int], dict[str, str]]:
-    """Return only a pinned snapshot tree and the blobs its symlinks reference."""
+    """Return a pinned snapshot and every repo-local or shared blob it references."""
     dirname = repo_dir(repo)
     repo_root = os.path.join(HUB, dirname)
     snapshot = os.path.join(repo_root, "snapshots", revision)
-    blob_root = os.path.realpath(os.path.join(repo_root, "blobs"))
+    hub_root = os.path.realpath(HUB)
+    repo_root_real = os.path.realpath(repo_root)
+    repo_blob_root = os.path.realpath(os.path.join(repo_root, "blobs"))
+    shared_blob_root = os.path.realpath(os.path.join(HUB, "blobs"))
+    if not all(path_is_within(root, hub_root) for root in
+               (repo_root_real, repo_blob_root, shared_blob_root)):
+        raise RuntimeError(f"cache blob directory escapes {HUB}")
     if not os.path.isdir(snapshot):
         raise FileNotFoundError(
-            f"{repo}@{revision} is not in the head cache; run predownload first"
+            f"{repo}@{revision} is not in the head cache; acquire the pinned "
+            "snapshot first"
         )
 
     files: dict[str, int] = {}
@@ -83,14 +97,28 @@ def snapshot_manifest(repo: str, revision: str) -> tuple[dict[str, int], dict[st
                 raise RuntimeError(f"newline in cache path is unsupported: {rel!r}")
             if os.path.islink(path):
                 target = os.readlink(path)
-                resolved = os.path.realpath(path)
-                try:
-                    inside_blobs = os.path.commonpath([resolved, blob_root]) == blob_root
-                except ValueError:
-                    inside_blobs = False
-                if not inside_blobs or not os.path.isfile(resolved):
+                if os.path.isabs(target):
                     raise RuntimeError(f"broken or unsafe snapshot link: {rel} -> {target}")
                 links[rel] = target
+                blob_path = os.path.normpath(os.path.join(os.path.dirname(path), target))
+                if os.path.islink(blob_path):
+                    if not path_is_within(blob_path, repo_root_real):
+                        raise RuntimeError(
+                            f"unsafe repo blob link: {os.path.relpath(blob_path, HUB)}"
+                        )
+                    blob_rel = os.path.relpath(blob_path, HUB)
+                    blob_target = os.readlink(blob_path)
+                    if "\n" in blob_rel or os.path.isabs(blob_target):
+                        raise RuntimeError(f"unsafe repo blob link: {blob_rel}")
+                    links[blob_rel] = blob_target
+                    blob_path = os.path.normpath(
+                        os.path.join(os.path.dirname(blob_path), blob_target)
+                    )
+                resolved = os.path.realpath(blob_path)
+                if not (path_is_within(resolved, repo_blob_root)
+                        or path_is_within(resolved, shared_blob_root)) \
+                        or not os.path.isfile(resolved):
+                    raise RuntimeError(f"broken or unsafe snapshot link: {rel} -> {target}")
                 blob_rel = os.path.relpath(resolved, HUB)
                 files[blob_rel] = os.path.getsize(resolved)
             elif os.path.isfile(path):
@@ -159,8 +187,18 @@ class Receiver:
             conn = None
             try:
                 conn, _ = self.sock.accept()
+                cache_uid = int(os.environ.get("HF_CACHE_UID", str(os.getuid())))
+                cache_gid = int(os.environ.get("HF_CACHE_GID", str(os.getgid())))
+                extract_code = (
+                    "import os; "
+                    f"os.setgroups([{cache_gid}]); "
+                    f"os.setgid({cache_gid}); os.setuid({cache_uid}); "
+                    "os.umask(0o002); "
+                    "os.execvp('tar', ['tar', '-C', "
+                    f"{HUB!r}, '-xf', '-', '--overwrite'])"
+                )
                 proc = subprocess.Popen(
-                    ["tar", "-C", HUB, "-xf", "-", "--overwrite"],
+                    [sys.executable, "-c", extract_code],
                     stdin=conn.fileno(),
                 )
                 self.result["rc"] = proc.wait(timeout=RECEIVER_TRANSFER_S)

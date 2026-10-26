@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Pre-download model weights into the shared Hugging Face cache so that a later
-# `vllm serve` does not spend its readiness budget pulling weights.
+# Acquire pinned model snapshots in the head node's Hugging Face cache just
+# before the selected run, so `vllm serve` does not spend its readiness budget
+# pulling weights. The campaign uses this same step for single- and dual-node
+# model groups, then mirrors the snapshot to the worker when needed.
 #
 # Why: scripts/run_models.sh gives each server READY_TIMEOUT seconds (default
 # 1800) to come up, then tears it down. On a cold cache the largest checkpoints
@@ -14,7 +16,7 @@
 #   scripts/predownload.sh all         # every model in models.yaml, across all configs
 #
 # Downloads run inside the same VLLM_IMAGE and into the same HF_CACHE mount that
-# launch_server.sh uses, so the serving path sees an identical, warm cache. Each
+# launch_server.sh uses, so the serving path sees the same local files. Each
 # unique repo is fetched once (a model shared across configs, or reused by an
 # on-the-fly-quant entry like llama3.3-70b-fp8, is not downloaded twice). Gated
 # repos (meta-llama) use HF_TOKEN from .env. Redundant PyTorch/Metal/GGUF copies
@@ -22,9 +24,9 @@
 # vLLM loads the safetensors. The disk check sizes exactly those files with
 # scripts/hf_snapshot_size.py, net of blobs already in the cache.
 #
-# The campaign (scripts/run_job.sh) calls this one model at a time with
-# MODEL_LABELS and purges each model after measuring it, so the cache never
-# has to hold the whole matrix.
+# scripts/run_job.sh calls this once per model group; direct run_models.sh calls
+# it for the selected model before launch. The campaign always purges canary
+# groups and applies PURGE_WEIGHTS to measurement cleanup.
 #
 # Downloads are pinned to the revisions in models.yaml and are idempotent and
 # resumable. CHECK_ONLY=1 performs the same local-only completeness validation
@@ -37,10 +39,13 @@
 #      MODEL_LABELS (optional space-separated label allowlist),
 #      DOWNLOAD_DNS (Docker DNS for downloads, defaults to CONTAINER_DNS;
 #                    empty uses Docker's host-derived resolver),
-#      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS).
+#      DOWNLOAD_WORKERS (parallel HF files, default 1 for reliable campus DNS),
+#      PREDOWNLOAD_MIN_FREE_GB (free-space reserve, default 10 GiB).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_IMAGE, HF_CACHE, HF_TOKEN, and .env
+acquire_resource_lock || exit 1
+wait_for_resources_idle auto || exit 1
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2|all) ;; *)
@@ -126,11 +131,15 @@ if [[ -z "${HF_TOKEN:-}" ]]; then
 fi
 
 mkdir -p "$HF_CACHE"
+if [[ "${CACHE_ACCESS_VERIFIED:-0}" != "1" ]]; then
+  check_hf_cache_access
+  check_hf_cache_access_in_image
+fi
 
 # Reserve exactly what the pinned snapshots still need. The Hub's per-file
 # sizes for each pinned revision, minus blobs already complete in this cache,
-# are compared with free space plus an OS buffer (20 GiB or 5% of the disk,
-# whichever is larger; PREDOWNLOAD_MIN_FREE_GB overrides). A Hub query failure
+# are compared with free space plus a 10 GiB OS buffer
+# (PREDOWNLOAD_MIN_FREE_GB overrides). A Hub query failure
 # exits before the first download. Skipped in CHECK_ONLY mode.
 check_disk_space() {
   local spec repo revision kind size_report needed_bytes
@@ -148,22 +157,20 @@ check_disk_space() {
   [[ "$needed_bytes" =~ ^[0-9]+$ ]] || {
     echo "[predownload] FAILED: unparseable size report" >&2; return 1; }
 
-  local available_kb total_kb need_kb buffer_kb pct_buffer_kb
+  local available_kb need_kb buffer_kb min_free_gb
   available_kb=$(df --output=avail "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
-  total_kb=$(df --output=size "$HF_CACHE" 2>/dev/null | tail -n1 | awk '{print $1}')
-  if [[ -z "$available_kb" || -z "$total_kb" || "$available_kb" -le 0 ]]; then
+  if [[ -z "$available_kb" || "$available_kb" -le 0 ]]; then
     echo "[predownload] cannot determine free space on $HF_CACHE" >&2
     return 1
   fi
   need_kb=$((needed_bytes / 1024))
-  pct_buffer_kb=$((total_kb * 5 / 100))
-  buffer_kb=$((20 * 1024 * 1024))
-  if [[ "$pct_buffer_kb" -gt "$buffer_kb" ]]; then
-    buffer_kb=$pct_buffer_kb
+  min_free_gb="${PREDOWNLOAD_MIN_FREE_GB:-10}"
+  if [[ ! "$min_free_gb" =~ ^[0-9]{1,6}$ ]]; then
+    echo "[predownload] PREDOWNLOAD_MIN_FREE_GB must be a non-negative integer" >&2
+    return 2
   fi
-  if [[ -n "${PREDOWNLOAD_MIN_FREE_GB:-}" ]]; then
-    buffer_kb=$((PREDOWNLOAD_MIN_FREE_GB * 1024 * 1024))
-  fi
+  min_free_gb=$((10#$min_free_gb))
+  buffer_kb=$((min_free_gb * 1024 * 1024))
   echo "[predownload] $HF_CACHE: $((available_kb / 1024 / 1024)) GiB free, need $((need_kb / 1024 / 1024)) GiB + $((buffer_kb / 1024 / 1024)) GiB OS buffer"
   if [[ "$available_kb" -lt $((need_kb + buffer_kb)) ]]; then
     echo "[predownload] FAILED: need $(((need_kb + buffer_kb) / 1024 / 1024)) GiB, have $((available_kb / 1024 / 1024)) GiB." >&2
@@ -175,7 +182,10 @@ if [[ "$CHECK_ONLY" != "1" ]]; then
   check_disk_space || exit 1
 fi
 
-run_env=()
+run_env=( -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub
+  -e HF_MODULES_CACHE=/hf-cache/modules
+  -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS"
+  -e HF_HUB_DISABLE_PROGRESS_BARS=1 )
 dns_args=()
 if [[ -n "$DOWNLOAD_DNS" ]]; then dns_args=( --dns "$DOWNLOAD_DNS" ); fi
 
@@ -188,9 +198,14 @@ if [[ "$CHECK_ONLY" == "1" ]]; then
     check_args+=("$repo" "$revision" "$kind")
   done
   echo "[predownload] CHECK_ONLY=1: validating local pinned snapshots"
-  docker run --rm "${run_env[@]}" \
-    -v "$HF_CACHE":/root/.cache/huggingface "$VLLM_IMAGE" \
-    python3 -c 'import json, sys
+  # Cache operations only need Python; do not run the serving image entrypoint
+  # that may initialize GPU and driver support.
+  docker run --rm --user "$HF_CACHE_UID:$HF_CACHE_GID" \
+    --entrypoint python3 \
+    -e HOME=/tmp -v "$HF_CACHE":/hf-cache \
+    -v "$HERE/cache_access_probe.py:/tmp/cache_access_probe.py:ro" \
+    "${run_env[@]}" "$VLLM_IMAGE" \
+    -c 'import json, sys
 from pathlib import Path
 from huggingface_hub import snapshot_download
 
@@ -199,8 +214,12 @@ args = sys.argv[1:]
 for i in range(0, len(args), 3):
     repo, revision, kind = args[i:i + 3]
     try:
-        path = Path(snapshot_download(repo, revision=revision or None,
-                                      local_files_only=True))
+        path = Path(snapshot_download(
+            repo, revision=revision or None, local_files_only=True,
+            ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"],
+        ))
+        if revision and path.name != revision:
+            raise RuntimeError(f"resolved snapshot is {path.name}, expected {revision}")
         broken = [str(p.relative_to(path)) for p in path.rglob("*")
                   if p.is_symlink() and not p.exists()]
         repo_root = path.parents[1]
@@ -242,19 +261,16 @@ if [[ -n "${HF_TOKEN:-}" ]]; then run_env+=( -e HF_TOKEN ); fi
 FAILURES=0
 for spec in "${SPECS[@]}"; do
   IFS='|' read -r repo revision kind <<<"$spec"
-  echo "[predownload] === $repo@$revision ==="
-  if docker run --rm "${dns_args[@]}" \
-       "${run_env[@]}" -v "$HF_CACHE":/root/.cache/huggingface \
-       "$VLLM_IMAGE" \
-       python3 -c 'import sys
-from huggingface_hub import snapshot_download
-repo, revision, workers = sys.argv[1:4]
-path = snapshot_download(repo, revision=revision or None,
-                         max_workers=int(workers),
-                         ignore_patterns=["original/*", "metal/*", "*.pth", "*.gguf"])
-print("[predownload] cached", repo, revision or "main", "->", path)' \
+  echo "[acquire] start $repo@$revision"
+  if docker run --rm --user "$HF_CACHE_UID:$HF_CACHE_GID" \
+       --entrypoint python3 \
+       -e HOME=/tmp -v "$HF_CACHE":/hf-cache \
+       -v "$HERE/download_hf_snapshot.py:/tmp/download_hf_snapshot.py:ro" \
+       -v "$HERE/failure_diagnostics.py:/tmp/failure_diagnostics.py:ro" \
+       "${dns_args[@]}" "${run_env[@]}" \
+       "$VLLM_IMAGE" -u /tmp/download_hf_snapshot.py \
        "$repo" "$revision" "$DOWNLOAD_WORKERS"; then
-    echo "[predownload] done $repo@$revision"
+    :
   else
     echo "[predownload] FAILED $repo (gated repo without HF_TOKEN, or bad name?)" >&2
     FAILURES=$((FAILURES + 1))
@@ -265,6 +281,7 @@ if (( FAILURES > 0 )); then
   echo "[predownload] $FAILURES repo(s) failed; see output above" >&2
   exit 1
 fi
-CHECK_ONLY=1 "$0" "$CONFIG"
+CACHE_ACCESS_VERIFIED=1 CHECK_ONLY=1 MODEL_LABELS="$MODEL_LABELS" \
+  "$0" "$CONFIG"
 echo "[predownload] all pinned snapshots for '$CONFIG' cached under $HF_CACHE"
 echo "[predownload] now run: scripts/run_models.sh $([[ "$CONFIG" == all ]] && echo single || echo "$CONFIG")"
