@@ -186,7 +186,7 @@ cleanly.
 ```bash
 scripts/hardware_smoke.sh
 SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
-  SMOKE_CONCURRENCIES="1 128" OUT_DIR=results/smoke-lightning-2026-10-22 \
+  SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22 \
   scripts/hardware_smoke.sh
 ```
 

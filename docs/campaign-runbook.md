@@ -348,10 +348,11 @@ inputs match. The `CANARY_FIRST=1` setting forces another complete canary.
 
 ## Start and resume the full suite
 
-The default matrix requires about 265 hours of measurement before model
-downloads, launches, and extensions. Run it in `tmux` on Diya so it continues
-if the SSH connection closes. A host reboot stops the session and campaign
-process.
+The default matrix requires about 198 hours of measurement before model
+downloads, launches, and extensions; expect about 279 hours (11.6 days) in
+total, and up to about 312 hours (13 days). Run it in `tmux` on Diya so it
+continues if the SSH connection closes. A host reboot stops the session and
+campaign process.
 
 Start the campaign session on Diya:
 
@@ -366,9 +367,9 @@ OUT_DIR=results/rdma-v4-paper-2026-10-22 scripts/run_job.sh
 ```
 
 The default matrix contains 19 checkpoints, 53 model/configuration curves,
-159 server launches, and 1,272 measurement windows. The minimum measurement
-time is about 265 sequential hours before extensions, downloads, and model
-loads.
+159 server launches, and 954 measurement windows (concurrencies 1 4 8 16 32
+64). The minimum measurement time is about 198 sequential hours before
+extensions, downloads, and model loads.
 
 `run_job.sh` acquires and measures one model group at a time. Every group uses
 the same head-side snapshot acquisition; groups that include `tp2` or `pp2`

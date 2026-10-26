@@ -21,7 +21,7 @@ campaign_reject_existing_implicit_out_dir || exit 1
 # to disable sampling for a run without editing the config).
 POWER_BACKEND="${POWER_BACKEND:-}"
 CONFIG_YAML="${CONFIG_YAML:-configs/experiment.yaml}"
-CONCURRENCIES="${CONCURRENCIES:-1 2 4 8 16 32 64 128}"
+CONCURRENCIES="${CONCURRENCIES:-1 4 8 16 32 64}"
 EXPECTED_CONCURRENCIES="${EXPECTED_CONCURRENCIES:-$CONCURRENCIES}"
 # Repeated measurement windows of every point, for run-to-run spread. Each
 # repeat deliberately replays the same seeded workload, making comparisons
