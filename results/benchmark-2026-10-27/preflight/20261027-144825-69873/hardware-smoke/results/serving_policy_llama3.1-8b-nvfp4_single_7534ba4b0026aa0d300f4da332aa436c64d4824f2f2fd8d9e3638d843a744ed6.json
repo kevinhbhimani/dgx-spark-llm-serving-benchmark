@@ -1,0 +1,55 @@
+{
+  "cluster_runtime": "488b450d21b110170303365decd1745d1be8fb3a7fd4c0b16284603a6e2a0b63",
+  "config": "single",
+  "connectx_iface": "enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1",
+  "dtype": "auto",
+  "flashinfer_autotune": "0",
+  "generation_config": "vllm",
+  "gpu_util": "0.8",
+  "head_ip": "10.10.10.1",
+  "hf_hub_offline": "0",
+  "image": "nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2",
+  "max_model_len": "8704",
+  "model": "nvidia/Llama-3.1-8B-Instruct-NVFP4",
+  "nccl_ib_disable": "0",
+  "power_backend": "nvidia_smi",
+  "prefix_caching": "0",
+  "quant": "",
+  "ray_version": "2.56.1",
+  "revision": "bdb54e24298451af785c0ac63c1b485e9b7400a2",
+  "runtime_facts": {
+    "gpus": [
+      {
+        "application_graphics_clock_mhz": "2418",
+        "compute_capability": "12.1",
+        "default_application_graphics_clock_mhz": "2418",
+        "driver": "580.178.04",
+        "gpu_name": "NVIDIA GB10",
+        "gpu_uuid": "GPU-fb2307eb-1621-534e-26fa-bb63647fda6d",
+        "max_graphics_clock_mhz": "3003",
+        "power_limit_w": "[N/A]"
+      }
+    ],
+    "query_fields": [
+      "name",
+      "uuid",
+      "driver_version",
+      "power.limit",
+      "compute_cap",
+      "clocks.max.graphics",
+      "clocks.applications.graphics",
+      "clocks.default_applications.graphics"
+    ],
+    "serving_container": "standalone",
+    "source": "host-nvidia-smi"
+  },
+  "runtime_facts_sha256": "488b450d21b110170303365decd1745d1be8fb3a7fd4c0b16284603a6e2a0b63",
+  "runtime_scope": "single-host",
+  "schema": "serving-v1",
+  "serving_fingerprint": "7534ba4b0026aa0d300f4da332aa436c64d4824f2f2fd8d9e3638d843a744ed6",
+  "tokenizer": "nvidia/Llama-3.1-8B-Instruct-NVFP4",
+  "tokenizer_revision": "bdb54e24298451af785c0ac63c1b485e9b7400a2",
+  "torchinductor_autograd_cache": "0",
+  "trust_remote_code": "",
+  "worker_ip": "10.10.10.2"
+}
