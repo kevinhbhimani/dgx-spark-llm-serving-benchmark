@@ -1,0 +1,60 @@
+$ bash -c journalctl -b -1 --no-pager -o short-iso-precise | grep -iE 'shutdown|reboot|poweroff|power-off|unattended-upgrade|dgx-dashboard|fwupd|systemd-logind' | tail -80
+2026-10-27T09:51:40.195505-04:00 cisc-hoedus kernel: secureboot: Secure boot enabled
+2026-10-27T09:51:40.237085-04:00 cisc-hoedus kernel: ima: secureboot mode enabled
+2026-10-27T09:51:41.215532-04:00 cisc-hoedus systemd[1]: Starting finalrd.service - Create final runtime dir for shutdown pivot root...
+2026-10-27T09:51:41.221341-04:00 cisc-hoedus systemd[1]: Finished finalrd.service - Create final runtime dir for shutdown pivot root.
+2026-10-27T09:51:41.249539-04:00 cisc-hoedus systemd[1]: Starting systemd-update-utmp.service - Record System Boot/Shutdown in UTMP...
+2026-10-27T09:51:41.255960-04:00 cisc-hoedus systemd[1]: Finished systemd-update-utmp.service - Record System Boot/Shutdown in UTMP.
+2026-10-27T09:51:41.296042-04:00 cisc-hoedus systemd[1]: Started fwupd-refresh.timer - Refresh fwupd metadata regularly.
+2026-10-27T09:51:41.329932-04:00 cisc-hoedus systemd[1]: Started dgx-dashboard.service - NVIDIA DGX Dashboard Service.
+2026-10-27T09:51:41.348533-04:00 cisc-hoedus systemd[1]: Starting secureboot-db.service - Secure Boot updates for DB and DBX...
+2026-10-27T09:51:41.358069-04:00 cisc-hoedus systemd[1]: Starting systemd-logind.service - User Login Management...
+2026-10-27T09:51:41.358170-04:00 cisc-hoedus systemd[1]: ua-reboot-cmds.service - Ubuntu Pro reboot cmds was skipped because no trigger condition checks were met.
+2026-10-27T09:51:41.377720-04:00 cisc-hoedus systemd-logind[1611]: New seat seat0.
+2026-10-27T09:51:41.381121-04:00 cisc-hoedus systemd-logind[1611]: Watching system buttons on /dev/input/event3 (Logitech USB Receiver)
+2026-10-27T09:51:41.381133-04:00 cisc-hoedus systemd-logind[1611]: Watching system buttons on /dev/input/event5 (Logitech USB Receiver Consumer Control)
+2026-10-27T09:51:41.381149-04:00 cisc-hoedus systemd-logind[1611]: Watching system buttons on /dev/input/event6 (Logitech USB Receiver System Control)
+2026-10-27T09:51:41.382114-04:00 cisc-hoedus systemd-logind[1611]: Watching system buttons on /dev/input/event0 (Power Button)
+2026-10-27T09:51:41.382156-04:00 cisc-hoedus systemd-logind[1611]: Watching system buttons on /dev/input/event1 (Lid Switch)
+2026-10-27T09:51:41.382165-04:00 cisc-hoedus systemd-logind[1611]: Watching system buttons on /dev/input/event2 (Sleep Button)
+2026-10-27T09:51:41.382683-04:00 cisc-hoedus systemd[1]: Started systemd-logind.service - User Login Management.
+2026-10-27T09:51:41.386699-04:00 cisc-hoedus sbkeysync[1659]:   /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin [4610 bytes]
+2026-10-27T09:51:41.388560-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388560-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388560-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388560-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388779-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388994-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388994-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388994-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388994-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388994-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388994-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.388994-04:00 cisc-hoedus sbkeysync[1659]:      from /usr/share/secureboot/updates/dbx/dbxupdate_arm64.bin
+2026-10-27T09:51:41.392015-04:00 cisc-hoedus systemd[1]: secureboot-db.service: Deactivated successfully.
+2026-10-27T09:51:41.392196-04:00 cisc-hoedus systemd[1]: Finished secureboot-db.service - Secure Boot updates for DB and DBX.
+2026-10-27T09:51:42.950104-04:00 cisc-hoedus systemd[1]: Starting dgx-dashboard-admin.service - NVIDIA DGX Dashboard Admin Service...
+2026-10-27T09:51:42.969688-04:00 cisc-hoedus cron[2072]: (CRON) INFO (Running @reboot jobs)
+2026-10-27T09:51:42.988813-04:00 cisc-hoedus systemd[1]: Started dgx-dashboard-admin.service - NVIDIA DGX Dashboard Admin Service.
+2026-10-27T09:51:45.620331-04:00 cisc-hoedus systemd-logind[1611]: New session c1 of user gdm.
+2026-10-27T09:51:45.741180-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) systemd-logind: took control of session /org/freedesktop/login1/session/c1
+2026-10-27T09:51:45.742319-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) systemd-logind: got fd for /dev/dri/card1 226:1 fd 14 paused 0
+2026-10-27T09:51:45.742564-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) systemd-logind: got fd for /dev/dri/card0 226:0 fd 15 paused 0
+2026-10-27T09:51:45.750846-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) systemd-logind: releasing fd for 226:1
+2026-10-27T09:51:45.753224-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) systemd-logind: releasing fd for 226:0
+
+[exit 0]
