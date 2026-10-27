@@ -69,25 +69,21 @@ replicates: 159 server launches and 954 measurement windows (see
 
 Before running a Docker-backed model command, confirm that each participating
 node has a writable cache with at least 200 GB free. The default is
-`$HOME/.cache/huggingface`. Scripts check create/read/delete access as the host
-user and inside the pinned container image. The check reports the effective
-UID:GID and cache directory owner and mode when access fails. Scripts do not
-change cache ownership.
+`$HOME/.cache/huggingface-$UID`. Cache-using script entry points source
+`scripts/connectx_env.sh`, which loads `.env` and sets this default. No cache
+variable needs to be set for the default location. Scripts check
+create/read/delete access as the host user and inside the pinned container
+image. The check reports the effective UID:GID and cache directory owner and
+mode when access fails. Scripts do not change cache ownership.
 
 If the default cache belongs to another account or has insufficient space, set
 `HF_CACHE` in the repo-local `.env` on each node. Use a directory owned by the
-account running the benchmark. For a home filesystem with enough space, use:
-
-```bash
-export HF_CACHE="$HOME/.cache/huggingface-$UID"
-```
-
-Use a writable local scratch path when the home filesystem lacks 200 GB. The
-head and worker use separate caches. The regular test and benchmark commands
-do not invoke sudo. `DROP_CACHES=1` is optional and invokes sudo to flush the
-host page cache. Docker commands require permission to access the Docker
-daemon. Put `HF_TOKEN` in `.env` on the head node for gated models and run
-`chmod 600 .env` after adding the token.
+account running the benchmark. Use a writable local scratch path when the home
+filesystem lacks 200 GB. The head and worker use separate caches. The regular
+test and benchmark commands do not invoke sudo. `DROP_CACHES=1` is optional and
+invokes sudo to flush the host page cache. Docker commands require permission
+to access the Docker daemon. Put `HF_TOKEN` in `.env` on the head node for
+gated models and run `chmod 600 .env` after adding the token.
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
    Spark node, run this in one terminal:
@@ -438,8 +434,8 @@ export MAXLEN=8704
 export VLLM_IMAGE=nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2
 export VLLM_CONTAINER=vllm-spark
 export HF_TOKEN=...
-# Optional. Set on each node if the default cache is unwritable or too small.
-# export HF_CACHE="$HOME/.cache/huggingface-$UID"
+# Optional HF_CACHE override. The default is "$HOME/.cache/huggingface-$UID".
+# export HF_CACHE="/path/to/writable/huggingface-cache"
 # Optional DNS passed to Docker launch/Ray containers. Unset/empty uses
 # Docker's host-derived resolver, which is the default.
 # export CONTAINER_DNS=8.8.8.8
@@ -455,6 +451,8 @@ export HF_TOKEN=...
 # export NCCL_DEBUG=INFO
 # export NCCL_DEBUG_SUBSYS=INIT,NET
 export BASE_URL=http://127.0.0.1:8000
+# Optional prefix for auto-generated benchmark campaign directories.
+# export CAMPAIGN_NAME=rdma-v4-paper
 # Optional. Set the complete campaign output path, such as:
 # export OUT_DIR=results/rdma-v4-paper-2026-10-22
 export CONFIG_YAML=configs/experiment.yaml
@@ -828,9 +826,12 @@ with a directory component, such as `OUT_DIR=results/rdma-v4-paper-2026-10-22`,
 and an absolute path are used as given. With no `OUT_DIR`, `run_job.sh` resolves
 the next unused path beginning with `results/benchmark-<UTC-date>` and passes
 the absolute path to every child process. Later paths use suffixes such as
-`-001` and `-002`. `PLAN_ONLY=1` prints the selected path without creating it.
-Set `OUT_DIR` to an existing path to resume a campaign. Explicit legacy paths
-remain available for existing campaigns and resume.
+`-001` and `-002`. Set `CAMPAIGN_NAME` to prepend a name to this generated
+directory. For example, `CAMPAIGN_NAME=rdma-v4-paper` selects
+`results/rdma-v4-paper-benchmark-<UTC-date>`, followed by the same numbered
+suffixes when paths already exist. `PLAN_ONLY=1` prints the selected path
+without creating it. Set `OUT_DIR` to an existing path to resume a campaign.
+Explicit legacy paths remain available for existing campaigns and resume.
 
 New campaigns store result artifacts in `OUT_DIR/results/`, figures and tables
 in `OUT_DIR/figs/`, and logs in `OUT_DIR/logs/`. Plotting accepts a campaign

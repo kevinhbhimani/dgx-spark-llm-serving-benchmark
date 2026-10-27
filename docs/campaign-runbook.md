@@ -37,8 +37,12 @@ the target recorded by each serving policy. Use a new `OUT_DIR` when changing
 `scripts/run_job.sh` resolves the next unused path beginning with
 `results/benchmark-<UTC-date>` and passes that absolute path to its child
 processes. Later paths use suffixes such as `-001` and `-002`. `PLAN_ONLY=1`
-prints the selected path without creating it. Set `OUT_DIR` to an existing path
-to resume a campaign.
+prints the selected path without creating it. Set `CAMPAIGN_NAME` to prepend a
+name to the generated directory while retaining the benchmark name and date.
+For example, `CAMPAIGN_NAME=rdma-v4-paper` selects
+`results/rdma-v4-paper-benchmark-<UTC-date>`, followed by `-001`, `-002`, and
+later suffixes when paths already exist. This applies when `OUT_DIR` is unset.
+Set `OUT_DIR` to an existing path to resume a campaign.
 
 The default target is 80%. Set `GPU_UTIL` in Diya's environment to override it
 for planning, validation, memory preflight, and every serving launch. Export
@@ -104,18 +108,15 @@ verified with the source revision that produced their rows.
    editing the file. The token is used for downloads from Hugging Face. Hoedus
    receives model files from Diya and does not need Hugging Face access for
    those files.
-5. Each node has its own cache. The host cache defaults to
-   `$HOME/.cache/huggingface`; scripts derive `HF_HUB_CACHE=$HF_CACHE/hub` and
-   mount the cache at `/hf-cache` in containers. The cache directory must be
-   writable by the account running the scripts. If the default directory is
-   owned by another account or has less than 200 GB free, set `HF_CACHE` in the
-   repo-local `.env` on that node. For a home filesystem with enough space, use:
-
-   ```bash
-   export HF_CACHE="$HOME/.cache/huggingface-$UID"
-   ```
-
-   Use a user-writable local scratch path when the home filesystem lacks space.
+5. Each node has its own cache. Cache-using script entry points source
+   `scripts/connectx_env.sh`, which loads the repo-local `.env` and defaults
+   `HF_CACHE` to `$HOME/.cache/huggingface-$UID`. Scripts derive
+   `HF_HUB_CACHE=$HF_CACHE/hub` and mount the cache at `/hf-cache` in
+   containers. No cache variable needs to be set for the default location. The
+   cache directory must be writable by the account running the scripts. If the
+   default directory is owned by another account or has less than 200 GB free,
+   set `HF_CACHE` in the repo-local `.env` to a user-writable local scratch
+   path on that node.
 
 The host and pinned image probe cache create/read/delete access before use. A
 failure reports the effective UID:GID and, when available, the cache directory

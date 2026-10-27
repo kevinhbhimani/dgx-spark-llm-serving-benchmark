@@ -60,7 +60,7 @@ export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 # (vLLM 0.19.0): nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27
 export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
-export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface-$UID}"
 # HF_CACHE is the host Hugging Face home. Every host and container process uses
 # its repository cache below that root.
 export HF_HOME="$HF_CACHE"
