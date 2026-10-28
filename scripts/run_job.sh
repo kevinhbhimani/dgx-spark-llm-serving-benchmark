@@ -491,6 +491,7 @@ canary_pass() {
     log "--- canary: $labels ---"
     if ! run_child acquire_group "$labels" "$needs_dual"; then
       failures+=("$labels: acquire/mirror")
+      log "acquire/mirror FAILED for $labels"
     else
       IFS=';' read -ra step_list <<<"$steps"
       for step in "${step_list[@]}"; do
@@ -546,6 +547,7 @@ measure_group() {
   fi
   if ! run_child acquire_group "$labels" "$needs_dual"; then
     FAILED+=("$labels: acquire/mirror")
+    log "acquire/mirror FAILED for $labels"
     if [[ "$PURGE_WEIGHTS" == "1" ]]; then
       if run_child purge_group "$labels"; then
         :

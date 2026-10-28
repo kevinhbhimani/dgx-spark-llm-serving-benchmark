@@ -81,8 +81,6 @@ Apply these rules to all writing you produce or edit in this repository.
 - Keep prose changes minimal and directly related to the request. Make behavior, inputs, assumptions, and failure handling clear enough to reproduce the requested work.
 - Do not edit generated reports, plots, result files, or other derived artifacts unless the human explicitly requests those edits or they are required outputs of the requested task.
 
-## Branching rules
-- If you are on the `main` branch, refuse to make any changes to the code or documentation, tell the user to create and switch to a new feature/fix branch, and then end your turn. Do not create your own branch, the human must do this themselves.
 
 ## Completion report
 
