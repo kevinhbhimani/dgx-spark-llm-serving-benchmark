@@ -80,6 +80,43 @@ class RunJobContractTests(unittest.TestCase):
         result = self._plan(REPEATS="0")
         self.assertNotEqual(result.returncode, 0)
 
+    def _run_with_dead_worker(self, function_name: str, call: str) -> subprocess.CompletedProcess[str]:
+        """Run one run_job.sh function while acquire/mirror and purge both
+        fail, as they do after the worker node stops."""
+        source = (ROOT / "scripts/run_job.sh").read_text()
+        start = source.index(f"\n{function_name}() {{\n") + 1
+        end = source.index("\n}\n", start) + 3
+        script = (
+            "set -uo pipefail\n"
+            'log() { echo "[job] $*"; }\n'
+            "ray_ok() { return 0; }\n"
+            'run_child() { "$@"; }\n'
+            "acquire_group() { return 1; }\n"
+            "purge_group() { return 1; }\n"
+            "group_status() { return 3; }\n"
+            "PURGE_WEIGHTS=1\n"
+            "FAILED=()\n"
+            "MODEL_GROUPS=('model-a|1|1:tp2:model-a')\n"
+            + source[start:end]
+            + call + "\n"
+        )
+        return subprocess.run(
+            ["bash", "-c", script], cwd=ROOT, text=True,
+            capture_output=True, timeout=15, check=False,
+        )
+
+    def test_acquire_failure_is_logged_before_a_purge_abort(self):
+        for function_name, call in (
+            ("canary_pass", "canary_pass"),
+            ("measure_group", "measure_group model-a 1 1:tp2:model-a"),
+        ):
+            with self.subTest(function=function_name):
+                result = self._run_with_dead_worker(function_name, call)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("acquire/mirror FAILED for model-a", result.stdout)
+                self.assertLess(result.stdout.index("acquire/mirror FAILED"),
+                                result.stdout.index("cache purge failed"))
+
 
 if __name__ == "__main__":
     unittest.main()

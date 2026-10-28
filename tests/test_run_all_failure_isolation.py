@@ -20,7 +20,8 @@ class SweepFailureIsolationTests(unittest.TestCase):
         self.python_log = self.root / "python.log"
         self._command(
             "ip",
-            "printf '2: fake0 inet 10.10.10.1/24 scope global fake0\\n'\n",
+            "printf '2: fake0 inet %s/24 scope global fake0\\n' "
+            "\"${FAKE_LOCAL_IP:-10.10.10.1}\"\n",
         )
         self._command(
             "curl",
@@ -56,7 +57,11 @@ class SweepFailureIsolationTests(unittest.TestCase):
         path.chmod(0o755)
 
     def _run_sweep(
-        self, *, server_down: bool = False, model_mismatch: bool = False
+        self,
+        *,
+        server_down: bool = False,
+        model_mismatch: bool = False,
+        hoedus_head: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env.update({
@@ -75,8 +80,16 @@ class SweepFailureIsolationTests(unittest.TestCase):
             "FAKE_MODEL_MISMATCH": "1" if model_mismatch else "0",
             "ENV_FILE": str(self.root / "missing.env"),
         })
+        command = [str(ROOT / "scripts/run_all.sh"), "single"]
+        if hoedus_head:
+            env["FAKE_LOCAL_IP"] = "10.10.10.2"
+            command = [
+                "bash", "-c",
+                'source scripts/hoedus-head-env.sh && exec "$@"', "sweep",
+                *command,
+            ]
         return subprocess.run(
-            [str(ROOT / "scripts/run_all.sh"), "single"],
+            command,
             cwd=ROOT,
             env=env,
             text=True,
@@ -106,6 +119,12 @@ class SweepFailureIsolationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(self.python_log.read_text().splitlines(), ["1", "2"])
         self.assertIn("expected model org/model is not served", result.stderr)
+
+    def test_hoedus_head_environment_runs_single_node_sweeps(self) -> None:
+        result = self._run_sweep(hoedus_head=True)
+
+        self.assertNotIn("single-node runs reject", result.stderr)
+        self.assertEqual(self.python_log.read_text().splitlines(), ["1", "2", "3"])
 
 
 if __name__ == "__main__":

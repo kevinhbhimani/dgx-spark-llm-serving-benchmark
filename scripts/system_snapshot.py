@@ -25,6 +25,7 @@ JsonValue: TypeAlias = (
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 COMMAND_TIMEOUT_SECONDS = 30
+JOURNAL_ACCESS_HINT = "not seeing messages from other users and the system"
 SSH_TIMEOUT_SECONDS = 90
 SSH_CONNECT_TIMEOUT_SECONDS = 8
 HOST_PATTERN = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -269,6 +270,26 @@ def network_snapshot() -> JsonObject:
     }
 
 
+def kernel_error_snapshot() -> JsonObject:
+    result = command_result(
+        [
+            "journalctl", "-k", "-b", "-p", "err..alert", "-n", "100",
+            "--no-pager", "-o", "short-iso-precise",
+        ],
+        timeout=15,
+    )
+    # A caller without system-journal access gets exit 0 and no entries, which
+    # would read as a clean kernel log.
+    stderr = result.get("stderr", "")
+    if isinstance(stderr, str) and JOURNAL_ACCESS_HINT in stderr:
+        result["status"] = "unavailable"
+        result["error"] = (
+            "system journal not readable; run as root or as a member of "
+            "adm or systemd-journal"
+        )
+    return result
+
+
 def host_snapshot() -> JsonObject:
     try:
         os_release: JsonValue = platform.freedesktop_os_release()
@@ -307,13 +328,7 @@ def host_snapshot() -> JsonObject:
             timeout=15,
         ),
         "network": network_snapshot(),
-        "recent_kernel_errors": command_result(
-            [
-                "journalctl", "-k", "-b", "-p", "err..alert", "-n", "100",
-                "--no-pager", "-o", "short-iso-precise",
-            ],
-            timeout=15,
-        ),
+        "recent_kernel_errors": kernel_error_snapshot(),
         "system_packages": system_package_versions(),
         "python": {
             "version": platform.python_version(),
