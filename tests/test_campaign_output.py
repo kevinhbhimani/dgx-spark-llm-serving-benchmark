@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from campaign_output import (
+from utils.campaign_output import (
     campaign_metadata,
     campaign_logs_dir,
     campaign_results_dir,

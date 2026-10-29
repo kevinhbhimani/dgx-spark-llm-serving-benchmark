@@ -9,7 +9,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
-source "$HERE/campaign_output.sh"
+source "$HERE/../utils/campaign_output.sh"
 campaign_resolve_out_dir
 campaign_reject_existing_implicit_out_dir || exit 1
 require_local_connectx_ip "$HEAD_IP" "all-reduce benchmark head role" || exit 1

@@ -9,8 +9,8 @@
 # scripts/connectx_env.sh defaults to the dual-cable RDMA layout with NCCL
 # transport logging; nothing has to be sourced first.
 # An unset OUT_DIR uses the next available results/benchmark-<UTC-date> path.
-# An explicit OUT_DIR is the complete campaign path and remains stable when a
-# campaign resumes.
+# A bare OUT_DIR names the campaign prefix before benchmark and the UTC date.
+# A path-style OUT_DIR is the complete campaign path for resuming a campaign.
 #
 # Model lifecycle. The matrix never has to fit on disk at once. Each model in
 # configs/models.yaml (file order; entries sharing a repo form one group) goes
@@ -55,8 +55,8 @@
 #     (harness_source_sha256). The launch gate also requires these files to be
 #     committed, so every row names a recoverable Git revision.
 #
-# Knobs (env): OUT_DIR, CAMPAIGN_NAME (prefix for an implicit benchmark path),
-#   GPU_UTIL (default 0.80, overrides the shared
+# Knobs (env): OUT_DIR (bare prefix or complete path), CAMPAIGN_NAME
+#   (prefix when OUT_DIR is unset), GPU_UTIL (default 0.80, overrides the shared
 #   gpu_util_default for planning, validation, and serving), CONCURRENCIES,
 #   REPEATS (default 3), CANARY_FIRST
 #   (auto|0|1), STOP_AFTER_CANARY, ALLOW_CANARY_FAILURES, PURGE_WEIGHTS,
@@ -113,15 +113,15 @@ fi
 export PYTHON
 export PYTHONNOUSERSITE=1
 if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
-  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve \
+  OUT_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" resolve \
     --next-available)" || exit 1
 else
-  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve --out-dir "$OUT_DIR")" || exit 1
+  OUT_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" resolve --out-dir "$OUT_DIR")" || exit 1
 fi
 export OUT_DIR
-CAMPAIGN_RESULTS_DIR="$("$PYTHON" "$HERE/campaign_output.py" \
+CAMPAIGN_RESULTS_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" \
   results-dir --out-dir "$OUT_DIR")" || exit 1
-CAMPAIGN_LOGS_DIR="$("$PYTHON" "$HERE/campaign_output.py" \
+CAMPAIGN_LOGS_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" \
   logs-dir --out-dir "$OUT_DIR")" || exit 1
 CAMPAIGN_FIGURES_DIR="$OUT_DIR/figs"
 export CAMPAIGN_RESULTS_DIR CAMPAIGN_LOGS_DIR CAMPAIGN_FIGURES_DIR
@@ -189,7 +189,7 @@ if [[ -n "$SCHEDULE_TEXT" ]]; then
 fi
 
 if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
-  CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/campaign_output.py" identity \
+  CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/utils/campaign_output.py" identity \
     --file "$MODELS_YAML" --file "$CONFIG_YAML" \
     --value "git_commit=$(git rev-parse HEAD)" \
     --value "concurrencies=$CONCURRENCIES" --value "repeats=$REPEATS" \
@@ -210,7 +210,7 @@ if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
     --value "single_container=$SINGLE_CONTAINER")" || exit 1
   prepare_args=(--out-dir "$OUT_DIR" --identity-json "$CAMPAIGN_IDENTITY")
   [[ "$PLAN_ONLY" == "1" ]] && prepare_args+=(--plan-only)
-  "$PYTHON" "$HERE/campaign_output.py" prepare "${prepare_args[@]}" || exit 1
+  "$PYTHON" "$HERE/utils/campaign_output.py" prepare "${prepare_args[@]}" || exit 1
 fi
 
 count_steps() {

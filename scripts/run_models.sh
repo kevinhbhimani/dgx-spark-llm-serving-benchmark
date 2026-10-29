@@ -54,7 +54,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_CONTAINER, HEAD_IP, and .env
-source "$HERE/campaign_output.sh"
+source "$HERE/../utils/campaign_output.sh"
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2) ;; *)

@@ -17,6 +17,7 @@ RESULTS_DIRECTORY = "results"
 LOGS_DIRECTORY = "logs"
 IDENTITY_FILENAME = "campaign_run.json"
 DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})(?:-(\d{3,}))?$")
+CAMPAIGN_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 CAMPAIGN_COUNTER_WIDTH: int = 3
 
 
@@ -35,19 +36,30 @@ def resolve_campaign_dir(
     cwd: str | os.PathLike[str] | None = None,
     now: datetime | None = None,
 ) -> Path:
-    """Resolve an explicit output path or the default UTC-dated campaign path."""
+    """Resolve a path-style output, a bare campaign prefix, or the default path."""
     if out_dir:
         base = Path(cwd) if cwd is not None else Path.cwd()
         raw_target: str = os.fspath(out_dir)
         target = Path(raw_target).expanduser()
         if not target.is_absolute():
             if os.sep not in raw_target and raw_target not in {".", ".."}:
-                target = base / RESULTS_DIRECTORY / target
+                campaign_name = f"{raw_target}-{default_name}"
+                if not CAMPAIGN_NAME_PATTERN.fullmatch(campaign_name):
+                    raise ValueError(f"invalid campaign name: {raw_target!r}")
+                target = (
+                    base
+                    / RESULTS_DIRECTORY
+                    / f"{campaign_name}-{utc_date(now)}"
+                )
             else:
                 target = base / target
     else:
-        base = Path(cwd) if cwd is not None else Path(__file__).resolve().parent
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", default_name):
+        base = (
+            Path(cwd)
+            if cwd is not None
+            else Path(__file__).resolve().parents[1]
+        )
+        if not CAMPAIGN_NAME_PATTERN.fullmatch(default_name):
             raise ValueError(f"invalid default campaign name: {default_name!r}")
         target = base / RESULTS_DIRECTORY / f"{default_name}-{utc_date(now)}"
     return target.resolve()

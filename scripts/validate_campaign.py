@@ -29,7 +29,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import (
+from utils.campaign_output import (
     resolve_campaign_dir,
     resolve_campaign_logs_dir,
     resolve_campaign_results_dir,

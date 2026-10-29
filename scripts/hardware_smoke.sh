@@ -13,8 +13,8 @@
 # the ConnectX addresses, point CX_IFACE/HEAD_IP at a local interface and its
 # address.
 #
-# Env: OUT_DIR (default results/smoke-<UTC-date>), SMOKE_LABEL (default
-#      llama3.1-8b-nvfp4,
+# Env: OUT_DIR (default results/smoke-<UTC-date>; a bare name prefixes this
+#      default), SMOKE_LABEL (default llama3.1-8b-nvfp4,
 #      any label in configs/models.yaml that can run single), SMOKE_GPU_UTIL
 #      (default 0.80), SMOKE_CONCURRENCIES (default "1 4"), PORT (default
 #      8100), SMOKE_VLLM_CONTAINER (default vllm-spark-smoke), PYTHON,
@@ -31,7 +31,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 
-source "$HERE/scripts/campaign_output.sh"
+source "$HERE/utils/campaign_output.sh"
 campaign_resolve_out_dir smoke
 campaign_reject_existing_implicit_out_dir || exit 1
 CAMPAIGN_FIGURES_DIR="$OUT_DIR/figs"

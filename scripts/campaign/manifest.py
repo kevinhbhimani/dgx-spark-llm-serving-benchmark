@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 from typing import Mapping, Sequence
 
-from campaign_output import campaign_metadata
+from utils.campaign_output import campaign_metadata
 from scripts.campaign.plan import Campaign
 
 ROOT = Path(__file__).resolve().parents[2]
