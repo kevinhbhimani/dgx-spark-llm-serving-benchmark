@@ -1,0 +1,322 @@
+dmihovch@cisc-hoedus:~/dgx-spark-llm-serving-benchmark$ sudo journalctl -k -b -1 --no-pager | grep -Ei 'mlx5|pcie|aer|sdes|bert|hotplug|fatal|watchdog'
+Oct 27 13:03:10 cisc-hoedus kernel: ACPI: BERT 0x0000000087065D98 000030 (v01 MTKID  MTKTABLE 00000001 CREA 00000001)
+Oct 27 13:03:10 cisc-hoedus kernel: Kernel command line: BOOT_IMAGE=/boot/vmlinuz-7.0.0-1019-nvidia root=UUID=c5b1d3c5-3e56-483a-82ce-c0b5a464dbc0 ro init_on_alloc=0 iommu.passthrough=0 console=tty0 plymouth.ignore-serial-consoles plymouth.use-simpledrm earlycon=uart,mmio32,0x16A00000 console=tty0 console=ttyS0,921600 crashkernel=1G-:0M quiet splash initcall_blacklist=tegra234_cbb_init kho=off pci=pcie_bus_safe vt.handoff=7
+Oct 27 13:03:10 cisc-hoedus kernel: ACPI: USB4 _OSC: OS supports USB3+ DisplayPort+ PCIe+ XDomain+
+Oct 27 13:03:10 cisc-hoedus kernel: ACPI: USB4 _OSC: OS controls USB3+ DisplayPort+ PCIe+ XDomain+
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:00: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:00: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0000:00:00.0: [10de:22ce] type 01 class 0x060400 PCIe Root Port
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0000:01:00.0: [15b3:1021] type 00 class 0x020000 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0000:01:00.1: [15b3:1021] type 00 class 0x020000 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:01: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:01: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0002:00:00.0: [10de:22ce] type 01 class 0x060400 PCIe Root Port
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0002:01:00.0: [15b3:1021] type 00 class 0x020000 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0002:01:00.1: [15b3:1021] type 00 class 0x020000 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:02: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:02: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0004:00:00.0: [10de:22ce] type 01 class 0x060400 PCIe Root Port
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0004:01:00.0: [1987:5027] type 00 class 0x010802 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:03: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:03: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:04: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:04: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0007:00:00.0: [10de:22d0] type 01 class 0x060400 PCIe Root Port
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0007:01:00.0: [10ec:8127] type 00 class 0x020000 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:05: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:05: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:06: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:06: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0009:00:00.0: [10de:22d0] type 01 class 0x060400 PCIe Root Port
+Oct 27 13:03:10 cisc-hoedus kernel: pci 0009:01:00.0: [14c3:7925] type 00 class 0x028000 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:0b: _OSC: platform does not support [SHPCHotplug DPC]
+Oct 27 13:03:10 cisc-hoedus kernel: acpi PNP0A08:0b: _OSC: OS now controls [PCIeHotplug PME AER PCIeCapability LTR]
+Oct 27 13:03:10 cisc-hoedus kernel: pci 000f:00:00.0: [10de:22d1] type 01 class 0x060400 PCIe Root Port
+Oct 27 13:03:10 cisc-hoedus kernel: pci 000f:01:00.0: [10de:2e12] type 00 class 0x030000 PCIe Endpoint
+Oct 27 13:03:10 cisc-hoedus kernel: pci 000f:01:00.0: 0.000 Gb/s available PCIe bandwidth, limited by Unknown x0 link at 000f:00:00.0 (capable of 32.000 Gb/s with 2.5 GT/s PCIe x16 link)
+Oct 27 13:03:10 cisc-hoedus kernel: ACPI GTDT: found 1 SBSA generic Watchdog(s).
+Oct 27 13:03:10 cisc-hoedus kernel: watchdog: NMI not fully supported
+Oct 27 13:03:10 cisc-hoedus kernel: watchdog: Hard watchdog permanently disabled
+Oct 27 13:03:10 cisc-hoedus kernel: BERT: Error records from previous boot:
+Oct 27 13:03:10 cisc-hoedus kernel: BERT: Total records found: 1
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0000:00:00.0: PME: Signaling with IRQ 276
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: enabled with IRQ 277
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0002:00:00.0: PME: Signaling with IRQ 279
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0002:00:00.0: AER: enabled with IRQ 280
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0004:00:00.0: PME: Signaling with IRQ 282
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0004:00:00.0: AER: enabled with IRQ 283
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0004:00:00.0: pciehp: Slot #4 AttnBtn- PwrCtrl- MRL- AttnInd- PwrInd- HotPlug+ Surprise+ Interlock- NoCompl+ IbPresDis- LLActRep+
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0007:00:00.0: PME: Signaling with IRQ 285
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0007:00:00.0: AER: enabled with IRQ 286
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0007:00:00.0: pciehp: Slot #7 AttnBtn- PwrCtrl- MRL- AttnInd- PwrInd- HotPlug+ Surprise+ Interlock- NoCompl+ IbPresDis- LLActRep+
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0009:00:00.0: PME: Signaling with IRQ 288
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0009:00:00.0: AER: enabled with IRQ 289
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 0009:00:00.0: pciehp: Slot #9 AttnBtn- PwrCtrl- MRL- AttnInd- PwrInd- HotPlug+ Surprise+ Interlock- NoCompl+ IbPresDis- LLActRep+
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 000f:00:00.0: PME: Signaling with IRQ 290
+Oct 27 13:03:10 cisc-hoedus kernel: pcieport 000f:00:00.0: AER: enabled with IRQ 292
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: enabling device (0000 -> 0002)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: firmware version: 28.50.1002
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: Port module event: module 0, Cable plugged
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pcie_event:326:(pid 12): Detected insufficient power on the PCIe slot (27W).
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5e: IPSec ESP acceleration enabled
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: enabling device (0000 -> 0002)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: firmware version: 28.50.1002
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: Flow counters bulk query buffer size increased, bulk_query_len(8)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: Port module event: module 1, Cable plugged
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pcie_event:326:(pid 386): Detected insufficient power on the PCIe slot (27W).
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5e: IPSec ESP acceleration enabled
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: enabling device (0000 -> 0002)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: firmware version: 28.50.1002
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: Port module event: module 0, Cable plugged
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pcie_event:326:(pid 364): Detected insufficient power on the PCIe slot (27W).
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5e: IPSec ESP acceleration enabled
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: enabling device (0000 -> 0002)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: firmware version: 28.50.1002
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: 126.028 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x4 link)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: Rate limit: 127 rates are supported, range: 0Mbps to 195312Mbps
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: Flow counters bulk query buffer size increased, bulk_query_len(8)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: Port module event: module 1, Cable plugged
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pcie_event:326:(pid 391): Detected insufficient power on the PCIe slot (27W).
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5e: IPSec ESP acceleration enabled
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: renamed from eth3
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: renamed from eth1
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0 enp1s0f0np0: renamed from eth0
+Oct 27 13:03:10 cisc-hoedus kernel: mlx5_core 0002:01:00.0 enP2p1s0f0np0: renamed from eth2
+Oct 27 13:03:11 cisc-hoedus kernel: cx7-pcie-hotplug MTKP0001:00: PCIe hotplug driver initialized successfully
+Oct 27 13:03:11 cisc-hoedus kernel: cx7-pcie-hotplug MTKP0001:00: Hotplug enabled
+Oct 27 13:03:12 cisc-hoedus kernel: mlx5_core 0002:01:00.0 enP2p1s0f0np0: Link up
+Oct 27 13:03:12 cisc-hoedus kernel: mlx5_core 0002:01:00.0 roceP2p1s0f0: Port: 1 Link ACTIVE
+Oct 27 13:03:12 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: Link up
+Oct 27 13:03:12 cisc-hoedus kernel: mlx5_core 0002:01:00.1 roceP2p1s0f1: Port: 1 Link ACTIVE
+Oct 27 13:03:13 cisc-hoedus kernel: mlx5_core 0000:01:00.0 enp1s0f0np0: Link up
+Oct 27 13:03:13 cisc-hoedus kernel: mlx5_core 0000:01:00.0 rocep1s0f0: Port: 1 Link ACTIVE
+Oct 27 13:03:13 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: Link up
+Oct 27 13:03:13 cisc-hoedus kernel: mlx5_core 0000:01:00.1 rocep1s0f1: Port: 1 Link ACTIVE
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: Uncorrectable (Fatal) error message received from 0000:00:00.0
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0002:00:00.0: AER: Uncorrectable (Fatal) error message received from 0002:00:00.0
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0002:00:00.0: PCIe Bus Error: severity=Uncorrectable (Fatal), type=Transaction Layer, (Receiver ID)
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0000:00:00.0: PCIe Bus Error: severity=Uncorrectable (Fatal), type=Transaction Layer, (Receiver ID)
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0002:00:00.0:   device [10de:22ce] error status/mask=00000020/04400000
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0000:00:00.0:   device [10de:22ce] error status/mask=00000020/04400000
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0000:00:00.0:    [ 5] SDES                   (First)
+Oct 27 13:34:55 cisc-hoedus kernel: pcieport 0002:00:00.0:    [ 5] SDES                   (First)
+Oct 27 13:34:55 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 1 health sensors: 1 pci_status: 1. Enter, pci channel state = 2
+Oct 27 13:34:55 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pci_err_detected Device state = 1 health sensors: 1 pci_status: 1. Enter, pci channel state = 2
+Oct 27 13:34:55 cisc-hoedus kernel: mlx5_core 0002:01:00.1: poll_health:803:(pid 66874): Fatal error 1 detected
+Oct 27 13:34:55 cisc-hoedus kernel: mlx5_core 0002:01:00.1: print_health_info:432:(pid 66874): PCI slot is unavailable
+Oct 27 13:34:55 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_error_sw_reset:236:(pid 201): start
+Oct 27 13:34:55 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:34:56 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:257:(pid 200): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:34:56 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_error_sw_reset:257:(pid 201): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:34:56 cisc-hoedus kernel: mlx5_core 0000:01:00.1: poll_health:803:(pid 0): Fatal error 1 detected
+Oct 27 13:34:56 cisc-hoedus kernel: mlx5_core 0000:01:00.1: print_health_info:432:(pid 0): PCI slot is unavailable
+Oct 27 13:35:24 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:24 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:24 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:25 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:26 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:26 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:27 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:27 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:27 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:28 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:28 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:28 cisc-hoedus kernel: mlx5_core 0002:01:00.1 enP2p1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:30 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:34 cisc-hoedus kernel: mlx5_core 0000:01:00.0: E-Switch: Disable: mode(LEGACY), nvfs(0), necvfs(0), active vports(0)
+Oct 27 13:35:35 cisc-hoedus kernel: mlx5_core 0002:01:00.0: E-Switch: Disable: mode(LEGACY), nvfs(0), necvfs(0), active vports(0)
+Oct 27 13:35:36 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:36 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_wait_for_pages:806:(pid 200): Skipping wait for vf pages stage
+Oct 27 13:35:36 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_wait_for_pages:806:(pid 200): Skipping wait for vf pages stage
+Oct 27 13:35:36 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_wait_for_pages:806:(pid 201): Skipping wait for vf pages stage
+Oct 27 13:35:36 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_wait_for_pages:806:(pid 201): Skipping wait for vf pages stage
+Oct 27 13:35:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:45 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:50 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:35:55 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:00 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:05 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:11 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:16 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:21 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:27 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:30 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:36 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:39 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_crdump_collect:50:(pid 162): crdump: failed to lock vsc gw err -13
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_health_try_recover:340:(pid 162): handling bad device here
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_error_sw_reset:236:(pid 162): start
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_error_sw_reset:257:(pid 162): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 1. Enter, pci channel state = 2
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 1. Enter, pci channel state = 2
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_crdump_collect:50:(pid 116236): crdump: failed to lock vsc gw err -13
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_health_try_recover:340:(pid 116236): handling bad device here
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:236:(pid 116236): start
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:257:(pid 116236): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:36:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:36:58 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_fw_version_query:844:(pid 50426): fw query failed to find boot img component index, err -67
+Oct 27 13:37:15 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_fw_version_query:844:(pid 50426): fw query failed to find boot img component index, err -67
+Oct 27 13:37:22 cisc-hoedus kernel: watchdog: BUG: soft lockup - CPU#10 stuck for 22s! [napi/phy0-0:1347]
+Oct 27 13:37:32 cisc-hoedus kernel:  snd_seq snd_ctl_led ib_cm cppc_cpufreq snd_seq_device snd_timer snd mlx5_fwctl soundcore mtk_pcie_hotplug fwctl acpi_tad input_leds joydev sch_fq_codel mstflint_access(O) dm_multipath ipmi_devintf ipmi_msghandler nvme_fabrics efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 btrfs libblake2b raid10 raid456 async_raid6_recov async_memcpy async_pq async_xor async_tx xor xor_neon raid6_pq raid1 raid0 linear dm_mirror dm_region_hash dm_log mlx5_ib ib_uverbs macsec ib_core cdc_ncm cdc_ether usbnet hid_multitouch r8152 hid_generic usbhid hid ghash_ce sm4_ce_gcm sm4_ce_ccm mlx5_core sm4_ce sm4_ce_cipher nvme sm4 sm3_ce arm_smccc_trng nvme_core mlxfw psample nvme_keyring nvme_auth tls r8127 hkdf pci_hyperv_intf xhci_plat_hcd aes_neon_bs aes_neon_blk aes_ce_blk
+Oct 27 13:37:33 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_fw_version_query:844:(pid 50426): fw query failed to find boot img component index, err -67
+Oct 27 13:37:46 cisc-hoedus kernel: watchdog: BUG: soft lockup - CPU#10 stuck for 45s! [napi/phy0-0:1347]
+Oct 27 13:37:51 cisc-hoedus kernel:  snd_seq snd_ctl_led ib_cm cppc_cpufreq snd_seq_device snd_timer snd mlx5_fwctl soundcore mtk_pcie_hotplug fwctl acpi_tad input_leds joydev sch_fq_codel mstflint_access(O) dm_multipath ipmi_devintf ipmi_msghandler nvme_fabrics efi_pstore nfnetlink dmi_sysfs ip_tables x_tables autofs4 btrfs libblake2b raid10 raid456 async_raid6_recov async_memcpy async_pq async_xor async_tx xor xor_neon raid6_pq raid1 raid0 linear dm_mirror dm_region_hash dm_log mlx5_ib ib_uverbs macsec ib_core cdc_ncm cdc_ether usbnet hid_multitouch r8152 hid_generic usbhid hid ghash_ce sm4_ce_gcm sm4_ce_ccm mlx5_core sm4_ce sm4_ce_cipher nvme sm4 sm3_ce arm_smccc_trng nvme_core mlxfw psample nvme_keyring nvme_auth tls r8127 hkdf pci_hyperv_intf xhci_plat_hcd aes_neon_bs aes_neon_blk aes_ce_blk
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: NETDEV WATCHDOG: CPU: 10: transmit queue 2 timed out 25267 ms
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: TX timeout detected
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: TX timeout on queue: 2, SQ: 0x1096, CQ: 0x146e, SQ Cons: 0x4 SQ Prod: 0x7, usecs since last trans: 25421000
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_rsc_dump_trigger:116:(pid 116748): Resource dump: Failed to access err -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_rsc_dump_next:173:(pid 116748): Resource dump: Failed to trigger dump, -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_rsc_dump_trigger:116:(pid 116748): Resource dump: Failed to access err -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_rsc_dump_next:173:(pid 116748): Resource dump: Failed to trigger dump, -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_rsc_dump_trigger:116:(pid 116748): Resource dump: Failed to access err -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_rsc_dump_next:173:(pid 116748): Resource dump: Failed to trigger dump, -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: EQ 0x9: Cons = 0x6, irqn = 0x173
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_fw_version_query:844:(pid 50426): fw query failed to find boot img component index, err -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_safe_reopen_channels failed recovering from a tx_timeout, err(-67).
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1 enp1s0f1np1: mlx5e_ethtool_get_link_ksettings: query port ptys failed: -67
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0002:01:00.1: E-Switch: Disable: mode(LEGACY), nvfs(0), necvfs(0), active vports(0)
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: E-Switch: Disable: mode(LEGACY), nvfs(0), necvfs(0), active vports(0)
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_wait_for_pages:806:(pid 162): Skipping wait for vf pages stage
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_wait_for_pages:806:(pid 162): Skipping wait for vf pages stage
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_wait_for_pages:806:(pid 116236): Skipping wait for vf pages stage
+Oct 27 13:37:51 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_wait_for_pages:806:(pid 116236): Skipping wait for vf pages stage
+Oct 27 13:38:06 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_error_sw_reset:236:(pid 201): start
+Oct 27 13:38:06 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:06 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_health_wait_pci_up:330:(pid 162): PCI channel offline, stop waiting for PCI
+Oct 27 13:38:06 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_health_try_recover:343:(pid 162): health recovery flow aborted, PCI reads still not working
+Oct 27 13:38:07 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_health_wait_pci_up:330:(pid 116236): PCI channel offline, stop waiting for PCI
+Oct 27 13:38:07 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_health_try_recover:343:(pid 116236): health recovery flow aborted, PCI reads still not working
+Oct 27 13:38:07 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_error_sw_reset:257:(pid 201): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:38:07 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:257:(pid 200): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:38:07 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:07 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:38:07 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: Root Port link has been reset (-25)
+Oct 27 13:38:08 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: subordinate device reset failed
+Oct 27 13:38:08 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:08 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:08 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:257:(pid 200): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:38:08 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:08 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 4, disconnect
+Oct 27 13:38:09 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:09 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:09 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:257:(pid 200): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:38:09 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:09 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 4, disconnect
+Oct 27 13:38:09 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: device recovery failed
+Oct 27 13:38:10 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: Uncorrectable (Non-Fatal) error message received from 0000:00:00.0
+Oct 27 13:38:10 cisc-hoedus kernel: pcieport 0000:00:00.0: PCIe Bus Error: severity=Uncorrectable (Non-Fatal), type=Transaction Layer, (Requester ID)
+Oct 27 13:38:10 cisc-hoedus kernel: pcieport 0000:00:00.0:   device [10de:22ce] error status/mask=00004020/04400000
+Oct 27 13:38:10 cisc-hoedus kernel: pcieport 0000:00:00.0:    [ 5] SDES                   (First)
+Oct 27 13:38:10 cisc-hoedus kernel: pcieport 0000:00:00.0:    [14] CmpltTO               
+Oct 27 13:38:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 1
+Oct 27 13:38:10 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:15 cisc-hoedus kernel: mlx5_core 0000:01:00.0: NIC IFC still 7 after 4000ms.
+Oct 27 13:38:15 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:38:15 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:15 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:38:15 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 1
+Oct 27 13:38:16 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:20 cisc-hoedus kernel: mlx5_core 0000:01:00.1: NIC IFC still 7 after 4000ms.
+Oct 27 13:38:20 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:38:20 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:20 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:38:20 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: Root Port link has been reset (-25)
+Oct 27 13:38:21 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: subordinate device reset failed
+Oct 27 13:38:21 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:21 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:26 cisc-hoedus kernel: mlx5_core 0000:01:00.0: NIC IFC still 7 after 4000ms.
+Oct 27 13:38:26 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:38:27 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:27 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 4, disconnect
+Oct 27 13:38:27 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:27 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:28 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_fw_version_query:844:(pid 50426): fw query failed to find boot img component index, err -67
+Oct 27 13:38:30 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_unload_one_devl_locked:1627:(pid 201): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:30 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:38:32 cisc-hoedus kernel: pcieport 0002:00:00.0: AER: Root Port link has been reset (-25)
+Oct 27 13:38:32 cisc-hoedus kernel: pcieport 0002:00:00.0: AER: subordinate device reset failed
+Oct 27 13:38:32 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:32 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_error_sw_reset:236:(pid 201): start
+Oct 27 13:38:32 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_error_sw_reset:257:(pid 201): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:38:32 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_unload_one_devl_locked:1627:(pid 201): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:32 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 4, disconnect
+Oct 27 13:38:33 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:33 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_error_sw_reset:236:(pid 201): start
+Oct 27 13:38:33 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_error_sw_reset:257:(pid 201): PCI channel offline, stop waiting for NIC IFC
+Oct 27 13:38:33 cisc-hoedus kernel: mlx5_core 0000:01:00.1: NIC IFC still 7 after 4000ms.
+Oct 27 13:38:33 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:38:33 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:33 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 4, disconnect
+Oct 27 13:38:33 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: device recovery failed
+Oct 27 13:38:33 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: Uncorrectable (Non-Fatal) error message received from 0000:00:00.0
+Oct 27 13:38:33 cisc-hoedus kernel: pcieport 0000:00:00.0: PCIe Bus Error: severity=Uncorrectable (Non-Fatal), type=Transaction Layer, (Requester ID)
+Oct 27 13:38:33 cisc-hoedus kernel: pcieport 0000:00:00.0:   device [10de:22ce] error status/mask=00004020/04400000
+Oct 27 13:38:33 cisc-hoedus kernel: pcieport 0000:00:00.0:    [ 5] SDES                   (First)
+Oct 27 13:38:34 cisc-hoedus kernel: pcieport 0000:00:00.0:    [14] CmpltTO               
+Oct 27 13:38:34 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 1
+Oct 27 13:38:34 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:38 cisc-hoedus kernel: mlx5_core 0000:01:00.0: NIC IFC still 7 after 4000ms.
+Oct 27 13:38:38 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:38:39 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:40 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:38:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 1
+Oct 27 13:38:40 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:46 cisc-hoedus kernel: mlx5_core 0000:01:00.1: NIC IFC still 7 after 4000ms.
+Oct 27 13:38:46 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:38:46 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:46 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:38:46 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: Root Port link has been reset (-25)
+Oct 27 13:38:47 cisc-hoedus kernel: pcieport 0000:00:00.0: AER: subordinate device reset failed
+Oct 27 13:38:47 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:47 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:55 cisc-hoedus kernel: mlx5_core 0000:01:00.0: NIC IFC still 7 after 4000ms.
+Oct 27 13:38:55 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:38:56 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_unload_one_devl_locked:1627:(pid 200): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:57 cisc-hoedus kernel: mlx5_core 0000:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 4, disconnect
+Oct 27 13:38:57 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 3
+Oct 27 13:38:57 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:236:(pid 200): start
+Oct 27 13:38:57 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_fw_version_query:844:(pid 50426): fw query failed to find boot img component index, err -67
+Oct 27 13:38:58 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_unload_one_devl_locked:1627:(pid 201): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:38:58 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 4, disconnect
+Oct 27 13:38:58 cisc-hoedus kernel: pcieport 0002:00:00.0: AER: device recovery failed
+Oct 27 13:38:58 cisc-hoedus kernel: pcieport 0002:00:00.0: AER: Uncorrectable (Non-Fatal) error message received from 0002:00:00.0
+Oct 27 13:38:59 cisc-hoedus kernel: pcieport 0002:00:00.0: PCIe Bus Error: severity=Uncorrectable (Non-Fatal), type=Transaction Layer, (Requester ID)
+Oct 27 13:38:59 cisc-hoedus kernel: pcieport 0002:00:00.0:   device [10de:22ce] error status/mask=00004020/04400000
+Oct 27 13:38:59 cisc-hoedus kernel: pcieport 0002:00:00.0:    [ 5] SDES                   (First)
+Oct 27 13:38:59 cisc-hoedus kernel: pcieport 0002:00:00.0:    [14] CmpltTO               
+Oct 27 13:39:00 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 1
+Oct 27 13:39:01 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_error_sw_reset:236:(pid 201): start
+Oct 27 13:39:04 cisc-hoedus kernel: mlx5_core 0000:01:00.1: NIC IFC still 7 after 4000ms.
+Oct 27 13:39:04 cisc-hoedus kernel: mlx5_core 0000:01:00.1: mlx5_error_sw_reset:273:(pid 200): end
+Oct 27 13:39:04 cisc-hoedus kernel: mlx5_core 0002:01:00.0: NIC IFC still 7 after 4000ms.
+Oct 27 13:39:05 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_error_sw_reset:273:(pid 201): end
+Oct 27 13:39:05 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_unload_one_devl_locked:1627:(pid 201): mlx5_unload_one_devl_locked: interface is down, NOP
+Oct 27 13:39:05 cisc-hoedus kernel: mlx5_core 0002:01:00.0: mlx5_pci_err_detected Device state = 2 pci_status: 0. Exit, result = 3, need reset
+Oct 27 13:39:09 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_pci_err_detected Device state = 2 health sensors: 1 pci_status: 0. Enter, pci channel state = 1
+Oct 27 13:39:09 cisc-hoedus kernel: mlx5_core 0002:01:00.1: mlx5_error_sw_reset:236:(pid 201): start
