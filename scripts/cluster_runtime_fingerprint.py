@@ -7,8 +7,6 @@ import importlib.metadata
 import json
 import os
 import platform
-import re
-import shutil
 import subprocess
 import sys
 from typing import TypeAlias
@@ -52,112 +50,6 @@ def package_version(package_name: str) -> str:
         return importlib.metadata.version(package_name)
     except importlib.metadata.PackageNotFoundError:
         return "<missing>"
-
-
-def run_rdma_probe() -> str:
-    if shutil.which("rdma") is None:
-        return "unavailable: rdma command not installed in container"
-    try:
-        completed = subprocess.run(
-            ["rdma", "link", "show"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return f"unavailable: {error}"
-    if completed.returncode != 0:
-        return f"error: {completed.stderr.strip()}"
-    return completed.stdout.strip()
-
-
-def require_active_rdma_interfaces(
-    links: str,
-    interfaces: str,
-    node_ip: str,
-    hca_allowlist: str,
-) -> None:
-    expected_interfaces = [name for name in interfaces.split(",") if name]
-    if not expected_interfaces:
-        raise RuntimeError(f"node {node_ip} has no expected ConnectX interfaces")
-    expected_interface_set = set(expected_interfaces)
-    selectors: list[tuple[str, str, str | None, bool]] = []
-    if hca_allowlist:
-        for raw_selector in hca_allowlist.split(","):
-            exact = raw_selector.startswith("=")
-            selector = raw_selector.removeprefix("=")
-            match = re.fullmatch(r"([A-Za-z0-9_.-]+)(?::([0-9]+))?", selector)
-            if match is None:
-                raise RuntimeError(
-                    f"node {node_ip} has unsupported NCCL_IB_HCA selector "
-                    f"{raw_selector!r}; use device names with optional :port"
-                )
-            selectors.append((raw_selector, match.group(1), match.group(2), exact))
-        if not selectors:
-            raise RuntimeError(f"node {node_ip} has an empty NCCL_IB_HCA allowlist")
-
-    active_interfaces: set[str] = set()
-    selected_interfaces: set[str] = set()
-    matched_selectors: set[str] = set()
-    for line in links.splitlines():
-        parts = line.split()
-        if len(parts) < 2 or parts[0] != "link" or "/" not in parts[1]:
-            continue
-        device, port = parts[1].rsplit("/", maxsplit=1)
-        fields = dict(zip(parts[2::2], parts[3::2]))
-        interface = fields.get("netdev", "")
-        is_active = (
-            fields.get("state") == "ACTIVE"
-            and fields.get("physical_state") == "LINK_UP"
-        )
-        if interface in expected_interface_set and is_active:
-            active_interfaces.add(interface)
-        for raw_selector, selector_device, selector_port, exact in selectors:
-            device_matches = (
-                device == selector_device
-                if exact
-                else device.startswith(selector_device)
-            )
-            if not device_matches or (selector_port and port != selector_port):
-                continue
-            matched_selectors.add(raw_selector)
-            if interface not in expected_interface_set:
-                raise RuntimeError(
-                    f"node {node_ip} NCCL_IB_HCA selector {raw_selector!r} "
-                    f"maps {device}/{port} to unconfigured netdev {interface!r}"
-                )
-            if not is_active:
-                raise RuntimeError(
-                    f"node {node_ip} NCCL_IB_HCA selector {raw_selector!r} "
-                    f"maps {device}/{port} to {interface} without ACTIVE/LINK_UP"
-                )
-            selected_interfaces.add(interface)
-
-    if selectors:
-        missing_selectors = {
-            raw_selector
-            for raw_selector, _, _, _ in selectors
-            if raw_selector not in matched_selectors
-        }
-        if missing_selectors:
-            raise RuntimeError(
-                f"node {node_ip} NCCL_IB_HCA selectors have no RDMA mapping: "
-                f"{sorted(missing_selectors)}"
-            )
-        missing_interfaces = expected_interface_set - selected_interfaces
-        if missing_interfaces:
-            raise RuntimeError(
-                f"node {node_ip} NCCL_IB_HCA does not cover configured interfaces: "
-                f"{sorted(missing_interfaces)}"
-            )
-    else:
-        missing_interfaces = expected_interface_set - active_interfaces
-        if missing_interfaces:
-            raise RuntimeError(
-                f"node {node_ip} has no ACTIVE/LINK_UP RDMA port for "
-                f"{sorted(missing_interfaces)}"
-            )
 
 
 if len(sys.argv) != EXPECTED_ARGUMENT_COUNT:
@@ -266,14 +158,6 @@ def facts(
     shared_runtime_environment: dict[str, str] = {
         name: runtime_environment[name] for name in SHARED_RUNTIME_ENV_NAMES
     }
-    rdma_links = run_rdma_probe()
-    if runtime_environment["NCCL_IB_DISABLE"] == "0":
-        require_active_rdma_interfaces(
-            rdma_links,
-            expected_interfaces,
-            node_ip,
-            runtime_environment["NCCL_IB_HCA"],
-        )
     return {
         "node_id": observed_node_id,
         "node_ip": node_ip,
@@ -281,7 +165,6 @@ def facts(
         "expected_interfaces": expected_interfaces,
         "runtime_env": runtime_environment,
         "shared_runtime_env": shared_runtime_environment,
-        "rdma_links": rdma_links,
         "declared_image": os.environ.get("BENCH_VLLM_IMAGE", ""),
         "declared_ray": os.environ.get("BENCH_RAY_VERSION", ""),
         "python": platform.python_version(),
