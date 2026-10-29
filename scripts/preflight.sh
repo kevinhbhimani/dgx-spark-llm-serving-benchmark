@@ -17,16 +17,16 @@ if [[ -z "${PYTHON:-}" ]]; then
 fi
 export PYTHON PYTHONNOUSERSITE=1
 if [[ -n "$REQUESTED_OUT_DIR" ]]; then
-  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve \
+  OUT_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" resolve \
     --out-dir "$REQUESTED_OUT_DIR")" || exit 1
 else
-  OUT_DIR="$("$PYTHON" "$HERE/campaign_output.py" resolve \
+  OUT_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" resolve \
     --next-available)" || exit 1
 fi
 export OUT_DIR
-CAMPAIGN_RESULTS_DIR="$("$PYTHON" "$HERE/campaign_output.py" \
+CAMPAIGN_RESULTS_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" \
   results-dir --out-dir "$OUT_DIR")" || exit 1
-CAMPAIGN_LOGS_DIR="$("$PYTHON" "$HERE/campaign_output.py" \
+CAMPAIGN_LOGS_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" \
   logs-dir --out-dir "$OUT_DIR")" || exit 1
 export CAMPAIGN_RESULTS_DIR CAMPAIGN_LOGS_DIR
 

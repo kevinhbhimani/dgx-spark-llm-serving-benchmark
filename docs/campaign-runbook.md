@@ -51,13 +51,17 @@ command. The single-node hardware smoke test defaults to the same 0.80 target
 and accepts `SMOKE_GPU_UTIL` when run on its own. The master preflight passes
 the campaign's resolved `GPU_UTIL` value to the smoke test.
 
-Set `OUT_DIR` to name a campaign or resume an existing campaign. The path can
-be `results/rdma-v4-paper-2026-10-22` for a new campaign or an existing legacy
-directory such as `results-rdma-v4-paper`. Do not change it when resuming.
-Campaign manifests record the campaign name, date when present in the
-directory name, and absolute path. New campaigns put result artifacts under
-`OUT_DIR/results/`, figures and reports under `OUT_DIR/figs/`, and logs under
-`OUT_DIR/logs/`. Plotting accepts the campaign directory or its
+Set `OUT_DIR` to a bare campaign name or a complete output path. For
+`run_job.sh`, a bare name such as `rdma-v4-paper` selects
+`results/rdma-v4-paper-benchmark-<UTC-date>`. Other entrypoints use their
+command-specific default campaign name. A relative path with a directory
+component, such as `results/rdma-v4-paper-2026-10-22`, and an absolute path
+select their exact locations. Use a complete path such as
+`./results-rdma-v4-paper` when resuming an existing campaign. Campaign
+manifests record the campaign name, date when present in
+the directory name, and absolute path. New campaigns put result artifacts
+under `OUT_DIR/results/`, figures and reports under `OUT_DIR/figs/`, and logs
+under `OUT_DIR/logs/`. Plotting accepts the campaign directory or its
 `results/index.csv`; default figures and reports go under `OUT_DIR/figs/`.
 
 ## Where to run commands
@@ -272,12 +276,12 @@ on Diya after starting Ray on Diya and Hoedus:
 OUT_DIR=xyz scripts/preflight.sh
 ```
 
-The bare name resolves to `results/xyz`. Campaign results go under
-`results/xyz/results/`; campaign logs go under `results/xyz/logs/`. Each
+The bare name resolves to `results/xyz-benchmark-<UTC-date>`. Campaign results
+go under `OUT_DIR/results/`; campaign logs go under `OUT_DIR/logs/`. Each
 preflight run gets a unique top-level subdirectory:
 
 ```text
-results/xyz/
+results/xyz-benchmark-<UTC-date>/
   results/                  campaign measurement outputs
   figs/                     campaign figures, tables, and reports
   logs/                     server and job logs

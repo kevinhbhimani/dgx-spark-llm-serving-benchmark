@@ -38,7 +38,7 @@ from matplotlib.ticker import FuncFormatter, NullFormatter
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import resolve_campaign_output_path, resolve_index_path
+from utils.campaign_output import resolve_campaign_output_path, resolve_index_path
 
 
 # Below this many successful requests started in the measurement window,

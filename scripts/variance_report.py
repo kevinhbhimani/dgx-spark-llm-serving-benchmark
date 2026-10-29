@@ -37,7 +37,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import resolve_campaign_output_path, resolve_index_path
+from utils.campaign_output import resolve_campaign_output_path, resolve_index_path
 
 # (index column, human label, unit, scale-to-unit, TeX name fragment)
 METRICS = [

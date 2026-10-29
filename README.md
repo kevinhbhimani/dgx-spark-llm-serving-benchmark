@@ -820,18 +820,20 @@ Ray, or a failed cache purge stops the campaign. Rerun the same `OUT_DIR` with
 
 ### Final unattended campaign
 
-`OUT_DIR` selects the campaign output path. A bare name such as
-`OUT_DIR=rdma-v4-paper` resolves to `results/rdma-v4-paper`. A relative path
-with a directory component, such as `OUT_DIR=results/rdma-v4-paper-2026-10-22`,
-and an absolute path are used as given. With no `OUT_DIR`, `run_job.sh` resolves
-the next unused path beginning with `results/benchmark-<UTC-date>` and passes
-the absolute path to every child process. Later paths use suffixes such as
-`-001` and `-002`. Set `CAMPAIGN_NAME` to prepend a name to this generated
-directory. For example, `CAMPAIGN_NAME=rdma-v4-paper` selects
+`OUT_DIR` selects a campaign output path. A bare name such as
+`OUT_DIR=rdma-v4-paper` selects `results/rdma-v4-paper-benchmark-<UTC-date>`.
+A relative path with a directory component, such as
+`OUT_DIR=results/rdma-v4-paper-2026-10-22`, and an absolute path are used as
+given. With no `OUT_DIR`, `run_job.sh` resolves the next unused path beginning
+with `results/benchmark-<UTC-date>` and passes the absolute path to every child
+process. Later paths use suffixes such as `-001` and `-002`. Set
+`CAMPAIGN_NAME` to prepend a name when `OUT_DIR` is unset. For example,
+`CAMPAIGN_NAME=rdma-v4-paper` selects
 `results/rdma-v4-paper-benchmark-<UTC-date>`, followed by the same numbered
-suffixes when paths already exist. `PLAN_ONLY=1` prints the selected path
-without creating it. Set `OUT_DIR` to an existing path to resume a campaign.
-Explicit legacy paths remain available for existing campaigns and resume.
+suffixes when paths already exist. Set `OUT_DIR` to a path with a directory
+component or to an absolute path to resume a campaign at that exact location.
+`PLAN_ONLY=1` prints the selected path without creating it. Explicit legacy
+paths remain available for existing campaigns and resume.
 
 New campaigns store result artifacts in `OUT_DIR/results/`, figures and tables
 in `OUT_DIR/figs/`, and logs in `OUT_DIR/logs/`. Plotting accepts a campaign

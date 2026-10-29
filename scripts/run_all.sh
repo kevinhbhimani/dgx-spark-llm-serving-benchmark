@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
-source "$HERE/campaign_output.sh"
+source "$HERE/../utils/campaign_output.sh"
 LABEL="${1-single}"
 case "$LABEL" in
   single|tp2|pp2) ;;
