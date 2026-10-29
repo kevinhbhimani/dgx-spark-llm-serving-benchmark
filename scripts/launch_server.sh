@@ -328,11 +328,9 @@ for ip in (os.environ["EXPECTED_HEAD"], os.environ["EXPECTED_WORKER"]):
 PY
 }
 
-# Grace exposes one unified CPU/GPU memory pool. After loading or downloading
-# large checkpoints, clean filesystem cache can leave CUDA's free-memory check
-# below GPU_UTIL even though MemAvailable is ample. Drop clean HF file pages
-# directly. If unrelated cache still prevents launch, fail safely and ask the
-# operator to use DROP_CACHES=1 instead of inducing host-wide memory pressure.
+# Grace exposes one unified CPU/GPU memory pool. run_models.sh flushes host
+# page cache after staging model files and before each server start. This guard
+# also drops clean Hugging Face file pages for direct launcher calls.
 _check_local_memory() {
   echo "[launch] preflight: local free memory vs GPU_UTIL=$GPU_UTIL"
   GPU_UTIL="$GPU_UTIL" HF_CACHE="$HF_CACHE" python3 - <<'PY'
@@ -449,9 +447,9 @@ PY
   then
     cat >&2 <<'MSG'
 [launch] Clean HF checkpoint pages were dropped automatically, but memory is
-[launch] still LOW. On the low node, either reclaim other clean cache before
-[launch] starting Ray (DROP_CACHES=1 scripts/start_ray.sh head|worker) or find
-[launch] a live owner:
+[launch] still LOW. run_models.sh flushes host page cache before server launch.
+[launch] For direct launches, restart the low node with DROP_CACHES=1 before retrying.
+[launch] Find any live memory owner:
 [launch]   free -g; ps aux --sort=-rss | head
 [launch] If free stays low with no owning process and nvidia-smi shows no
 [launch] processes, the driver leaked unified memory from a killed CUDA

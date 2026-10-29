@@ -1,0 +1,43 @@
+{
+  "campaign_date": null,
+  "campaign_directory": "campaign",
+  "campaign_name": "campaign",
+  "created_at_utc": "2026-10-29T22:39:49.894217+00:00",
+  "identity": {
+    "files": {
+      "cluster.yaml": "44ae7244287edf4255dc2d41d7bc9ea01a365b525299f14b9c77a42f935c82ab",
+      "experiment.yaml": "00c3b6867f22f5992b197ec673874712c6a7386369c40c7d0632eb2583faef8d",
+      "models.yaml": "dbbc7b25a1714a40cfe41cfbbe6da94d6a0e6246d7e074969faca671ce59f17b"
+    },
+    "sha256": "32037973d33e77d76803fe98eaa649169e23c387378ed7248a617f8ad021a022",
+    "values": {
+      "campaign_configs": "",
+      "campaign_labels": "",
+      "concurrencies": "1 4 8 16 32 64",
+      "connectx_iface": "enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1",
+      "dtype": "auto",
+      "flashinfer_autotune": "0",
+      "generation_config": "vllm",
+      "gid_index": "",
+      "git_commit": "051ea4ad708496e68100e415b15c1cca75532357",
+      "gpu_util_override": "",
+      "head_cx_iface": "enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1",
+      "head_ip": "10.10.10.1",
+      "head_node_id": "diya",
+      "ib_hca": "",
+      "image": "nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2",
+      "inductor_cache": "0",
+      "net_plugin": "",
+      "network_policy": "0",
+      "prefix_caching": "0",
+      "ray_version": "2.56.1",
+      "repeats": "3",
+      "single_container": "ray",
+      "topology_sha256": "a0eaad4f3ab4e6784284657d45d268e1f7e9ec7b2bb21c6f8704d0a609e7aba5",
+      "worker_cx_iface": "enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1",
+      "worker_ip": "10.10.10.3",
+      "worker_node_id": "betelgeuse"
+    }
+  },
+  "resolved_out_dir": "/home/dmihovch/dgx-spark-llm-serving-benchmark/results/benchmark-2026-10-29-001/preflight/20261029-222325-278870/campaign"
+}
