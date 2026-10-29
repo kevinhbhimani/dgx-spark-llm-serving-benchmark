@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start Ray inside the vLLM container using the selected topology node.
-#   CLUSTER_CONFIG=/path/cluster.yaml scripts/start_ray.sh head
-#   CLUSTER_CONFIG=/path/cluster.yaml scripts/start_ray.sh worker
+#   scripts/start_ray.sh head     # defaults to configs/cluster.yaml
+#   scripts/start_ray.sh worker
+#   CLUSTER_CONFIG=/path/cluster.yaml scripts/start_ray.sh head  # override
 #   Either:    scripts/start_ray.sh stop
 # Ray runs inside the vLLM container at the version pinned by RAY_VERSION and
 # scripts/ray-runtime-constraints.txt. The constraints file pins its dependencies

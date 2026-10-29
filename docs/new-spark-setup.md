@@ -30,13 +30,13 @@ shared rail. Interface names can differ between systems. Every peer pair must
 use distinct host addresses in the same IPv4 subnet. Rail subnets must not
 overlap.
 
-Set `CLUSTER_CONFIG` to the site YAML in each checkout. The path may differ by
-host; the canonical topology digest must match:
+Topology entrypoints default `CLUSTER_CONFIG` to
+`<repo-root>/configs/cluster.yaml` on each host. Set it only when using a
+different local path; the canonical topology digest must match:
 
 ```bash
-export CLUSTER_CONFIG=/path/to/site/cluster.yaml
-python3 scripts/cluster_topology.py validate "$CLUSTER_CONFIG"
-CLUSTER_CONFIG="$CLUSTER_CONFIG" scripts/verify_connectx.sh
+python3 scripts/cluster_topology.py validate configs/cluster.yaml
+scripts/verify_connectx.sh
 ```
 
 Run `scripts/verify_connectx.sh` on each host. It checks the local addresses,
@@ -50,10 +50,10 @@ on the two matching hosts:
 
 ```bash
 # On the host whose hostname matches head_node:
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh head
+scripts/start_ray.sh head
 
 # On the other host:
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh worker
+scripts/start_ray.sh worker
 ```
 
 Changing `head_node` swaps the operational roles and changes the canonical
@@ -66,7 +66,7 @@ hosts:
 
 ```bash
 docker exec vllm-spark ray status
-CLUSTER_CONFIG=/path/to/site/cluster.yaml PLAN_ONLY=1 scripts/run_job.sh
+PLAN_ONLY=1 scripts/run_job.sh
 ```
 
 `PLAN_ONLY=1` checks campaign configuration without link probes, container

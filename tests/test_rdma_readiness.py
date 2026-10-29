@@ -338,6 +338,16 @@ class ConnectXPreflightTests(unittest.TestCase):
           echo '[]'
           exit 0
         fi
+        if [[ "$script_input" == *"expected_topology_sha256"* ]]; then
+          env \
+            TOPOLOGY_SHA256="${MOCK_CONTAINER_TOPOLOGY:-$TOPOLOGY_SHA256}" \
+            LOCAL_NODE_ID="${MOCK_CONTAINER_NODE_ID:-$LOCAL_NODE_ID}" \
+            VLLM_HOST_IP="${MOCK_CONTAINER_IP:-$VLLM_HOST_IP}" \
+            NCCL_SOCKET_IFNAME="${MOCK_CONTAINER_IFACES:-$NCCL_SOCKET_IFNAME}" \
+            GLOO_SOCKET_IFNAME="${MOCK_CONTAINER_IFACES:-$GLOO_SOCKET_IFNAME}" \
+            /usr/bin/python3 - "${@:6}" <<< "$script_input"
+          exit $?
+        fi
         case "$*" in
           *'vllm serve'*)
             printf '%s\\n' "$@" > "$CALL_LOG"

@@ -14,8 +14,9 @@ unless a step names a different node or directory.
 - `CLUSTER_CONFIG` defines both nodes, their IPv4 addresses, interface names,
   the Ray port, and the selected head. `scripts/connectx_env.sh` loads the
   pinned vLLM image and Ray version.
-- `configs/cluster.example.yaml` uses documentation-only addresses and
-  hostnames. Use a site-specific file for host setup and benchmark commands.
+- `configs/cluster.yaml` is the default topology file.
+  `configs/cluster.example.yaml` uses documentation-only addresses and
+  hostnames. Set `CLUSTER_CONFIG` to use a different topology file.
 - `configs/models.yaml` defines model revisions, serving configurations, and
   the run-wide `gpu_util_default`. The shipped value is `0.80` for every
   model and serving configuration. `GPU_UTIL` overrides the shared target for
@@ -31,12 +32,14 @@ unless a step names a different node or directory.
   on both nodes. `scripts/start_ray.sh` checks its Ray pin against
   `RAY_VERSION` before starting a container.
 
-Set `CLUSTER_CONFIG` on both systems. The canonical topology digests must
-match, and the local paths may differ. Commands in this runbook assume the
-variable is exported in the shell or set in each checkout's `.env`:
+Topology entrypoints default `CLUSTER_CONFIG` to
+`<repo-root>/configs/cluster.yaml` on both systems. Set an override only when
+using a different file. The canonical topology digests must match, and local
+paths may differ:
 
 ```bash
-export CLUSTER_CONFIG=/path/to/site/cluster.yaml
+# Optional override when the default file does not describe this cluster.
+# export CLUSTER_CONFIG=/path/to/site/cluster.yaml
 ```
 
 ## Campaign output path
@@ -135,8 +138,8 @@ verified with the source revision that produced their rows.
 5. Install PyYAML from the locked environment on both hosts before Ray startup.
    The selected head also needs the full locked client environment. Each node
    has its own cache. Cache-using script entry points source
-   `scripts/connectx_env.sh`, which loads the repo-local `.env` and requires
-   `CLUSTER_CONFIG`. It defaults
+   `scripts/connectx_env.sh`, which loads the repo-local `.env`, defaults
+   `CLUSTER_CONFIG` to the repo's `configs/cluster.yaml`, and defaults
    `HF_CACHE` to `$HOME/.cache/huggingface-$UID`. Scripts derive
    `HF_HUB_CACHE=$HF_CACHE/hub` and mount the cache at `/hf-cache` in
    containers. No cache variable needs to be set for the default location. The

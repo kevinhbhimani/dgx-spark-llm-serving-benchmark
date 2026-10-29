@@ -19,13 +19,16 @@ channel evidence, and successful hardware measurements.
 ## Software checks
 
 Run on the selected head from the repository root with Python 3.12 or newer.
-Set `CLUSTER_CONFIG` in the shell on both systems. The paths may differ, and
-the canonical topology digests must match.
+Topology entrypoints default `CLUSTER_CONFIG` to
+`<repo-root>/configs/cluster.yaml` on both systems. Set it only for a different
+topology file. Different local paths are allowed when the canonical topology
+digests match.
 
 ```bash
 source .venv/bin/activate
 export PYTHONNOUSERSITE=1
-export CLUSTER_CONFIG=/path/to/site/cluster.yaml
+# Optional override when the repo default does not describe this cluster.
+# export CLUSTER_CONFIG=/path/to/site/cluster.yaml
 python -m pip install -r requirements.lock
 python scripts/check_environment.py
 python -m unittest discover -s tests -v
