@@ -188,8 +188,7 @@ if [[ -n "$SCHEDULE_TEXT" ]]; then
   mapfile -t MODEL_GROUPS <<<"$SCHEDULE_TEXT"
 fi
 
-if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
-  CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/utils/campaign_output.py" identity \
+CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/utils/campaign_output.py" identity \
     --file "$MODELS_YAML" --file "$CONFIG_YAML" \
     --value "git_commit=$(git rev-parse HEAD)" \
     --value "concurrencies=$CONCURRENCIES" --value "repeats=$REPEATS" \
@@ -208,10 +207,10 @@ if [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
     --value "generation_config=${GENERATION_CONFIG:-vllm}" \
     --value "inductor_cache=${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
     --value "single_container=$SINGLE_CONTAINER")" || exit 1
-  prepare_args=(--out-dir "$OUT_DIR" --identity-json "$CAMPAIGN_IDENTITY")
-  [[ "$PLAN_ONLY" == "1" ]] && prepare_args+=(--plan-only)
-  "$PYTHON" "$HERE/utils/campaign_output.py" prepare "${prepare_args[@]}" || exit 1
-fi
+prepare_args=(--out-dir "$OUT_DIR" --identity-json "$CAMPAIGN_IDENTITY")
+[[ "$PLAN_ONLY" == "1" ]] && prepare_args+=(--plan-only)
+[[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "0" ]] && prepare_args+=(--allow-empty-existing)
+"$PYTHON" "$HERE/utils/campaign_output.py" prepare "${prepare_args[@]}" || exit 1
 
 count_steps() {
   local entry steps total=0

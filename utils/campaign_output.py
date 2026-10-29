@@ -293,43 +293,46 @@ def _read_existing_identity(directory: Path) -> dict[str, Any] | None:
     return identity
 
 
-def prepare_implicit_campaign(
+def prepare_campaign(
     out_dir: str | os.PathLike[str],
     identity: dict[str, Any],
     *,
     plan_only: bool = False,
+    allow_empty_existing: bool = False,
 ) -> bool:
-    """Create a campaign marker or accept a matching implicit resume.
+    """Create a campaign marker or accept a matching resume.
 
     Returns True for an existing compatible campaign and False for a new one.
     Plan-only mode validates existing paths without creating files or folders.
     """
     directory = Path(out_dir).expanduser().resolve()
+    created_directory = False
+    if not directory.exists() and not plan_only:
+        try:
+            directory.mkdir(parents=True, exist_ok=False)
+            created_directory = True
+        except FileExistsError:
+            pass
+
     if directory.exists():
         if not directory.is_dir() or directory.is_symlink():
-            raise ValueError(f"implicit campaign path is not a directory: {directory}")
+            raise ValueError(f"campaign path is not a directory: {directory}")
         existing_identity = _read_existing_identity(directory)
-        if existing_identity != identity:
+        if existing_identity == identity:
+            return True
+        if any(directory.iterdir()) or (not created_directory and not allow_empty_existing):
             raise ValueError(
-                f"implicit campaign path already exists and is not a compatible "
+                f"campaign path already exists and is not a compatible "
                 f"resume: {directory}; set OUT_DIR to a fresh path"
             )
-        return True
+    elif not plan_only:
+        raise ValueError(f"campaign path is not a directory: {directory}")
 
     if plan_only:
         return False
 
-    try:
-        directory.mkdir(parents=True, exist_ok=False)
-        result_directory = campaign_results_dir(directory)
-        result_directory.mkdir()
-    except FileExistsError:
-        existing_identity = _read_existing_identity(directory)
-        if existing_identity == identity:
-            return True
-        raise ValueError(
-            f"implicit campaign path was claimed by an incompatible run: {directory}"
-        )
+    result_directory = campaign_results_dir(directory)
+    result_directory.mkdir(exist_ok=True)
     payload = {
         **campaign_metadata(directory),
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -343,7 +346,7 @@ def prepare_implicit_campaign(
         if existing_identity == identity:
             return True
         raise ValueError(
-            f"implicit campaign path was claimed by an incompatible run: {directory}"
+            f"campaign path was claimed by an incompatible run: {directory}"
         )
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
@@ -376,10 +379,11 @@ def _parser() -> argparse.ArgumentParser:
     identity.add_argument("--file", action="append", default=[])
     identity.add_argument("--value", action="append", default=[])
 
-    prepare = commands.add_parser("prepare", help="guard an implicit campaign path")
+    prepare = commands.add_parser("prepare", help="guard a campaign path")
     prepare.add_argument("--out-dir", required=True)
     prepare.add_argument("--identity-json", required=True)
     prepare.add_argument("--plan-only", action="store_true")
+    prepare.add_argument("--allow-empty-existing", action="store_true")
     return parser
 
 
@@ -410,8 +414,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(fingerprint_identity(args.file, args.value), sort_keys=True))
         else:
             identity = json.loads(args.identity_json)
-            resumed = prepare_implicit_campaign(
-                args.out_dir, identity, plan_only=args.plan_only
+            resumed = prepare_campaign(
+                args.out_dir,
+                identity,
+                plan_only=args.plan_only,
+                allow_empty_existing=args.allow_empty_existing,
             )
             if resumed:
                 print(f"compatible resume: {Path(args.out_dir).resolve()}")

@@ -42,7 +42,10 @@ name to the generated directory while retaining the benchmark name and date.
 For example, `CAMPAIGN_NAME=rdma-v4-paper` selects
 `results/rdma-v4-paper-benchmark-<UTC-date>`, followed by `-001`, `-002`, and
 later suffixes when paths already exist. This applies when `OUT_DIR` is unset.
-Set `OUT_DIR` to an existing path to resume a campaign.
+Set `OUT_DIR` to an existing path with a matching `results/campaign_run.json`
+to resume a campaign. `run_job.sh` rejects a nonempty markerless path
+and a path whose recorded campaign identity differs from the current
+inputs. An existing empty directory can start a new campaign.
 
 The default target is 80%. Set `GPU_UTIL` in Diya's environment to override it
 for planning, validation, memory preflight, and every serving launch. Export
