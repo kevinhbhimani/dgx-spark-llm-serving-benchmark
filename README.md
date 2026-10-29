@@ -81,11 +81,22 @@ mode when access fails. Scripts do not change cache ownership.
 If the default cache belongs to another account or has insufficient space, set
 `HF_CACHE` in the repo-local `.env` on each node. Use a directory owned by the
 account running the benchmark. Use a writable local scratch path when the home
-filesystem lacks 200 GB. The head and worker use separate caches. The regular
-test and benchmark commands do not invoke sudo. `DROP_CACHES=1` is optional and
-invokes sudo to flush the host page cache. Docker commands require permission
-to access the Docker daemon. Put `HF_TOKEN` in `.env` on the head node for
-gated models and run `chmod 600 .env` after adding the token.
+filesystem lacks 200 GB. The head and worker use separate caches. The model
+launcher flushes host page cache before each server start. This requires
+noninteractive sudo permission for `/usr/bin/tee /proc/sys/vm/drop_caches` on
+each participating node. Dual-node launches require batch SSH access from the
+head to the worker through `ssh_target`. Add a restricted sudoers rule for the
+benchmark account on each node, then validate it with `visudo`:
+
+```text
+dmihovch ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches
+```
+
+Replace `dmihovch` with the account that runs the benchmark. Direct
+`launch_server.sh` calls can use `DROP_CACHES=1` to flush the local host cache.
+Docker commands require permission to access the Docker daemon. Put `HF_TOKEN`
+in `.env` on the head node for gated models and run `chmod 600 .env` after
+adding the token.
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
    Spark node, run this in one terminal:
@@ -529,12 +540,12 @@ largest request is `8192` input tokens and `512` output tokens. The launcher
 defaults to `8704`; if you lower it, also lower the largest workload bucket.
 
 On Grace unified memory, clean page cache can make `MemFree` look too small even
-when `MemAvailable` is sufficient. The single-node launcher now checks both and
-uses `posix_fadvise` to drop only clean file pages in the local Hugging Face
-cache before vLLM starts. It never allocates anonymous memory to
-pressure the host cache. If free memory remains below the target, launch fails
-and asks the operator to use `DROP_CACHES=1` or free the owning process.
-`DROP_CACHES=1` remains an optional proactive flush and requires sudo:
+when `MemAvailable` is sufficient. `run_models.sh` flushes host page cache after
+model files are staged and before each server starts. It records `MemFree` and
+`MemAvailable` before and after the flush. The server memory preflight then
+checks the same `GPU_UTIL x MemTotal` threshold that vLLM uses. A remaining
+shortage stops the launch before measurement. Direct `launch_server.sh` calls
+can use `DROP_CACHES=1` for a local proactive flush:
 
 ```bash
 DROP_CACHES=1 \
@@ -671,12 +682,12 @@ For `tp2` and `pp2` the launcher runs a preflight over the Ray cluster before
 starting `vllm serve`: it reads free memory on every node and fails fast if any
 node is below `GPU_UTIL x total`, which is the same bound vLLM enforces per
 worker at startup (on Grace unified memory, CUDA free memory tracks the host's
-`MemFree`). As in single-node mode, a task pinned to each Ray node drops only
-clean Hugging Face checkpoint pages; it never induces general memory pressure.
-The preflight names any node that remains low and asks for an explicit
-`DROP_CACHES=1` restart or removal of a live owner. Without the preflight, the
-same condition surfaces minutes later as an opaque `EngineCore failed to
-start` traceback from a remote Ray worker. If free memory stays tens of GiB
+`MemFree`). Before a distributed server starts, `run_models.sh` flushes page
+cache on the head and worker after model files are staged. The preflight still
+checks every node and stops before measurement if free memory remains below
+the target. Without the preflight, the same condition surfaces minutes later
+as an opaque `EngineCore failed to start` traceback from a remote Ray worker.
+If free memory stays tens of GiB
 short with no owning process, `nvidia-smi` lists no processes, and `buff/cache`
 is small, the NVIDIA driver has leaked unified memory from a killed CUDA
 process — dropping caches will not recover it. Stop the Ray container
