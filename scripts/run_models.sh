@@ -367,6 +367,7 @@ echo "[models] $RUNTIME_SCOPE runtime facts: $RUNTIME_FACTS_JSON"
 LAUNCH_PID=""
 ACTIVE_CHILD=""
 LAST_SERVER_LOG=""
+THERMAL_PID=""
 STATUS_MISSING=0
 
 server_ready() {
@@ -505,7 +506,31 @@ wait_ready() {
   return 1
 }
 
+stop_thermal_capture() {
+  if [[ -z "$THERMAL_PID" ]]; then
+    return 0
+  fi
+  kill -TERM "$THERMAL_PID" 2>/dev/null || true
+  wait "$THERMAL_PID" 2>/dev/null || true
+  THERMAL_PID=""
+}
+
+start_thermal_capture() {
+  local output_path="$1"
+  local -a arguments=(--output "$output_path" --head-ip "$HEAD_IP")
+  if [[ "$CONFIG" != "single" ]]; then
+    arguments+=(
+      --worker-node-ip "$WORKER_IP"
+      --worker-ssh-target "$WORKER_SSH_TARGET"
+    )
+  fi
+  "$PYTHON" "$HERE/capture_thermals.py" "${arguments[@]}" &
+  THERMAL_PID=$!
+  echo "[models] thermal sensor log: $output_path"
+}
+
 teardown() {
+  stop_thermal_capture
   # A status query never launched anything. Above all it must not remove the
   # Ray head container, which a standalone single teardown would do.
   [[ "$STATUS_ONLY" == "1" ]] && return 0
@@ -895,7 +920,8 @@ run_one() {
   local label="$1" name="$2" revision="$3" maxlen="$4" gpu_util="$5"
   local quant="$6" tok="$7" tokrev="$8" trust="$9"
   local max_num_seqs="${10:-}"
-  local log="" policy_file="" launch_timestamp="" fingerprint_prefix=""
+  local log="" thermal_log="" policy_file="" launch_timestamp=""
+  local fingerprint_prefix=""
   local tokenizer="${tok:-$name}"
   local tokenizer_revision="$tokrev"
   local actual_maxlen="${maxlen:-8704}"
@@ -1012,6 +1038,8 @@ run_one() {
     return 1
   fi
   LAST_SERVER_LOG="$log"
+  thermal_log="$CAMPAIGN_LOGS_DIR/thermal_${label}_${CONFIG}_${fingerprint_prefix}_${launch_timestamp}_pid$$.log"
+  start_thermal_capture "$thermal_log"
 
   local sweep_env=(MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log"
                    SERVING_POLICY_FILE="$policy_file"
@@ -1100,6 +1128,8 @@ PY
     cleanup_server || return 1
     return 0
   fi
+
+  stop_thermal_capture
 
   # Sweep this model. run_all.sh receives the model, label, immutable server log,
   # and canonical serving-policy path so rows can retain the complete launch

@@ -1,10 +1,10 @@
 # Two-Spark cluster setup
 
-The benchmark uses two DGX Spark GB10 systems. `configs/cluster.example.yaml`
-shows the topology schema with documentation-only hostnames and reserved
-example addresses. Create a site-specific YAML file before using a benchmark
-entrypoint. The selected head and worker roles come from `head_node` in that
-file.
+The benchmark uses two DGX Spark GB10 systems. The default topology file is
+`configs/cluster.yaml`. `configs/cluster.example.yaml` shows the topology
+schema with documentation-only hostnames and reserved example addresses. Set
+`CLUSTER_CONFIG` to select another topology file. The selected head and worker
+roles come from `head_node` in the selected file.
 
 ## Topology file
 
@@ -13,9 +13,11 @@ an SSH target, and one interface entry for every shared rail. `hostname -s`
 must match the configured hostname on each system. Interface names may differ
 between systems. The two addresses on each rail must use the same IPv4 subnet.
 
-Set `CLUSTER_CONFIG` to the YAML path on both systems. The files may use
-different local paths. Their canonical topology digests must match. Put the
-setting in each checkout's `.env` or export it for each command:
+Topology entrypoints default `CLUSTER_CONFIG` to
+`<repo-root>/configs/cluster.yaml`. Set it on both systems only when the
+topology file has a different path. The files may use different local paths;
+their canonical topology digests must match. Put an override in each
+checkout's `.env` or export it for each command:
 
 ```bash
 export CLUSTER_CONFIG=/path/to/site/cluster.yaml
@@ -24,7 +26,7 @@ export CLUSTER_CONFIG=/path/to/site/cluster.yaml
 Validate the YAML on each system:
 
 ```bash
-python3 scripts/cluster_topology.py validate "$CLUSTER_CONFIG"
+python3 scripts/cluster_topology.py validate configs/cluster.yaml
 ```
 
 The loader checks two-node scope, node and rail IDs, hostnames, SSH targets,
@@ -74,7 +76,7 @@ and requested RDMA mapping. `NCCL_IB_DISABLE=1` skips the RDMA port check and
 retains the address, route, link, and peer checks.
 
 ```bash
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/verify_connectx.sh
+scripts/verify_connectx.sh
 ```
 
 `NCCL_IB_HCA`, `NCCL_IB_GID_INDEX`, and `NCCL_NET_PLUGIN` remain per-host
@@ -97,10 +99,10 @@ digests and a matching repository revision.
 
 ```bash
 # On the configured head:
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh head
+scripts/start_ray.sh head
 
 # On the configured worker:
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh worker
+scripts/start_ray.sh worker
 ```
 
 The worker joins `HEAD_IP:RAY_PORT` using the rendezvous rail address from the
@@ -122,7 +124,7 @@ settings before use.
 Run the plan on the configured head after installing the client environment:
 
 ```bash
-CLUSTER_CONFIG=/path/to/site/cluster.yaml PLAN_ONLY=1 scripts/run_job.sh
+PLAN_ONLY=1 scripts/run_job.sh
 ```
 
 `PLAN_ONLY=1` validates campaign inputs without checking links, starting
@@ -135,10 +137,10 @@ Run local hardware checks on both hosts. Run client, canary, campaign, and
 benchmark commands on the selected head:
 
 ```bash
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/hardware_smoke.sh
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/ray_allreduce_bench.sh
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/interconnect_extra_bench.sh
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/run_job.sh
+scripts/hardware_smoke.sh
+scripts/ray_allreduce_bench.sh
+scripts/interconnect_extra_bench.sh
+scripts/run_job.sh
 ```
 
 The hardware smoke uses the selected head's GPU. The Ray microbenchmarks use

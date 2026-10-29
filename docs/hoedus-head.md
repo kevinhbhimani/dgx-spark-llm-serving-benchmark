@@ -4,27 +4,28 @@ The `head_node` field in `CLUSTER_CONFIG` assigns the Ray head and campaign
 client roles. The other configured node is the worker. Node IDs and hostnames
 remain stable when the head changes.
 
-Set `head_node` to the selected node ID in the site-specific YAML. Use a file
-with the same canonical topology digest on both systems. Set `CLUSTER_CONFIG`
-to the local path in each checkout or export it per command.
+Set `head_node` to the selected node ID in the topology YAML. Use a file with
+the same canonical topology digest on both systems. Topology entrypoints use
+`<repo-root>/configs/cluster.yaml` by default; set `CLUSTER_CONFIG` to a local
+override when using a different path.
 
 On the system whose `hostname -s` matches the selected head, run:
 
 ```bash
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh head
+scripts/start_ray.sh head
 ```
 
 On the other system, run:
 
 ```bash
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh worker
+scripts/start_ray.sh worker
 ```
 
 Run the plan or campaign on the selected head:
 
 ```bash
-CLUSTER_CONFIG=/path/to/site/cluster.yaml PLAN_ONLY=1 scripts/run_job.sh
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/run_job.sh
+PLAN_ONLY=1 scripts/run_job.sh
+scripts/run_job.sh
 ```
 
 The plan validates files and options without checking host links or starting

@@ -54,7 +54,9 @@ start benchmark containers or require a GPU or sudo. Docker launchers and
 campaign scripts require access to Docker's GPU runtime and a writable
 Hugging Face cache on each participating node.
 
-Before touching the GPUs, validate the complete default campaign definition:
+Before touching the GPUs, validate the complete default campaign definition.
+Topology entrypoints use `<repo-root>/configs/cluster.yaml` unless
+`CLUSTER_CONFIG` selects an override.
 
 ```bash
 PLAN_ONLY=1 scripts/run_job.sh
@@ -89,9 +91,9 @@ gated models and run `chmod 600 .env` after adding the token.
    Spark node, run this in one terminal:
 
 ```bash
-# Required on both Spark hosts. Use a site-specific file based on the schema
-# in configs/cluster.example.yaml; its addresses and hostnames are examples.
-export CLUSTER_CONFIG=/path/to/site/cluster.yaml
+# The default is <repo-root>/configs/cluster.yaml on both Spark hosts.
+# Set CLUSTER_CONFIG only when using a different topology file.
+# export CLUSTER_CONFIG=/path/to/site/cluster.yaml
 export MODEL=Qwen/Qwen3-8B
 export REVISION=b968826d9c46dd6066d109eabc6255188de91218
 # export HF_TOKEN=...    # only needed for gated Hugging Face models
@@ -497,8 +499,10 @@ addresses, local interface list, socket interface variables, and Ray port.
 migration message. The canonical topology digest must match on both systems.
 The local YAML paths may differ.
 
+`configs/cluster.yaml` is the default topology file.
 `configs/cluster.example.yaml` contains documentation-only hostnames and
-reserved IPv4 ranges. The RDMA setup and verification sequence lives in
+reserved IPv4 ranges. Set `CLUSTER_CONFIG` to use another topology file. The
+RDMA setup and verification sequence is in
 [docs/cluster-setup.md](docs/cluster-setup.md). The per-device RDMA perftest
 matrix runs from the standalone `perftest-suite-dgx-spark-cluster` repository.
 
@@ -773,8 +777,8 @@ CONCURRENCIES="1 4 8 16 32 64" scripts/run_models.sh single
 
 # Dual-node models. Start Ray on both nodes first; run_models.sh then cycles
 # only the vLLM serve process between models and leaves the Ray cluster up.
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh head
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh worker
+scripts/start_ray.sh head
+scripts/start_ray.sh worker
 # Each node has its own HF cache, and the worker cannot reach huggingface.co.
 # run_models.sh acquires on the selected head and mirrors to the worker.
 CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed launch
@@ -868,7 +872,7 @@ then run this on the selected head inside `tmux`, using the same `OUT_DIR`.
 transport logging:
 
 ```bash
-CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/run_job.sh
+scripts/run_job.sh
 ```
 
 The job revalidates the clean commit and locked Python environment, records
@@ -1104,13 +1108,13 @@ large share of their per-token time) and the overlap with the PMBS26 baseline:
 ```bash
 # On both nodes: restart Ray with the TCP fallback.
 scripts/start_ray.sh stop
-NCCL_IB_DISABLE=1 CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh head
+NCCL_IB_DISABLE=1 scripts/start_ray.sh head
 # Run the same worker command on the configured worker.
 # On the selected head: same harness, TCP all-reduce thresholds, subset matrix.
 NCCL_IB_DISABLE=1 ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8 ALLREDUCE_MAX_8B_LATENCY_S=0.005 \
   OUT_DIR=results/tcp-ablation-2026-10-22 \
   CAMPAIGN_LABELS="llama3.1-8b nemotron3-super-120b-a12b-nvfp4" \
-  CAMPAIGN_CONFIGS="tp2 pp2" CLUSTER_CONFIG=/path/to/site/cluster.yaml \
+  CAMPAIGN_CONFIGS="tp2 pp2" \
   scripts/run_job.sh
 ```
 
@@ -1180,6 +1184,10 @@ Every measurement point writes these files under `out_dir`:
   power samples used for window integration, with GPU temperature in Celsius
   and GPU/node identity when the sensor reports it. It is written whenever a
   power backend is active.
+- `<run_tag>.thermal.log`: timestamped output from `sensors`, sampled once per
+  second on the head and, for dual-node runs, the worker. The summary records
+  its path, SHA-256, and byte count under `artifacts.thermal_samples`. Canary
+  captures use the same format in the campaign `logs/` directory.
 - `<run_tag>.vllm_metrics.jsonl`: timestamped raw values and label sets for the
   required vLLM Prometheus series whenever metrics scraping is active.
 - `<run_tag>.summary.json`: aggregate metrics, capacity samples, server-side
@@ -1507,8 +1515,9 @@ Temperature fields use telemetry schema version 2. Summary values include the
 window-only mean, maximum, valid sample count, maximum observed sample gap,
 sensor source, units, and head/worker coverage. Missing readings remain null
 with an explicit status. GPU temperature is diagnostic and does not gate a
-result. Validate sensor support and behavior on the pinned GB10 image before
-using temperature to interpret a hardware failure.
+result. The thermal log contains timestamped host `sensors` output, including
+available NIC ASIC sensors. A missing `sensors` command is recorded in that
+log and does not gate a result.
 
 ## Troubleshooting
 

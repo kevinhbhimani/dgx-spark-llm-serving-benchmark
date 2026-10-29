@@ -6,10 +6,7 @@ CONNECTX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECTX_REPO_ROOT="$(cd "$CONNECTX_SCRIPT_DIR/.." && pwd)"
 source "$CONNECTX_SCRIPT_DIR/load_env.sh"
 
-if ! declare -p CLUSTER_CONFIG >/dev/null 2>&1 || [[ -z "$CLUSTER_CONFIG" ]]; then
-  echo "[topology] set CLUSTER_CONFIG to the shared two-node YAML file" >&2
-  return 2 2>/dev/null || exit 2
-fi
+CLUSTER_CONFIG="${CLUSTER_CONFIG:-$CONNECTX_REPO_ROOT/configs/cluster.yaml}"
 if [[ "$CLUSTER_CONFIG" != /* ]]; then
   CLUSTER_CONFIG="$CONNECTX_REPO_ROOT/$CLUSTER_CONFIG"
 fi
