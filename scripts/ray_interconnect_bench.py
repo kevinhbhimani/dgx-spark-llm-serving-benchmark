@@ -22,11 +22,11 @@ uses and labels the rows accordingly. To compare transports, restart Ray on
 both nodes under each setting and run this once per setting:
 
     # TCP sockets (the sealed-campaign default)
-    NCCL_IB_DISABLE=1 scripts/start_ray.sh head  # same setting on Hoedus worker
+    NCCL_IB_DISABLE=1 scripts/start_ray.sh head  # repeat on the worker
     scripts/interconnect_extra_bench.sh
 
     # RoCE / RDMA
-    NCCL_IB_DISABLE=0 scripts/start_ray.sh head    # and on Hoedus
+    NCCL_IB_DISABLE=0 scripts/start_ray.sh head    # repeat on the worker
     scripts/interconnect_extra_bench.sh
 
     # multi-stream sockets (no RDMA, cheap tuning)
@@ -135,12 +135,29 @@ def _transport_label(debug_path: str) -> str:
     return transport
 
 
-def _worker(rank, world, head_ip, iface, port, collective):
+def _worker(
+    rank: int,
+    world: int,
+    head_ip: str,
+    interfaces_by_ip: dict[str, str],
+    port: int,
+    collective: str,
+) -> tuple[str, list[tuple[int, float, float]], str]:
     import datetime
     import os
+    import ray as node_ray
 
-    os.environ["NCCL_SOCKET_IFNAME"] = iface
-    os.environ["GLOO_SOCKET_IFNAME"] = iface
+    node_ip = node_ray.util.get_node_ip_address()
+    expected_interface = interfaces_by_ip.get(node_ip)
+    if expected_interface is None:
+        raise RuntimeError(f"rank {rank} ran on undeclared Ray node {node_ip}")
+    for variable in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME"):
+        observed_interface = os.environ.get(variable, "")
+        if observed_interface != expected_interface:
+            raise RuntimeError(
+                f"rank {rank} on {node_ip} has {variable}={observed_interface!r}, "
+                f"expected {expected_interface!r}"
+            )
     # Do NOT force NCCL_IB_DISABLE here: the transport is whatever the Ray
     # worker was launched with, and overriding it per-process would mislabel
     # the measurement. Instead, log NCCL's own selection so the CSV reports the
@@ -229,13 +246,26 @@ def _worker(rank, world, head_ip, iface, port, collective):
             dist.destroy_process_group()
 
 
-def _run(collective, head_ip, worker_ip, iface, port) -> tuple[str, list[tuple]]:
+def _run(
+    collective: str,
+    head_ip: str,
+    worker_ip: str,
+    head_interface: str,
+    worker_interface: str,
+    port: int,
+) -> tuple[str, list[tuple[int, float, float]]]:
+    interfaces_by_ip = {
+        head_ip: head_interface,
+        worker_ip: worker_interface,
+    }
     remotes = []
     for rank, ip in enumerate([head_ip, worker_ip]):
         fn = ray.remote(
             num_cpus=0, num_gpus=1, resources={f"node:{ip}": 0.001}
         )(_worker)
-        remotes.append(fn.remote(rank, 2, head_ip, iface, port, collective))
+        remotes.append(
+            fn.remote(rank, 2, head_ip, interfaces_by_ip, port, collective)
+        )
     try:
         all_results = ray.get(remotes, timeout=1800)
     except GetTimeoutError:
@@ -260,13 +290,14 @@ def _run(collective, head_ip, worker_ip, iface, port) -> tuple[str, list[tuple]]
 
 
 def main() -> int:
-    if not 4 <= len(sys.argv) <= 5:
+    if not 5 <= len(sys.argv) <= 6:
         sys.stderr.write(
-            "usage: ray_interconnect_bench.py HEAD_IP WORKER_IP IFACE [PORT]\n")
+            "usage: ray_interconnect_bench.py HEAD_IP WORKER_IP "
+            "HEAD_IFACES WORKER_IFACES [PORT]\n")
         return 2
-    head_ip, worker_ip, iface = sys.argv[1], sys.argv[2], sys.argv[3]
+    head_ip, worker_ip, head_interface, worker_interface = sys.argv[1:5]
     try:
-        port = int(sys.argv[4]) if len(sys.argv) > 4 else 29518
+        port = int(sys.argv[5]) if len(sys.argv) > 5 else 29518
     except ValueError as exc:
         sys.stderr.write(f"[microbench] invalid PORT: {exc}\n")
         return 2
@@ -310,7 +341,9 @@ def main() -> int:
     print("collective,transport,bytes,avg_s,min_s,algbw_GBps,busbw_GBps")
     transport_seen = None
     for collective in ("allreduce", "sendrecv"):
-        transport, results = _run(collective, head_ip, worker_ip, iface, port)
+        transport, results = _run(
+            collective, head_ip, worker_ip, head_interface, worker_interface, port
+        )
         transport_seen = transport
         for size, avg, mn in results:
             bw = size / avg / 1e9

@@ -1,4 +1,6 @@
 # Source this file to assign Hoedus the head role and Diya the worker role.
+# Historical fixed-role environment example.
+# Do not source it for topology-aware commands.
 export DIYA_HOST=cisc-hoedus
 export DIYA_IP=10.10.10.2
 export HOEDUS_HOST=cisc-diya

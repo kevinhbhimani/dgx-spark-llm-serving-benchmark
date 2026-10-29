@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Unattended RDMA campaign (methodology steady-exact-v4). Run INSIDE tmux on the
-# head node (Diya) after starting Ray on both nodes:
+# Unattended RDMA campaign (methodology steady-exact-v4). Run inside tmux on the
+# configured head after starting Ray on both nodes:
 #
-#   Diya:    scripts/start_ray.sh head
-#   Hoedus:  scripts/start_ray.sh worker
-#   Diya:    scripts/run_job.sh
+#   configured head:   scripts/start_ray.sh head
+#   configured worker: scripts/start_ray.sh worker
+#   configured head:   scripts/run_job.sh
 #
-# scripts/connectx_env.sh defaults to the dual-cable RDMA layout with NCCL
-# transport logging; nothing has to be sourced first.
+# scripts/connectx_env.sh loads the topology and enables NCCL transport logging.
 # An unset OUT_DIR uses the next available results/benchmark-<UTC-date> path.
 # A bare OUT_DIR names the campaign prefix before benchmark and the UTC date.
 # A path-style OUT_DIR is the complete campaign path for resuming a campaign.
@@ -87,7 +86,7 @@ export CAMPAIGN_LABELS="${CAMPAIGN_LABELS-}"
 export CAMPAIGN_CONFIGS="${CAMPAIGN_CONFIGS-}"
 export PLAN_ONLY="${PLAN_ONLY-0}"
 
-source scripts/connectx_env.sh    # VLLM_CONTAINER, HEAD_IP, HOEDUS_IP, .env
+source scripts/connectx_env.sh    # VLLM_CONTAINER, HEAD_IP, WORKER_IP, .env
 
 # The unattended paper campaign owns these inputs. Clear same-named values
 # inherited from .env or the caller so planning, measurement, and final
@@ -188,8 +187,13 @@ if [[ -n "$SCHEDULE_TEXT" ]]; then
   mapfile -t MODEL_GROUPS <<<"$SCHEDULE_TEXT"
 fi
 
+if [[ "$PLAN_ONLY" != "1" ]]; then
+  require_local_connectx_ip "$HEAD_IP" "paper campaign head role" || exit 1
+  validate_local_topology_links || exit 1
+fi
+
 CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/utils/campaign_output.py" identity \
-    --file "$MODELS_YAML" --file "$CONFIG_YAML" \
+    --file "$MODELS_YAML" --file "$CONFIG_YAML" --file "$CLUSTER_CONFIG" \
     --value "git_commit=$(git rev-parse HEAD)" \
     --value "concurrencies=$CONCURRENCIES" --value "repeats=$REPEATS" \
     --value "gpu_util_override=${GPU_UTIL:-}" \
@@ -200,7 +204,11 @@ CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/utils/campaign_output.py" identity \
     --value "gid_index=${NCCL_IB_GID_INDEX:-}" \
     --value "net_plugin=${NCCL_NET_PLUGIN:-}" \
     --value "ray_version=$RAY_VERSION" --value "head_ip=$HEAD_IP" \
-    --value "worker_ip=$HOEDUS_IP" --value "connectx_iface=$CX_IFACE" \
+    --value "worker_ip=$WORKER_IP" --value "connectx_iface=$CX_IFACE" \
+    --value "topology_sha256=$TOPOLOGY_SHA256" \
+    --value "head_node_id=$HEAD_NODE_ID" --value "worker_node_id=$WORKER_NODE_ID" \
+    --value "head_cx_iface=$HEAD_CX_IFACE" \
+    --value "worker_cx_iface=$WORKER_CX_IFACE" \
     --value "dtype=${DTYPE:-auto}" \
     --value "prefix_caching=${PREFIX_CACHING:-0}" \
     --value "flashinfer_autotune=${FLASHINFER_AUTOTUNE:-0}" \
@@ -211,6 +219,68 @@ prepare_args=(--out-dir "$OUT_DIR" --identity-json "$CAMPAIGN_IDENTITY")
 [[ "$PLAN_ONLY" == "1" ]] && prepare_args+=(--plan-only)
 [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "0" ]] && prepare_args+=(--allow-empty-existing)
 "$PYTHON" "$HERE/utils/campaign_output.py" prepare "${prepare_args[@]}" || exit 1
+if [[ "$PLAN_ONLY" != "1" ]]; then
+  "$PYTHON" - "$CLUSTER_CONFIG" "$CAMPAIGN_RESULTS_DIR/inputs" \
+      "$TOPOLOGY_RAW_SHA256" "$TOPOLOGY_SHA256" <<'PY' || exit 1
+import hashlib
+import json
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+source = Path(sys.argv[1])
+input_directory = Path(sys.argv[2])
+expected_raw_sha256 = sys.argv[3]
+topology_sha256 = sys.argv[4]
+topology_bytes = source.read_bytes()
+actual_raw_sha256 = hashlib.sha256(topology_bytes).hexdigest()
+if actual_raw_sha256 != expected_raw_sha256:
+    raise SystemExit("[job] cluster YAML changed after topology validation")
+input_directory.mkdir(parents=True, exist_ok=True)
+
+def install_immutable_file(destination: Path, content: bytes) -> None:
+    if destination.exists() or destination.is_symlink():
+        status = destination.lstat()
+        if not stat.S_ISREG(status.st_mode) or destination.is_symlink():
+            raise SystemExit(f"[job] refusing non-regular topology input: {destination}")
+        if destination.read_bytes() != content:
+            raise SystemExit(f"[job] topology input conflicts with campaign: {destination}")
+        return
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, destination)
+        except FileExistsError:
+            if destination.is_symlink() or destination.read_bytes() != content:
+                raise SystemExit(
+                    f"[job] topology input conflicts with campaign: {destination}"
+                )
+    finally:
+        temporary.unlink(missing_ok=True)
+
+metadata = json.dumps(
+    {
+        "file": "cluster.yaml",
+        "raw_sha256": actual_raw_sha256,
+        "schema_version": 1,
+        "topology_sha256": topology_sha256,
+    },
+    indent=2,
+    sort_keys=True,
+).encode() + b"\n"
+install_immutable_file(input_directory / "cluster.yaml", topology_bytes)
+install_immutable_file(input_directory / "cluster_topology.json", metadata)
+PY
+fi
 
 count_steps() {
   local entry steps total=0
@@ -265,6 +335,38 @@ print(f"{float(value):g}")' "$MODELS_YAML")"
   fi
 }
 
+verify_saved_topology_input() {
+  "$PYTHON" - "$CLUSTER_CONFIG" \
+      "$CAMPAIGN_RESULTS_DIR/inputs/cluster.yaml" \
+      "$TOPOLOGY_RAW_SHA256" "$TOPOLOGY_SHA256" <<'PY'
+import sys
+from pathlib import Path
+
+from scripts.cluster_topology import TopologyError, read_topology
+
+current_path = Path(sys.argv[1])
+saved_path = Path(sys.argv[2])
+expected_raw_sha256 = sys.argv[3]
+expected_topology_sha256 = sys.argv[4]
+try:
+    current = read_topology(current_path)
+    saved = read_topology(saved_path)
+except (OSError, TopologyError) as error:
+    raise SystemExit(f"[job] cannot verify saved topology input: {error}") from error
+if current.raw_sha256 != expected_raw_sha256:
+    raise SystemExit("[job] current cluster YAML changed during the campaign")
+if saved.raw_sha256 != expected_raw_sha256:
+    raise SystemExit("[job] saved cluster YAML differs from the campaign input")
+if current.canonical_sha256 != expected_topology_sha256:
+    raise SystemExit("[job] current topology digest changed during the campaign")
+if saved.canonical_sha256 != expected_topology_sha256:
+    raise SystemExit("[job] saved topology digest differs from the campaign input")
+if current.raw_sha256 != saved.raw_sha256:
+    raise SystemExit("[job] current and saved cluster YAML bytes differ")
+print(f"[job] current topology matches saved input {expected_topology_sha256}")
+PY
+}
+
 if [[ "$PLAN_ONLY" == "1" ]]; then
   "$PYTHON" scripts/check_environment.py || exit 1
   "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" --repeats "$REPEATS" >/dev/null || exit 1
@@ -272,7 +374,6 @@ if [[ "$PLAN_ONLY" == "1" ]]; then
   exit 0
 fi
 
-require_local_connectx_ip "$HEAD_IP" "paper campaign head role" || exit 1
 acquire_campaign_lock || exit 1
 
 mkdir -p "$OUT_DIR" "$CAMPAIGN_RESULTS_DIR" "$CAMPAIGN_LOGS_DIR"
@@ -290,9 +391,7 @@ capture_system_snapshot() {
   snapshot_path="$CAMPAIGN_LOGS_DIR/system_snapshot_${timestamp}_pid$$.json"
   if "$PYTHON" scripts/system_snapshot.py \
       --output "$snapshot_path" --container "$VLLM_CONTAINER" \
-      --image "$VLLM_IMAGE" --head-host "$HEAD_HOST" \
-      --worker-host "$HOEDUS_HOST" --head-ip "$HEAD_IP" \
-      --worker-ip "$HOEDUS_IP"; then
+      --image "$VLLM_IMAGE" --cluster-config "$CLUSTER_CONFIG"; then
     log "system snapshot saved: $snapshot_path"
   else
     status=$?
@@ -359,8 +458,8 @@ leg() {
 ray_ok() {
   if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
     log "Ray is not active in $VLLM_CONTAINER. Start it on both nodes:"
-    log "  Diya:   scripts/start_ray.sh head"
-    log "  Hoedus: scripts/start_ray.sh worker"
+    log "  configured head:   scripts/start_ray.sh head"
+    log "  configured worker: scripts/start_ray.sh worker"
     return 1
   fi
 }
@@ -395,7 +494,9 @@ source_tree_ok() {
 
 cluster_runtime_ok() {
   CLUSTER_RUNTIME_JSON="$(docker exec -i "$VLLM_CONTAINER" python3 - \
-    "$HEAD_IP" "$HOEDUS_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+    "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+    "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
+    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
     < scripts/cluster_runtime_fingerprint.py)" || return 1
   CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$CLUSTER_RUNTIME_JSON" \
     | sha256sum | awk '{print $1}')"
@@ -434,7 +535,9 @@ canary_identity() {
     # does not identify environment-supplied launch options or live hardware.
     sha256sum "$CAMPAIGN_RESULTS_DIR/client_environment.json"
     printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" "$RAY_VERSION" \
-      "$CLUSTER_RUNTIME_FINGERPRINT" "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" \
+      "$CLUSTER_RUNTIME_FINGERPRINT" "$HEAD_IP" "$WORKER_IP" "$CX_IFACE" \
+      "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
+      "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
       "$NCCL_IB_DISABLE" "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" \
       "${NCCL_NET_PLUGIN:-}" "${DTYPE:-auto}" "${PREFIX_CACHING:-0}" \
       "${FLASHINFER_AUTOTUNE:-0}" \
@@ -642,6 +745,7 @@ fi
 # edit or checkout performed while the job was running before those current
 # files can be sealed beside rows produced by a different revision.
 prep "final clean committed benchmark source tree" source_tree_ok
+prep "current topology matches saved campaign input" verify_saved_topology_input
 
 VERIFY_ARGS=(--models "$MODELS_YAML" --experiment "$CONFIG_YAML"
              --out-dir "$OUT_DIR" --concurrencies "$CONCURRENCIES"

@@ -35,11 +35,9 @@
 #                   pp2 deadlocks at startup when its two stages tune different
 #                   kernels (vllm#57197, fixed in 0.32.0). One value for all
 #                   configs keeps single/tp2/pp2 kernel selection comparable.
-#   HF_HUB_OFFLINE  1 (default) serves purely from the local HF cache. The worker
-#                   node (Hoedus) has no DNS to huggingface.co, so an online launch
-#                   burns minutes on doomed metadata retries before falling back to
-#                   cache. Set HF_HUB_OFFLINE=0 only to pull a not-yet-cached model
-#                   (acquire it first with scripts/predownload.sh).
+#   HF_HUB_OFFLINE  1 (default) serves from the local HF cache. The worker cache
+#                   receives pinned model files from the head-side mirror. Set
+#                   HF_HUB_OFFLINE=0 only after a model is available locally.
 #   SINGLE_CONTAINER  where `single` runs. "standalone" (default) starts its own
 #                   container named $VLLM_CONTAINER, which replaces a running Ray
 #                   head. "ray" execs the TP=1 PP=1 server into the running Ray
@@ -142,6 +140,7 @@ fi
 if [[ -n "$TRUST_REMOTE_CODE" ]]; then common+=( --trust-remote-code ); fi
 
 require_local_connectx_ip "$HEAD_IP" "serving head role" || exit 1
+validate_local_topology_links || exit 1
 acquire_resource_lock || exit 1
 if [[ "$CONFIG" == "single" ]]; then
   wait_for_resources_idle auto || exit 1
@@ -220,20 +219,23 @@ _require_ray_head() {
     echo "[launch] Start it first: scripts/start_ray.sh head" >&2
     exit 1
   fi
+  if ! validate_local_ray_container; then
+    echo "[launch] local Ray head does not match the selected topology" >&2
+    exit 1
+  fi
 }
 
 # For distributed configs, confirm Ray is healthy before committing to the launch.
 _require_ray() {
   if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
     echo "[launch] ERROR: Ray cluster is not active in $VLLM_CONTAINER" >&2
-    echo "[launch] Start Ray first: scripts/start_ray.sh head  (Diya)" >&2
-    echo "[launch]                  scripts/start_ray.sh worker (Hoedus)" >&2
+    echo "[launch] Start Ray on the configured head and worker first." >&2
     echo "[launch] Then verify with: docker exec $VLLM_CONTAINER ray status" >&2
     exit 1
   fi
   echo "[launch] Ray cluster OK:"
   docker exec "$VLLM_CONTAINER" ray status
-  docker exec -i -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
+  docker exec -i -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$WORKER_IP" \
     "$VLLM_CONTAINER" python3 - <<'PY'
 import os
 import ray
@@ -255,6 +257,7 @@ if problems:
     raise SystemExit("[launch] ERROR: " + "; ".join(problems))
 print("[launch] expected two Ray GPU nodes present: " + ", ".join(expected))
 PY
+  validate_cluster_runtime || exit 1
 }
 
 # The head and worker mount separate local Hugging Face caches. Serving runs
@@ -265,7 +268,7 @@ _check_cluster_cache() {
   docker exec -i \
     "${hf_cache_env[@]}" \
     -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \
-    -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
+    -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$WORKER_IP" \
     -e MODEL="$MODEL" -e REVISION="$REVISION" \
     -e TOKENIZER="$TOKENIZER" -e TOKENIZER_REVISION="$TOKENIZER_REVISION" \
     "$VLLM_CONTAINER" python3 - <<'PY'

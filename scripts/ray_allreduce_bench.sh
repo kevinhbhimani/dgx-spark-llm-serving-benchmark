@@ -13,6 +13,11 @@ source "$HERE/../utils/campaign_output.sh"
 campaign_resolve_out_dir
 campaign_reject_existing_implicit_out_dir || exit 1
 require_local_connectx_ip "$HEAD_IP" "all-reduce benchmark head role" || exit 1
+if [[ "${1:-}" == "--fingerprint-only" ]]; then
+  validate_local_topology_links >/dev/null || exit 1
+else
+  validate_local_topology_links || exit 1
+fi
 acquire_campaign_lock || exit 1
 
 PORT="${ALLREDUCE_PORT:-29517}"
@@ -45,7 +50,9 @@ fi
 
 if [[ -z "${CLUSTER_RUNTIME_FINGERPRINT:-}" ]]; then
   cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" python3 - \
-    "$HEAD_IP" "$HOEDUS_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+    "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+    "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
+    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
     < "$HERE/cluster_runtime_fingerprint.py")"
   CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$cluster_runtime_json" \
     | sha256sum | awk '{print $1}')"
@@ -53,7 +60,9 @@ fi
 SOURCE_FINGERPRINT="$(sha256sum "$HERE/ray_allreduce_bench.py" \
   "$HERE/ray_allreduce_bench.sh" | sha256sum | awk '{print $1}')"
 ARTIFACT_FINGERPRINT="$(printf '%s\n' "$CLUSTER_RUNTIME_FINGERPRINT" \
-  "$SOURCE_FINGERPRINT" "$PORT" "$CX_IFACE" "$NCCL_IB_DISABLE" \
+  "$SOURCE_FINGERPRINT" "$PORT" "$TOPOLOGY_SHA256" \
+  "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$NCCL_IB_DISABLE" \
+  "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" "${NCCL_NET_PLUGIN:-}" \
   "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" | sha256sum | awk '{print $1}')"
 if [[ "${1:-}" == "--fingerprint-only" ]]; then
   printf '%s\n' "$ARTIFACT_FINGERPRINT"
@@ -69,9 +78,10 @@ RAW="$CAMPAIGN_LOGS_DIR/$(basename "${RESULT%.csv}")_raw.log"
 DIAG="$CAMPAIGN_LOGS_DIR/$(basename "${RESULT%.csv}")_nccl.log"
 trap 'rm -f "$TMP"' EXIT
 docker exec -i \
-  -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
+  -e NCCL_SOCKET_IFNAME="$HEAD_CX_IFACE" -e GLOO_SOCKET_IFNAME="$HEAD_CX_IFACE" \
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" \
-  "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" "$PORT" \
+  "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$WORKER_IP" \
+  "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$PORT" \
   "$MIN_1G_BUSBW" "$MAX_8B_LATENCY" \
   < "$HERE/ray_allreduce_bench.py" 2> >(tee "$DIAG" >&2) | tee "$RAW"
 

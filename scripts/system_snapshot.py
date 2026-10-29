@@ -18,6 +18,23 @@ from operator import itemgetter
 from pathlib import Path
 from typing import TypeAlias, TypeGuard
 
+try:
+    from scripts.cluster_topology import (
+        ClusterNode,
+        ClusterTopology,
+        TopologyError,
+        local_hostname,
+        read_topology,
+    )
+except ImportError:
+    from cluster_topology import (
+        ClusterNode,
+        ClusterTopology,
+        TopologyError,
+        local_hostname,
+        read_topology,
+    )
+
 
 JsonValue: TypeAlias = (
     str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -458,12 +475,29 @@ def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--container", default="vllm-spark")
     parser.add_argument("--image", default="")
-    parser.add_argument("--head-host", default="")
-    parser.add_argument("--worker-host", default="")
-    parser.add_argument("--head-ip", default="")
-    parser.add_argument("--worker-ip", default="")
+    parser.add_argument("--cluster-config", type=Path)
     parser.add_argument("--node", action="store_true")
     return parser.parse_args(arguments)
+
+
+def topology_node_snapshot(
+    node: ClusterNode, role: str, observed_state: JsonObject
+) -> JsonObject:
+    return {
+        "node_id": node.node_id,
+        "role": role,
+        "hostname": node.hostname,
+        "ssh_target": node.ssh_target,
+        "interfaces": [
+            {
+                "rail": interface.rail,
+                "name": interface.name,
+                "ipv4": interface.cidr,
+            }
+            for interface in node.interfaces
+        ],
+        "observed_state": observed_state,
+    }
 
 
 def main() -> int:
@@ -479,37 +513,54 @@ def main() -> int:
         return 0
     if arguments.output is None:
         raise SystemExit("--output is required")
-    validate_host(arguments.worker_host)
+    if arguments.cluster_config is None:
+        raise SystemExit("--cluster-config is required")
     validate_container(arguments.container)
     validate_image(arguments.image)
+    topology = read_topology(arguments.cluster_config)
+    local_node = topology.select_local(local_hostname())
+    if local_node.node_id != topology.head_node:
+        raise SystemExit(
+            f"system snapshot requires configured head {topology.head_node}; "
+            f"local node is {local_node.node_id}"
+        )
+    head_node = topology.head_node_record
+    worker_node = topology.worker_node
+    if worker_node.node_id == head_node.node_id:
+        raise SystemExit("topology head and worker node IDs must differ")
+    validate_host(worker_node.ssh_target)
     source = Path(__file__).read_text(encoding="utf-8")
     snapshot: JsonObject = {
-        "schema_version": 1,
+        "schema_version": 2,
         "captured_at_utc": utc_now(),
         "configuration": {
-            "head_host": arguments.head_host,
-            "worker_host": arguments.worker_host,
-            "head_ip": arguments.head_ip,
-            "worker_ip": arguments.worker_ip,
+            "topology_sha256": topology.canonical_sha256,
+            "topology_raw_file_sha256": topology.raw_sha256,
+            "head_node_id": head_node.node_id,
+            "worker_node_id": worker_node.node_id,
+            "head_host": head_node.hostname,
+            "worker_host": worker_node.hostname,
+            "head_ip": str(head_node.interface_for(topology.rendezvous_rail).address),
+            "worker_ip": str(worker_node.interface_for(topology.rendezvous_rail).address),
             "container": arguments.container,
             "declared_image": arguments.image,
         },
         "nodes": [
-            {
-                "role": "head",
-                "configured_host": arguments.head_host,
-                **node_snapshot(arguments.container, arguments.image),
-            },
-            {
-                "role": "worker",
-                "configured_host": arguments.worker_host,
-                **remote_node_snapshot(
-                    arguments.worker_host,
+            topology_node_snapshot(
+                head_node,
+                "head",
+                node_snapshot(arguments.container, arguments.image),
+            ),
+            topology_node_snapshot(
+                worker_node,
+                "worker",
+                remote_node_snapshot(
+                    worker_node.ssh_target,
                     arguments.container,
                     arguments.image,
                     source,
                 ),
-            },
+            ),
         ],
     }
     write_snapshot(arguments.output, snapshot)
@@ -520,5 +571,5 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, TopologyError) as error:
         raise SystemExit(f"[snapshot] {error}") from error

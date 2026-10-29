@@ -228,7 +228,7 @@ def main() -> None:
                     "--worker-power-node-ip, samples the worker node's GPU "
                     "power so dual-node energy covers both nodes")
     ap.add_argument("--worker-power-node-ip",
-                    help="Ray node IP of the worker to sample (e.g. 10.10.10.2)")
+                    help="Ray node IP of the worker to sample (e.g. 192.0.2.11)")
     ap.add_argument("--head-node-ip",
                     help="Ray/head node IP; required with release-grade dual "
                     "power sampling to prove the worker is distinct")

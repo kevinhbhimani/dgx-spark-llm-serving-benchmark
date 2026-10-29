@@ -20,8 +20,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_microbench(name):
+def load_microbench(name: str) -> ModuleType:
     ray = ModuleType("ray")
+    ray.util = SimpleNamespace(get_node_ip_address=lambda: "10.10.10.1")
     exceptions = ModuleType("ray.exceptions")
     exceptions.GetTimeoutError = type("GetTimeoutError", (Exception,), {})
     spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
@@ -69,7 +70,10 @@ class TransportEvidenceTests(unittest.TestCase):
         for labels in (("roce", "tcp"), ("roce", "roce?"), ("mixed", "mixed")):
             bench.ray.get = mock.Mock(return_value=[(label, rows, "") for label in labels])
             with self.subTest(labels=labels), mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
-                bench._run("allreduce", "10.10.10.1", "10.10.10.2", "cx0", 29518)
+                bench._run(
+                    "allreduce", "10.10.10.1", "10.10.10.2",
+                    "cx0,cx1", "mlx0,mlx1", 29518,
+                )
 
 
 class ConnectXPreflightTests(unittest.TestCase):
@@ -79,29 +83,72 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        self.topology_path = self.root / "cluster.yaml"
+        self.topology_path.write_text(yaml.safe_dump({
+            "schema_version": 1,
+            "head_node": "spark_a",
+            "rendezvous_rail": "rail_0",
+            "ray_port": 6379,
+            "nodes": [
+                {
+                    "id": "spark_a",
+                    "hostname": "lab-alpha",
+                    "ssh_target": "lab-alpha",
+                    "interfaces": [
+                        {"rail": "rail_0", "name": "cx0", "ipv4": "10.10.10.1/24"},
+                        {"rail": "rail_1", "name": "cx1", "ipv4": "10.10.11.1/24"},
+                    ],
+                },
+                {
+                    "id": "spark_b",
+                    "hostname": "lab-beta",
+                    "ssh_target": "lab-beta",
+                    "interfaces": [
+                        {"rail": "rail_0", "name": "mlx0", "ipv4": "10.10.10.2/24"},
+                        {"rail": "rail_1", "name": "mlx1", "ipv4": "10.10.11.2/24"},
+                    ],
+                },
+            ],
+        }))
         self.calls = self.root / "calls"
-        self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
-                        DGX_SPARK_ENV_LOADED="1", CX_IFACE="cx0,cx1",
-                        NCCL_IB_DISABLE="0",
-                        DIYA_IP="10.10.10.1", HOEDUS_IP="10.10.10.2", HEAD_IP="10.10.10.1",
-                        HF_CACHE=str(self.root / "hf-cache"),
-                        RESOURCE_PROC_ROOT=str(self.root / "proc"),
-                        CALL_LOG=str(self.calls))
+        self.env = dict(os.environ)
+        for variable in (
+            "CLUSTER_CONFIG", "SCHEMA_VERSION", "TOPOLOGY_SHA256",
+            "HEAD_NODE_ID", "WORKER_NODE_ID", "LOCAL_NODE_ID", "HEAD_HOST",
+            "WORKER_HOST", "HEAD_IP", "WORKER_IP", "LOCAL_IP", "RAY_PORT",
+            "CX_IFACE", "HEAD_CX_IFACE", "WORKER_CX_IFACE", "VLLM_HOST_IP",
+            "NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "DIYA_HOST", "DIYA_IP",
+            "HOEDUS_HOST", "HOEDUS_IP",
+        ):
+            self.env.pop(variable, None)
+        self.env.update(
+            PATH=f"{self.bin}:{os.environ['PATH']}",
+            DGX_SPARK_ENV_LOADED="1",
+            CLUSTER_CONFIG=str(self.topology_path),
+            MOCK_HOSTNAME="lab-alpha",
+            NCCL_IB_DISABLE="0",
+            HF_CACHE=str(self.root / "hf-cache"),
+            RESOURCE_PROC_ROOT=str(self.root / "proc"),
+            CALL_LOG=str(self.calls),
+        )
         (self.root / "proc").mkdir()
-        self.command("getent", '''case "$2" in
-          cisc-diya)
-            echo "10.10.10.1 STREAM"
-            if [[ "${MOCK_LOCAL_LOOPBACK:-0}" == "1" ]]; then echo "127.0.0.1 STREAM"; fi
-            if [[ "${MOCK_LOCAL_SECONDARY_ALIAS:-0}" == "1" ]]; then echo "10.10.11.1 STREAM"; fi;;
-          cisc-hoedus) echo "10.10.10.2 STREAM";;
-        esac''')
+        self.command("hostname", '[[ "${1:-}" == "-s" ]] || exit 2; echo "$MOCK_HOSTNAME"')
         self.command("ip", '''case "$*" in
-          '-4 -o addr show cx0') echo '1: cx0 inet 10.10.10.1/24';;
-          '-4 -o addr show cx1') echo '2: cx1 inet 10.10.11.1/24';;
-          '-4 route get 10.10.10.2') echo "10.10.10.2 dev ${MOCK_ROUTE_IFACE:-cx0} src 10.10.10.1";;
+          '-4 -o addr show dev cx0')
+            if [[ "${MOCK_WRONG_ADDRESS:-0}" == 1 ]]; then echo '1: cx0 inet 10.10.10.9/24';
+            else echo '1: cx0 inet 10.10.10.1/24'; fi;;
+          '-4 -o addr show dev cx1') echo '2: cx1 inet 10.10.11.1/24';;
+          '-o link show dev cx0')
+            if [[ "${MOCK_LINK_DOWN:-0}" == 1 ]]; then echo '1: cx0: <NO-CARRIER> state DOWN';
+            else echo '1: cx0: <UP,LOWER_UP> state UP'; fi;;
+          '-o link show dev cx1') echo '2: cx1: <UP,LOWER_UP> state UP';;
+          '-4 route get 10.10.10.2 from 10.10.10.1')
+            echo "10.10.10.2 dev ${MOCK_ROUTE_IFACE_RAIL0:-cx0} src 10.10.10.1";;
+          '-4 route get 10.10.11.2 from 10.10.11.1')
+            echo "10.10.11.2 dev ${MOCK_ROUTE_IFACE_RAIL1:-cx1} src 10.10.11.1";;
           '-s link show '*) echo counters;;
           *) exit 1;; esac''')
-        self.command("ping", 'printf "ping %s\\n" "$*" >> "$CALL_LOG"')
+        self.command("ping", 'printf "ping %s\\n" "$*" >> "$CALL_LOG"; [[ "${MOCK_PING_FAIL:-0}" != 1 ]]')
         self.command("rdma", '''echo 'link roce0/1 state ACTIVE physical_state LINK_UP netdev cx0'
           if [ "${MOCK_MISSING_RAIL:-0}" != 1 ]; then
             echo 'link roce1/1 state ACTIVE physical_state LINK_UP netdev cx1'
@@ -286,7 +333,12 @@ class ConnectXPreflightTests(unittest.TestCase):
           exit $?
         fi
         exec /usr/bin/python3 "$@"''')
-        self.command("docker", '''case "$*" in
+        self.command("docker", '''script_input="$(cat)"
+        if [[ "$script_input" == *"Emit canonical two-node runtime facts"* ]]; then
+          echo '[]'
+          exit 0
+        fi
+        case "$*" in
           *'vllm serve'*)
             printf '%s\\n' "$@" > "$CALL_LOG"
             rm -f "$MOCK_API_READY_FILE"
@@ -304,12 +356,12 @@ class ConnectXPreflightTests(unittest.TestCase):
           'inspect -f {{.State.Running}} '*) echo true;;
           *'ray status'*) printf 'Active:\\n';;
           *'--worker'*) printf '[resources] active Ray nodes are idle: %s, %s\\n' \
-            "$HEAD_IP" "$HOEDUS_IP";;
+            "$HEAD_IP" "$WORKER_IP";;
           *'EXPECTED_HEAD='*) printf '[launch] expected two Ray GPU nodes present: %s, %s\\n' \
-            "$HEAD_IP" "$HOEDUS_IP";;
+            "$HEAD_IP" "$WORKER_IP";;
           *'MODEL='*) printf '[launch]   node %s: pinned cache OK\\n' \
             "$HEAD_IP"
-            printf '[launch]   node %s: pinned cache OK\\n' "$HOEDUS_IP";;
+            printf '[launch]   node %s: pinned cache OK\\n' "$WORKER_IP";;
           *'GPU_UTIL='*)
             for argument in "$@"; do
               if [[ "$argument" == GPU_UTIL=* ]]; then
@@ -323,7 +375,7 @@ class ConnectXPreflightTests(unittest.TestCase):
               "$HEAD_IP" "$MOCK_MEMORY_GIB" "$MOCK_MEMORY_GIB" \
               "$MOCK_MEMORY_GIB" "$needed_gib"
             printf '[launch]   node %s: free %s (available %s) of %s GiB, need %s GiB: ok\\n' \
-              "$HOEDUS_IP" "$MOCK_MEMORY_GIB" "$MOCK_MEMORY_GIB" \
+              "$WORKER_IP" "$MOCK_MEMORY_GIB" "$MOCK_MEMORY_GIB" \
               "$MOCK_MEMORY_GIB" "$needed_gib";;
           *'/tmp/cache_access_probe.py'*) exit 0;;
           *) exit 99;;
@@ -343,25 +395,42 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.assertEqual(self.calls.read_text().splitlines(), [
             "ping -I cx0 -W 2 -c 3 10.10.10.2", "ping -I cx1 -W 2 -c 3 10.10.11.2"])
 
-    def test_verify_ignores_local_loopback_but_rejects_secondary_aliases(self):
-        result = self.run_script("verify_connectx.sh", MOCK_LOCAL_LOOPBACK="1")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("cisc-diya -> 10.10.10.1", result.stdout)
-        self.calls.unlink()
-
-        result = self.run_script("verify_connectx.sh", MOCK_LOCAL_SECONDARY_ALIAS="1")
+    def test_verify_rejects_wrong_local_address_link_and_peer_probe(self):
+        result = self.run_script("verify_connectx.sh", MOCK_WRONG_ADDRESS="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("non-loopback: '10.10.10.1\n10.10.11.1'", result.stderr)
-        self.assertFalse(self.calls.exists())
+        self.assertIn("expected 10.10.10.1/24", result.stderr)
+        result = self.run_script("verify_connectx.sh", MOCK_LINK_DOWN="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("is not link-up", result.stderr)
+        result = self.run_script("verify_connectx.sh", MOCK_PING_FAIL="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ping failed", result.stderr)
 
     def test_verify_rejects_wrong_route_and_missing_rdma_rail(self):
-        result = self.run_script("verify_connectx.sh", MOCK_ROUTE_IFACE="wlan0")
+        result = self.run_script("verify_connectx.sh", MOCK_ROUTE_IFACE_RAIL0="wlan0")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("outside CX_IFACE", result.stderr)
-        self.assertFalse(self.calls.exists())
+        self.assertIn("expected dev cx0 src 10.10.10.1", result.stderr)
         result = self.run_script("verify_connectx.sh", MOCK_MISSING_RAIL="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no ACTIVE/LINK_UP RDMA port mapped to cx1", result.stderr)
+        self.assertIn("rail rail_1 local cx1", result.stderr)
+
+    def test_rdma_allowlist_must_cover_configured_interfaces(self) -> None:
+        result = self.run_script(
+            "verify_connectx.sh", NCCL_IB_HCA="roce0:1,roce1:1"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        missing_rail = self.run_script(
+            "verify_connectx.sh", NCCL_IB_HCA="roce0:1"
+        )
+        self.assertNotEqual(missing_rail.returncode, 0)
+        self.assertIn("rail rail_1 local cx1", missing_rail.stderr)
+
+        unknown_hca = self.run_script(
+            "verify_connectx.sh", NCCL_IB_HCA="roce9:1,roce1:1"
+        )
+        self.assertNotEqual(unknown_hca.returncode, 0)
+        self.assertIn("has no RDMA port mapping", unknown_hca.stderr)
 
     def test_start_ray_rejects_missing_rail_before_removing_container(self):
         self.env["CAMPAIGN_LOCK_FILE"] = str(self.root / "resource.lock")
@@ -372,12 +441,12 @@ class ConnectXPreflightTests(unittest.TestCase):
             'inspect -f {{.State.Running}} '*) echo true;;
             *'ray status'*) printf 'Active:\\n';;
             *'--worker'*) printf '[resources] active Ray nodes are idle: %s, %s\\n' \
-              "$HEAD_IP" "$HOEDUS_IP";;
+              "$HEAD_IP" "$WORKER_IP";;
             *) exit 99;;
           esac''')
         result = self.run_script("start_ray.sh", "head", MOCK_MISSING_RAIL="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no ACTIVE/LINK_UP RDMA port mapped to cx1", result.stderr)
+        self.assertIn("rail rail_1 local cx1", result.stderr)
         docker_calls = self.calls.read_text().splitlines()
         self.assertIn("ps --format {{.Names}}", docker_calls)
         self.assertIn("inspect -f {{.State.Running}} vllm-spark", docker_calls)
@@ -386,12 +455,108 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.assertTrue(any("--worker" in call for call in docker_calls))
         self.assertFalse(any(call.startswith(("rm ", "run ")) for call in docker_calls))
 
+    def test_start_ray_rejects_wrong_local_role_before_docker(self):
+        result = self.run_script("start_ray.sh", "worker")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("local node spark_a is the configured head", result.stderr)
+        self.assertFalse(self.calls.exists())
+
     def test_local_role_accepts_secondary_ipv4_on_selected_interface(self):
         self.command("ip", "printf '1: cx0 inet 192.168.1.1/24\\n1: cx0 inet 10.10.10.1/24\\n'")
         result = subprocess.run(["bash", "-c", 'source "$1"; require_local_connectx_ip "$HEAD_IP"',
                                  "bash", str(ROOT / "scripts" / "connectx_env.sh")],
                                 env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_local_node_selection_swaps_roles_and_rejects_conflicting_override(self):
+        worker = subprocess.run(
+            ["bash", "-c", 'source "$1"; printf "%s %s %s %s\\n" "$LOCAL_NODE_ID" "$HEAD_NODE_ID" "$LOCAL_IP" "$CX_IFACE"',
+             "bash", str(ROOT / "scripts" / "connectx_env.sh")],
+            env=dict(self.env, MOCK_HOSTNAME="lab-beta"),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(worker.returncode, 0, worker.stderr)
+        self.assertEqual(
+            worker.stdout.strip(), "spark_b spark_a 10.10.10.2 mlx0,mlx1"
+        )
+        wrong_head = self.run_script(
+            "verify_connectx.sh", HEAD_IP="10.10.10.99"
+        )
+        self.assertNotEqual(wrong_head.returncode, 0)
+        self.assertIn("conflicts with CLUSTER_CONFIG", wrong_head.stderr)
+        self.assertFalse(self.calls.exists())
+
+    def test_same_shell_recomputes_values_for_a_new_topology_file(self) -> None:
+        swapped_topology = yaml.safe_load(self.topology_path.read_text())
+        swapped_topology["head_node"] = "spark_b"
+        swapped_path = self.root / "cluster-swapped.yaml"
+        swapped_path.write_text(yaml.safe_dump(swapped_topology))
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"; CLUSTER_CONFIG="$2"; source "$1"; '
+                'printf "%s %s %s %s %s\\n" "$LOCAL_NODE_ID" '
+                '"$HEAD_NODE_ID" "$HEAD_IP" "$WORKER_IP" "$CX_IFACE"',
+                "bash",
+                str(ROOT / "scripts" / "connectx_env.sh"),
+                str(swapped_path),
+            ],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            "spark_a spark_b 10.10.10.2 10.10.10.1 cx0,cx1",
+        )
+
+    def test_ray_container_must_match_current_local_topology(self) -> None:
+        self.command(
+            "docker",
+            '''script_input="$(cat)"
+            env \\
+              TOPOLOGY_SHA256="${MOCK_CONTAINER_TOPOLOGY:-$TOPOLOGY_SHA256}" \\
+              LOCAL_NODE_ID="${MOCK_CONTAINER_NODE_ID:-$LOCAL_NODE_ID}" \\
+              VLLM_HOST_IP="${MOCK_CONTAINER_IP:-$VLLM_HOST_IP}" \\
+              NCCL_SOCKET_IFNAME="${MOCK_CONTAINER_IFACES:-$NCCL_SOCKET_IFNAME}" \\
+              GLOO_SOCKET_IFNAME="${MOCK_CONTAINER_IFACES:-$GLOO_SOCKET_IFNAME}" \\
+              /usr/bin/python3 - "${@:6}" <<< "$script_input"''',
+        )
+        validation = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"; validate_local_ray_container',
+                "bash",
+                str(ROOT / "scripts" / "connectx_env.sh"),
+            ],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(validation.returncode, 0, validation.stderr)
+
+        stale_container = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"; validate_local_ray_container',
+                "bash",
+                str(ROOT / "scripts" / "connectx_env.sh"),
+            ],
+            env=dict(self.env, MOCK_CONTAINER_TOPOLOGY="e" * 64),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertNotEqual(stale_container.returncode, 0)
+        self.assertIn("TOPOLOGY_SHA256", stale_container.stderr)
 
     def test_invalid_scheduler_limit_fails_before_host_or_docker_operations(self):
         for value in ("0", "-1", "4.5", "abc"):
@@ -675,7 +840,13 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.assertEqual(tcp.returncode, 0, tcp.stderr)
         self.assertRegex(rdma.stdout.strip(), r"^[0-9a-f]{64}$")
         self.assertNotEqual(rdma.stdout, tcp.stdout)
-        self.assertFalse(self.calls.exists())
+        self.assertEqual(
+            self.calls.read_text().splitlines(),
+            [
+                "ping -I cx0 -W 2 -c 3 10.10.10.2",
+                "ping -I cx1 -W 2 -c 3 10.10.11.2",
+            ] * 2,
+        )
 
     def test_failed_microbench_keeps_diagnostics_without_publishing_csv(self):
         self.command("docker", '''case "$*" in

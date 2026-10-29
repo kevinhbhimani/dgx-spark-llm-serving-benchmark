@@ -4,7 +4,7 @@
 #
 # Why: each node mounts its own local HF cache into the container
 # (start_ray.sh); scripts/predownload.sh only acquires snapshots on the node
-# where it runs, and the worker (Hoedus) cannot download from huggingface.co.
+# where it runs, and the worker receives pinned snapshots over Ray.
 # With HF_HUB_OFFLINE=1 the head resolves the model to a local snapshot path
 # and ships the exact pinned snapshot to the remote Ray worker over Ray, so the
 # transfer does not depend on a separately configured SSH path.
@@ -27,6 +27,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+require_local_connectx_ip "$HEAD_IP" "worker cache mirror head role" || exit 1
 acquire_resource_lock || exit 1
 
 CONFIG="${1:-tp2}"
@@ -100,16 +101,19 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
+validate_local_topology_links || exit 1
+
 if ! docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
   echo "[mirror] ERROR: Ray cluster is not active in $VLLM_CONTAINER" >&2
-  echo "[mirror] Start Ray first: scripts/start_ray.sh head (Diya), worker (Hoedus)" >&2
+  echo "[mirror] Start Ray with CLUSTER_CONFIG on both configured nodes" >&2
   exit 1
 fi
+validate_cluster_runtime || exit 1
 
 wait_for_resources_idle required || exit 1
 
 docker cp "$HERE/mirror_worker_cache.py" "$VLLM_CONTAINER":/tmp/mirror_worker_cache.py
 docker exec -e MIRROR_MARGIN_GB="${MIRROR_MARGIN_GB:-10}" \
-  -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$HOEDUS_IP" \
+  -e EXPECTED_HEAD="$HEAD_IP" -e EXPECTED_WORKER="$WORKER_IP" \
   "$VLLM_CONTAINER" \
   python3 -u /tmp/mirror_worker_cache.py "${MIRROR_SPECS[@]}"
