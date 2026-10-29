@@ -143,9 +143,9 @@ class ConnectXPreflightTests(unittest.TestCase):
             else echo '1: cx0: <UP,LOWER_UP> state UP'; fi;;
           '-o link show dev cx1') echo '2: cx1: <UP,LOWER_UP> state UP';;
           '-4 route get 10.10.10.2 from 10.10.10.1')
-            echo "10.10.10.2 dev ${MOCK_ROUTE_IFACE_RAIL0:-cx0} src 10.10.10.1";;
+            echo "10.10.10.2 from 10.10.10.1 dev ${MOCK_ROUTE_IFACE_RAIL0:-cx0} uid 1001";;
           '-4 route get 10.10.11.2 from 10.10.11.1')
-            echo "10.10.11.2 dev ${MOCK_ROUTE_IFACE_RAIL1:-cx1} src 10.10.11.1";;
+            echo "10.10.11.2 from 10.10.11.1 dev ${MOCK_ROUTE_IFACE_RAIL1:-cx1} uid 1001";;
           '-s link show '*) echo counters;;
           *) exit 1;; esac''')
         self.command("ping", 'printf "ping %s\\n" "$*" >> "$CALL_LOG"; [[ "${MOCK_PING_FAIL:-0}" != 1 ]]')
@@ -333,7 +333,10 @@ class ConnectXPreflightTests(unittest.TestCase):
           exit $?
         fi
         exec /usr/bin/python3 "$@"''')
-        self.command("docker", '''script_input="$(cat)"
+        self.command("docker", '''script_input=""
+        if [[ ! -t 0 ]]; then
+          script_input="$(cat)"
+        fi
         if [[ "$script_input" == *"Emit canonical two-node runtime facts"* ]]; then
           echo '[]'
           exit 0

@@ -318,7 +318,15 @@ validate_local_topology_links() {
       return 1
     fi
     route_interface="$(awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}' <<<"$route")"
-    route_source="$(awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}' <<<"$route")"
+    route_source="$(awk '
+      {
+        for (field_index = 1; field_index < NF; field_index++) {
+          if ($field_index == "src") route_source = $(field_index + 1)
+          else if ($field_index == "from" && route_source == "") route_source = $(field_index + 1)
+        }
+      }
+      END {print route_source}
+    ' <<<"$route")"
     if [[ "$route_interface" != "${interfaces[$index]}" || "$route_source" != "$local_ip" ]]; then
       echo "[cluster] rail ${rails[$index]} route to peer ${peer_cidrs[$index]} expected dev ${interfaces[$index]} src $local_ip, observed dev ${route_interface:-unknown} src ${route_source:-unknown}" >&2
       return 1
