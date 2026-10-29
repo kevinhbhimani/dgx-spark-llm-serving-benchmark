@@ -375,11 +375,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "resolve":
+            default_name: str = args.default_name
+            campaign_name: str | None = os.environ.get("CAMPAIGN_NAME")
+            if (
+                not args.out_dir
+                and default_name == DEFAULT_CAMPAIGN_NAME
+                and campaign_name
+            ):
+                default_name = f"{campaign_name}-{default_name}"
             if args.next_available and not args.out_dir:
-                output_dir = next_available_campaign_dir(default_name=args.default_name)
+                output_dir = next_available_campaign_dir(default_name=default_name)
             else:
                 output_dir = resolve_campaign_dir(
-                    args.out_dir, default_name=args.default_name
+                    args.out_dir, default_name=default_name
                 )
             print(output_dir)
         elif args.command == "results-dir":

@@ -55,7 +55,8 @@
 #     (harness_source_sha256). The launch gate also requires these files to be
 #     committed, so every row names a recoverable Git revision.
 #
-# Knobs (env): OUT_DIR, GPU_UTIL (default 0.80, overrides the shared
+# Knobs (env): OUT_DIR, CAMPAIGN_NAME (prefix for an implicit benchmark path),
+#   GPU_UTIL (default 0.80, overrides the shared
 #   gpu_util_default for planning, validation, and serving), CONCURRENCIES,
 #   REPEATS (default 3), CANARY_FIRST
 #   (auto|0|1), STOP_AFTER_CANARY, ALLOW_CANARY_FAILURES, PURGE_WEIGHTS,
