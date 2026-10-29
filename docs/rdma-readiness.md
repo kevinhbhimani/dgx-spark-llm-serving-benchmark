@@ -8,21 +8,24 @@ channel evidence, and successful hardware measurements.
 
 | Task | Run command on | Nodes involved |
 | --- | --- | --- |
-| Software checks and `PLAN_ONLY=1` | Diya only | Local checkout and Python environment; no cluster work |
-| Firmware, Netplan, host entries, and local ConnectX checks | Both nodes | Each command checks the local node |
-| `scripts/verify_connectx.sh` | Diya only | Checks Diya's route and probes each Hoedus ConnectX peer |
-| `scripts/start_ray.sh head` / `worker` | Diya / Hoedus, respectively | Starts Ray on both nodes |
-| `ray status`, RDMA microbenchmarks, canary, and campaign | Diya only | Ray distributes the two-node work to Hoedus |
-| `scripts/hardware_smoke.sh` | Diya only | Single-node diagnostic using Diya's GPU |
+| Software checks and `PLAN_ONLY=1` | The selected head | Local checkout and Python environment; no cluster work |
+| Firmware, Netplan, hostnames, SSH, and local ConnectX checks | Both nodes | Each command checks the local node |
+| `scripts/verify_connectx.sh` | Both nodes | Checks local routes and probes each configured peer |
+| `scripts/start_ray.sh head` / `worker` | The selected head / worker | Starts Ray on both nodes |
+| `ray status`, RDMA microbenchmarks, canary, and campaign | The selected head | Ray uses the worker for distributed work |
+| `scripts/hardware_smoke.sh` | The selected head | Single-node diagnostic using the selected head's GPU |
 | `scripts/start_ray.sh stop` | Both nodes | Stops the local Ray container on each node |
 
 ## Software checks
 
-Run on Diya from the repository root with Python 3.12 or newer:
+Run on the selected head from the repository root with Python 3.12 or newer.
+Set `CLUSTER_CONFIG` in the shell on both systems. The paths may differ, and
+the canonical topology digests must match.
 
 ```bash
 source .venv/bin/activate
 export PYTHONNOUSERSITE=1
+export CLUSTER_CONFIG=/path/to/site/cluster.yaml
 python -m pip install -r requirements.lock
 python scripts/check_environment.py
 python -m unittest discover -s tests -v
@@ -40,8 +43,8 @@ total to about 279 hours (about 312 hours with pessimistic latencies).
 Use a fresh output directory after changing
 the experiment, dependencies, harness, material serving policy, or `GPU_UTIL`
 target. The campaign GPU-memory target defaults to `0.80`. Set `GPU_UTIL` on
-Diya to override it; planning, validation, memory preflight, and serving
-launches use the resolved value. Keep that value unchanged when resuming.
+the selected head to override it; planning, validation, memory preflight, and
+serving launches use the resolved value. Keep that value unchanged when resuming.
 
 Review and commit the source/configuration changes before hardware collection.
 The campaign's source gate rejects uncommitted benchmark changes so each row
@@ -61,24 +64,25 @@ nominal 128 GB node. vLLM applies the setting per instance. The campaign uses
 one serving instance per node at a time; unrelated concurrent processes are
 outside this limit. See the [vLLM CacheConfig reference](https://docs.vllm.ai/en/v0.29.0/api/vllm/config/cache/).
 
-Run the local checks and start the Ray head on Diya:
+Run the local fabric checks on both systems. Run the hardware smoke test and
+start the Ray head on the selected system:
 
 ```bash
 scripts/verify_connectx.sh
-scripts/hardware_smoke.sh                    # Diya-only diagnostic output
+scripts/hardware_smoke.sh                    # selected-head diagnostic output
 SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
   SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22 \
   scripts/hardware_smoke.sh                  # top load; see the 26.09 note below
 scripts/start_ray.sh head
 ```
 
-Start the Ray worker on Hoedus:
+Start the Ray worker on the other configured system:
 
 ```bash
 scripts/start_ray.sh worker
 ```
 
-Return to Diya for the cluster checks and campaign commands:
+Return to the selected head for the cluster checks and campaign commands:
 
 ```bash
 export OUT_DIR=results/rdma-v4-paper-2026-10-22
@@ -89,12 +93,12 @@ scripts/run_job.sh
 
 The canary command runs the campaign preflight and one launch for every
 model/configuration pair, then exits before measurements. The next command
-starts the campaign in the same output directory. The campaign runs on Diya
-and uses Ray on both nodes. The hardware smoke tests run only on Diya. Stop Ray
-by running `scripts/start_ray.sh stop` once on Diya and once on Hoedus after
-collection.
+starts the campaign in the same output directory. The campaign runs on the
+selected head and uses Ray on both nodes. The hardware smoke test runs only on
+the selected head. Stop Ray by running `scripts/start_ray.sh stop` once on
+each system after collection.
 
-`scripts/verify_connectx.sh` checks name resolution, routing, interface pings,
+`scripts/verify_connectx.sh` checks configured addresses, routing, interface pings,
 and active RDMA ports. It does not measure throughput. After Ray is active on
 both nodes and both GPUs are idle, `scripts/run_job.sh` runs a fresh all-reduce
 gate before the canary and measurement work on every invocation. The gate

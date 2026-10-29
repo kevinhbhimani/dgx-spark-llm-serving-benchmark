@@ -6,12 +6,11 @@
 #   (short windows, release gates on) -> resume status -> figures and
 #   replicate statistics -> purge
 #
-#   scripts/hardware_smoke.sh                 # on Diya, with or without Ray up
+#   scripts/hardware_smoke.sh                 # on the configured head, with or without Ray up
 #
 # It uses its own container name, port, and output directory, and the campaign's
-# GPU memory target. Nothing it writes is a paper result. On a machine without
-# the ConnectX addresses, point CX_IFACE/HEAD_IP at a local interface and its
-# address.
+# GPU memory target. Nothing it writes is a paper result. The host and
+# interface values in CLUSTER_CONFIG must match this system.
 #
 # Env: OUT_DIR (default results/smoke-<UTC-date>; a bare name prefixes this
 #      default), SMOKE_LABEL (default llama3.1-8b-nvfp4,
@@ -53,6 +52,8 @@ fi
 export PYTHON PYTHONNOUSERSITE=1
 
 source scripts/connectx_env.sh
+require_local_connectx_ip "$HEAD_IP" "hardware smoke head role" || exit 1
+validate_local_topology_links || exit 1
 CAMPAIGN_VLLM_CONTAINER="$VLLM_CONTAINER"
 SMOKE_VLLM_CONTAINER="${SMOKE_VLLM_CONTAINER:-vllm-spark-smoke}"
 if [[ "$SMOKE_VLLM_CONTAINER" == "$CAMPAIGN_VLLM_CONTAINER" ]]; then

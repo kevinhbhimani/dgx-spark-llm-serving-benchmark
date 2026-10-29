@@ -89,6 +89,9 @@ gated models and run `chmod 600 .env` after adding the token.
    Spark node, run this in one terminal:
 
 ```bash
+# Required on both Spark hosts. Use a site-specific file based on the schema
+# in configs/cluster.example.yaml; its addresses and hostnames are examples.
+export CLUSTER_CONFIG=/path/to/site/cluster.yaml
 export MODEL=Qwen/Qwen3-8B
 export REVISION=b968826d9c46dd6066d109eabc6255188de91218
 # export HF_TOKEN=...    # only needed for gated Hugging Face models
@@ -441,10 +444,9 @@ export HF_TOKEN=...
 # export CONTAINER_DNS=8.8.8.8
 # Optional download-only override; defaults to CONTAINER_DNS.
 # export DOWNLOAD_DNS=8.8.8.8
-# RDMA over all four dual-cable interfaces is the default. Override CX_IFACE
-# for a single cable.
-# export CX_IFACE=enp1s0f0np0
-# export NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
+# NCCL selects RDMA devices automatically when NCCL_IB_HCA is empty.
+# Set NCCL_IB_HCA separately on each host when device names differ.
+# export NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0"
 # export NCCL_IB_DISABLE=1   # TCP-socket fallback
 # Per-channel transport evidence in every dual-node server log (the
 # connectx_env.sh default; read by run_models.sh and audit_nccl_transport.py).
@@ -488,24 +490,15 @@ Do not put an arbitrary `SERVING_FINGERPRINT` in `.env` to satisfy the full
 config. It must be the SHA-256 hash of the server's actual launch policy;
 `run_models.sh` computes and forwards it together with the pinned revisions.
 
-Dual-node network defaults live in `scripts/connectx_env.sh`. Override them
-before running the scripts if your node names, IPs, or interface differ:
+Topology values come from `CLUSTER_CONFIG`. The loader identifies the local
+node by matching `hostname -s` to one YAML entry. It derives the head and worker
+addresses, local interface list, socket interface variables, and Ray port.
+`DIYA_*`, `HOEDUS_*`, and conflicting `CX_IFACE` or IP overrides fail with a
+migration message. The canonical topology digest must match on both systems.
+The local YAML paths may differ.
 
-```bash
-export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
-export DIYA_HOST=cisc-diya
-export HOEDUS_HOST=cisc-hoedus
-export DIYA_IP=10.10.10.1
-export HOEDUS_IP=10.10.10.2
-export HEAD_IP=$DIYA_IP
-export RAY_PORT=6379
-```
-
-`CX_IFACE` takes one interface for a single-cable setup or a comma-separated
-list for the dual-cable setup. NCCL RDMA device selection uses `NCCL_IB_HCA`
-and auto-discovery when that variable is empty. `CX_IFACE` also feeds the NCCL
-and Gloo socket interface lists and the serving fingerprint. The RDMA setup
-and verification sequence lives in
+`configs/cluster.example.yaml` contains documentation-only hostnames and
+reserved IPv4 ranges. The RDMA setup and verification sequence lives in
 [docs/cluster-setup.md](docs/cluster-setup.md). The per-device RDMA perftest
 matrix runs from the standalone `perftest-suite-dgx-spark-cluster` repository.
 
@@ -780,10 +773,10 @@ CONCURRENCIES="1 4 8 16 32 64" scripts/run_models.sh single
 
 # Dual-node models. Start Ray on both nodes first; run_models.sh then cycles
 # only the vLLM serve process between models and leaves the Ray cluster up.
-scripts/start_ray.sh head                      # on Diya
-scripts/start_ray.sh worker                    # on Hoedus
+CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh head
+CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh worker
 # Each node has its own HF cache, and the worker cannot reach huggingface.co.
-# run_models.sh acquires on Diya and mirrors to Hoedus automatically.
+# run_models.sh acquires on the selected head and mirrors to the worker.
 CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed launch
 CANARY_ONLY=1 scripts/run_models.sh pp2
 scripts/run_models.sh tp2
@@ -869,12 +862,13 @@ concurrencies) expect ~247 h of measurement, plus ~17 h of model launches,
 ~9 h for the canary pass, and ~3 h of downloads: ~279 h (about 11.6 days),
 or ~312 h (13 days) with pessimistic latencies. Of the 954 windows, 684 use
 two GB10s, so the campaign is at least ~341 GB10-hours of accelerator use;
-this is not "198 GPU-hours." Then start Ray on Diya and Hoedus and run this on
-Diya inside `tmux`, using the same `OUT_DIR`. `scripts/connectx_env.sh` already
-defaults to the dual-cable RDMA layout with NCCL transport logging:
+this is not "198 GPU-hours." Start Ray on the YAML-selected head and worker,
+then run this on the selected head inside `tmux`, using the same `OUT_DIR`.
+`scripts/connectx_env.sh` loads the topology and defaults to RDMA with NCCL
+transport logging:
 
 ```bash
-scripts/run_job.sh
+CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/run_job.sh
 ```
 
 The job revalidates the clean commit and locked Python environment, records
@@ -1110,12 +1104,14 @@ large share of their per-token time) and the overlap with the PMBS26 baseline:
 ```bash
 # On both nodes: restart Ray with the TCP fallback.
 scripts/start_ray.sh stop
-NCCL_IB_DISABLE=1 scripts/start_ray.sh head        # Hoedus: ... worker
-# On Diya: same harness, TCP all-reduce thresholds, subset of the matrix.
+NCCL_IB_DISABLE=1 CLUSTER_CONFIG=/path/to/site/cluster.yaml scripts/start_ray.sh head
+# Run the same worker command on the configured worker.
+# On the selected head: same harness, TCP all-reduce thresholds, subset matrix.
 NCCL_IB_DISABLE=1 ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8 ALLREDUCE_MAX_8B_LATENCY_S=0.005 \
   OUT_DIR=results/tcp-ablation-2026-10-22 \
   CAMPAIGN_LABELS="llama3.1-8b nemotron3-super-120b-a12b-nvfp4" \
-  CAMPAIGN_CONFIGS="tp2 pp2" scripts/run_job.sh
+  CAMPAIGN_CONFIGS="tp2 pp2" CLUSTER_CONFIG=/path/to/site/cluster.yaml \
+  scripts/run_job.sh
 ```
 
 That subset is 12 launches and 72 windows (about 1 day). Finalization runs with
@@ -1635,9 +1631,9 @@ using temperature to interpret a hardware failure.
   startup: the model exceeds available unified memory. The campaign defaults to
   `0.80`; set a lower `GPU_UTIL` for the campaign or lower `gpu_util_default`
   in `configs/models.yaml` for a persistent change.
-- Dual-node performance looks like Wi-Fi or management-network traffic: rerun
-  `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
-  counters during a `tp2` run.
+- Dual-node performance looks like management-network traffic: run
+  `scripts/verify_connectx.sh` on each host, check the declared rail routes in
+  `CLUSTER_CONFIG`, and watch interface byte counters during a `tp2` run.
 - No energy figure is generated: rerun with a non-`none` power backend. The
   plotting script skips energy when the index has no power columns.
 - `plot_results.py` reports `Expected N fields` (and the schema versions match):

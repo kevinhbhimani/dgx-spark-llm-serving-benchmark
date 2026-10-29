@@ -10,6 +10,10 @@ from unittest import mock
 
 from bench.config import ExperimentConfig, WorkloadBucket
 from bench.monitors import VLLMMetricsScraper
+from bench.release_contracts import (
+    SERVING_V2_FINGERPRINT_FIELDS,
+    serving_policy_fingerprint,
+)
 from bench.client import (_extract_finish_reason, _extract_token_ids,
                           _extract_usage_output_tokens, RequestRecord,
                           send_request)
@@ -19,6 +23,33 @@ from bench.workload import Workload
 # plot_results.py lives in plotting/; put it on the path for direct import.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plotting"))
 import plot_results  # noqa: E402
+
+
+class ServingPolicyFingerprintTests(unittest.TestCase):
+    def test_topology_fields_change_the_fingerprint(self) -> None:
+        policy: dict[str, object] = {
+            field: f"value-{field}" for field in SERVING_V2_FINGERPRINT_FIELDS
+        }
+        original_fingerprint = serving_policy_fingerprint(policy)
+        reordered_policy = dict(reversed(list(policy.items())))
+        self.assertEqual(
+            original_fingerprint, serving_policy_fingerprint(reordered_policy)
+        )
+
+        changed_topology = dict(policy)
+        changed_topology["topology_sha256"] = "a" * 64
+        self.assertNotEqual(
+            original_fingerprint, serving_policy_fingerprint(changed_topology)
+        )
+        changed_interfaces = dict(policy)
+        changed_interfaces["worker_cx_iface"] = "different-worker-interface"
+        self.assertNotEqual(
+            original_fingerprint, serving_policy_fingerprint(changed_interfaces)
+        )
+
+    def test_missing_fingerprint_field_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "topology_sha256"):
+            serving_policy_fingerprint({})
 
 
 class WorkloadValidationTests(unittest.TestCase):

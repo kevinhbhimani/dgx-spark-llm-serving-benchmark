@@ -44,6 +44,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_IMAGE, HF_CACHE, HF_TOKEN, and .env
+require_local_connectx_ip "$HEAD_IP" "model acquisition head role" || exit 1
 acquire_resource_lock || exit 1
 wait_for_resources_idle auto || exit 1
 
@@ -124,6 +125,8 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   echo "[predownload] DRY_RUN=1, nothing downloaded"
   exit 0
 fi
+
+validate_local_topology_links || exit 1
 
 if [[ -z "${HF_TOKEN:-}" ]]; then
   echo "[predownload] note: HF_TOKEN is unset; gated repos (e.g. meta-llama) will fail." >&2

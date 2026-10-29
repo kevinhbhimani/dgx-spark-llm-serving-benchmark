@@ -1,4 +1,5 @@
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -11,18 +12,47 @@ from utils.campaign_output import fingerprint_identity, prepare_campaign
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def write_test_topology(directory: Path) -> Path:
+    hostname = socket.gethostname().split(".", maxsplit=1)[0]
+    topology = directory / "cluster.yaml"
+    topology.write_text(f"""schema_version: 1
+head_node: spark_a
+rendezvous_rail: rail_0
+ray_port: 6379
+nodes:
+  - id: spark_a
+    hostname: {hostname}
+    ssh_target: {hostname}
+    interfaces:
+      - rail: rail_0
+        name: cx0
+        ipv4: 192.0.2.10/24
+  - id: spark_b
+    hostname: spark-b
+    ssh_target: spark-b
+    interfaces:
+      - rail: rail_0
+        name: cx0
+        ipv4: 192.0.2.11/24
+""")
+    return topology
+
+
 class RunJobContractTests(unittest.TestCase):
     def test_explicit_out_dir_rejects_incompatible_campaign_in_plan_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "campaign"
+            directory = Path(temporary)
+            output = directory / "campaign"
             prepare_campaign(output, fingerprint_identity([], ["run=previous"]))
             marker = output / "results" / "campaign_run.json"
             marker_before = marker.read_bytes()
             environment = os.environ.copy()
             environment.update({
                 "PYTHON": sys.executable,
+                "TOPOLOGY_PYTHON": sys.executable,
                 "PLAN_ONLY": "1",
                 "OUT_DIR": str(output),
+                "CLUSTER_CONFIG": str(write_test_topology(directory)),
             })
             result = subprocess.run(
                 ["bash", "scripts/run_job.sh"],
@@ -41,11 +71,14 @@ class RunJobContractTests(unittest.TestCase):
 
     def test_plan_clears_inherited_campaign_overrides(self):
         with tempfile.TemporaryDirectory() as temporary:
+            topology = write_test_topology(Path(temporary))
             environment = os.environ.copy()
             environment.update({
                 "PYTHON": "/bin/true",
+                "TOPOLOGY_PYTHON": sys.executable,
                 "PLAN_ONLY": "1",
                 "OUT_DIR": temporary,
+                "CLUSTER_CONFIG": str(topology),
                 "CONCURRENCIES": "1 2",
                 "EXPECTED_CONCURRENCIES": "2 1",
                 "MODELS_YAML": "/poison/models.yaml",
@@ -77,12 +110,16 @@ class RunJobContractTests(unittest.TestCase):
 
     def _plan(self, **overrides):
         with tempfile.TemporaryDirectory() as temporary:
+            topology = write_test_topology(Path(temporary))
             environment = os.environ.copy()
             for name in ("FULL_REPEATS", "REPEAT_CONCS", "REPEAT_TOTAL",
                          "CAMPAIGN_CONFIGS", "CAMPAIGN_LABELS", "REPEATS"):
                 environment.pop(name, None)
-            environment.update({"PYTHON": "/bin/true", "PLAN_ONLY": "1",
-                                "OUT_DIR": temporary, **overrides})
+            environment.update({"PYTHON": "/bin/true",
+                                "TOPOLOGY_PYTHON": sys.executable,
+                                "PLAN_ONLY": "1",
+                                "OUT_DIR": temporary,
+                                "CLUSTER_CONFIG": str(topology), **overrides})
             return subprocess.run(
                 ["bash", "scripts/run_job.sh"], cwd=ROOT, env=environment,
                 text=True, capture_output=True, timeout=15, check=False,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Start Ray inside the vLLM container, pinned to ConnectX, for dual node serving.
-#   On Diya:   scripts/start_ray.sh head
-#   On Hoedus: scripts/start_ray.sh worker
+# Start Ray inside the vLLM container using the selected topology node.
+#   CLUSTER_CONFIG=/path/cluster.yaml scripts/start_ray.sh head
+#   CLUSTER_CONFIG=/path/cluster.yaml scripts/start_ray.sh worker
 #   Either:    scripts/start_ray.sh stop
 # Ray runs inside the vLLM container at the version pinned by RAY_VERSION and
 # scripts/ray-runtime-constraints.txt. The constraints file pins its dependencies
@@ -19,6 +19,22 @@ source "$HERE/connectx_env.sh"
 
 ROLE="${1:-head}"
 TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+case "$ROLE" in
+  head)
+    if [[ "$LOCAL_NODE_ID" != "$HEAD_NODE_ID" ]]; then
+      echo "[ray] local node $LOCAL_NODE_ID is the configured worker, not the head" >&2
+      exit 2
+    fi
+    ;;
+  worker)
+    if [[ "$LOCAL_NODE_ID" != "$WORKER_NODE_ID" ]]; then
+      echo "[ray] local node $LOCAL_NODE_ID is the configured head, not the worker" >&2
+      exit 2
+    fi
+    ;;
+  stop) ;;
+  *) echo "usage: start_ray.sh [head|worker|stop]"; exit 1 ;;
+esac
 acquire_resource_lock || exit 1
 if [[ "$ROLE" == "stop" ]]; then
   wait_for_resources_idle auto serving || exit 1
@@ -50,6 +66,7 @@ RAY_SETUP="pip install -q --constraint /tmp/ray-runtime-constraints.txt 'ray[def
 docker_common=( --name "$VLLM_CONTAINER" --gpus all --network host --ipc=host --cap-add=IPC_LOCK --ulimit memlock=-1:-1
   -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
+  -e TOPOLOGY_SHA256="$TOPOLOGY_SHA256" -e LOCAL_NODE_ID="$LOCAL_NODE_ID"
   -e NCCL_DEBUG_SUBSYS="$NCCL_DEBUG_SUBSYS"
   -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
   -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
@@ -107,42 +124,38 @@ require_running() {
 
 case "$ROLE" in
   head)
-    require_local_connectx_ip "$HEAD_IP" "Ray head role" || exit 1
-    require_connectx_rdma || exit 1
+    validate_local_topology_links || exit 1
     if [[ "$NCCL_IB_DISABLE" == "0" && ! -d /dev/infiniband ]]; then
       echo "[ray] RDMA requires the host /dev/infiniband device directory" >&2
       exit 1
     fi
     check_hf_cache_access
     check_hf_cache_access_in_image
-    echo "[ray] head on $HEAD_IP:$RAY_PORT over $CX_IFACE"
+    echo "[ray] head node $LOCAL_NODE_ID on $LOCAL_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
-    docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$HEAD_IP" "$VLLM_IMAGE" \
-      -lc "$RAY_SETUP && umask 0002 && ray start --head --node-ip-address=$HEAD_IP --port=$RAY_PORT --block"
+    docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$LOCAL_IP" "$VLLM_IMAGE" \
+      -lc "$RAY_SETUP && umask 0002 && ray start --head --node-ip-address=$LOCAL_IP --port=$RAY_PORT --block"
     ;;
   worker)
-    require_local_connectx_ip "$HOEDUS_IP" "Ray worker role" || exit 1
-    require_connectx_rdma || exit 1
+    validate_local_topology_links || exit 1
     if [[ "$NCCL_IB_DISABLE" == "0" && ! -d /dev/infiniband ]]; then
       echo "[ray] RDMA requires the host /dev/infiniband device directory" >&2
       exit 1
     fi
     check_hf_cache_access
     check_hf_cache_access_in_image
-    echo "[ray] worker $HOEDUS_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
+    echo "[ray] worker node $LOCAL_NODE_ID on $LOCAL_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
     maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
-    docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$HOEDUS_IP" "$VLLM_IMAGE" \
-      -lc "$RAY_SETUP && umask 0002 && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$HOEDUS_IP --block"
+    docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$LOCAL_IP" "$VLLM_IMAGE" \
+      -lc "$RAY_SETUP && umask 0002 && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$LOCAL_IP --block"
     ;;
   stop)
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     echo "[ray] container removed"
     exit 0
     ;;
-  *)
-    echo "usage: start_ray.sh [head|worker|stop]"; exit 1 ;;
 esac
 
 require_running

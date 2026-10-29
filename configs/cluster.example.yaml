@@ -1,0 +1,26 @@
+# Reserved documentation addresses. Replace these values with host configuration.
+schema_version: 1
+head_node: spark_a
+rendezvous_rail: rail_0
+ray_port: 6379
+nodes:
+  - id: spark_a
+    hostname: lab-alpha
+    ssh_target: lab-alpha
+    interfaces:
+      - rail: rail_0
+        name: enp1s0f0np0
+        ipv4: 192.0.2.1/30
+      - rail: rail_1
+        name: enp1s0f1np1
+        ipv4: 198.51.100.1/30
+  - id: spark_b
+    hostname: lab-beta
+    ssh_target: lab-beta
+    interfaces:
+      - rail: rail_0
+        name: cx_primary
+        ipv4: 192.0.2.2/30
+      - rail: rail_1
+        name: cx_secondary
+        ipv4: 198.51.100.2/30

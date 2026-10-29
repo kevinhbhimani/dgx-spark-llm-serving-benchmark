@@ -10,6 +10,7 @@ from unittest import mock
 from bench import provenance
 from bench.config import ExperimentConfig
 from bench.monitors import VLLMMetricsScraper, WorkerPowerSampler
+from bench.release_contracts import serving_policy_fingerprint
 from bench.run_benchmark import (
     _atomic_write,
     _capture_client_environment,
@@ -374,6 +375,170 @@ class ServingPolicyTests(unittest.TestCase):
             path.write_text(json.dumps(policy))
             with self.assertRaisesRegex(RuntimeError, "reproduce"):
                 _load_serving_policy(str(path), cfg)
+
+    def test_topology_aware_policy_checks_per_node_runtime_interfaces(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = self.make_policy()
+            policy.update(
+                {
+                    "schema": "serving-v2",
+                    "config": "tp2",
+                    "topology_sha256": "c" * 64,
+                    "head_node_id": "spark_a",
+                    "worker_node_id": "spark_b",
+                    "connectx_iface": "cx0,cx1",
+                    "head_cx_iface": "cx0,cx1",
+                    "worker_cx_iface": "mlx0,mlx1",
+                    "nccl_ib_hca": "roce0:1,roce1:1",
+                    "nccl_ib_gid_index": "3",
+                    "nccl_net_plugin": "",
+                    "max_num_seqs": "",
+                    "flashinfer_autotune": "0",
+                    "runtime_scope": "dual-cluster",
+                    "runtime_facts": [
+                        {
+                            "node_id": "spark_a",
+                            "node_ip": policy["head_ip"],
+                            "topology_sha256": "c" * 64,
+                            "expected_interfaces": "cx0,cx1",
+                            "runtime_env": {
+                                "NCCL_SOCKET_IFNAME": "cx0,cx1",
+                                "GLOO_SOCKET_IFNAME": "cx0,cx1",
+                                "NCCL_IB_DISABLE": "0",
+                                "NCCL_IB_HCA": "roce0:1,roce1:1",
+                                "NCCL_IB_GID_INDEX": "3",
+                                "NCCL_NET_PLUGIN": "",
+                            },
+                        },
+                        {
+                            "node_id": "spark_b",
+                            "node_ip": policy["worker_ip"],
+                            "topology_sha256": "c" * 64,
+                            "expected_interfaces": "mlx0,mlx1",
+                            "runtime_env": {
+                                "NCCL_SOCKET_IFNAME": "mlx0,mlx1",
+                                "GLOO_SOCKET_IFNAME": "mlx0,mlx1",
+                                "NCCL_IB_DISABLE": "0",
+                                "NCCL_IB_HCA": "mlx5_0:1,mlx5_1:1",
+                                "NCCL_IB_GID_INDEX": "5",
+                                "NCCL_NET_PLUGIN": "",
+                            },
+                        },
+                    ],
+                }
+            )
+            runtime_hash = hashlib.sha256(
+                json.dumps(
+                    policy["runtime_facts"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            policy["cluster_runtime"] = runtime_hash
+            policy["runtime_facts_sha256"] = runtime_hash
+            policy["serving_fingerprint"] = serving_policy_fingerprint(policy)
+            path = Path(tmp) / "serving_policy.json"
+            path.write_text(json.dumps(policy))
+            config = ExperimentConfig(
+                require_provenance=True,
+                out_dir=tmp,
+                config_label="tp2",
+                model=policy["model"],
+                model_revision=policy["revision"],
+                tokenizer=policy["tokenizer"],
+                tokenizer_revision=policy["tokenizer_revision"],
+                serving_fingerprint=policy["serving_fingerprint"],
+            )
+
+            loaded_policy, _ = _load_serving_policy(str(path), config)
+            self.assertEqual(loaded_policy, policy)
+
+            def update_policy_hashes() -> None:
+                runtime_hash = hashlib.sha256(
+                    json.dumps(
+                        policy["runtime_facts"],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                policy["cluster_runtime"] = runtime_hash
+                policy["runtime_facts_sha256"] = runtime_hash
+                policy["serving_fingerprint"] = serving_policy_fingerprint(policy)
+                path.write_text(json.dumps(policy))
+                config.serving_fingerprint = policy["serving_fingerprint"]
+
+            policy["runtime_facts"][1]["runtime_env"]["NCCL_IB_DISABLE"] = "1"
+            update_policy_hashes()
+            with self.assertRaisesRegex(RuntimeError, "shared policy"):
+                _load_serving_policy(str(path), config)
+
+            policy["runtime_facts"][1]["runtime_env"]["NCCL_IB_DISABLE"] = "0"
+            policy["runtime_facts"][1]["expected_interfaces"] = "cx0,cx1"
+            policy["runtime_facts"][1]["runtime_env"]["NCCL_SOCKET_IFNAME"] = "cx0,cx1"
+            policy["runtime_facts"][1]["runtime_env"]["GLOO_SOCKET_IFNAME"] = "cx0,cx1"
+            update_policy_hashes()
+            with self.assertRaisesRegex(RuntimeError, "interfaces do not match"):
+                _load_serving_policy(str(path), config)
+
+    def test_single_topology_policy_binds_runtime_to_selected_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = self.make_policy()
+            policy.update(
+                {
+                    "schema": "serving-v2",
+                    "topology_sha256": "d" * 64,
+                    "head_node_id": "spark_a",
+                    "worker_node_id": "spark_b",
+                    "connectx_iface": "cx0,cx1",
+                    "head_cx_iface": "cx0,cx1",
+                    "worker_cx_iface": "mlx0,mlx1",
+                    "nccl_ib_hca": "roce0:1,roce1:1",
+                    "nccl_ib_gid_index": "3",
+                    "nccl_net_plugin": "",
+                    "max_num_seqs": "",
+                    "flashinfer_autotune": "0",
+                    "runtime_facts": {
+                        **policy["runtime_facts"],
+                        "node_id": "spark_a",
+                        "node_ip": policy["head_ip"],
+                        "topology_sha256": "d" * 64,
+                        "expected_interfaces": "cx0,cx1",
+                        "runtime_env": {
+                            "NCCL_SOCKET_IFNAME": "cx0,cx1",
+                            "GLOO_SOCKET_IFNAME": "cx0,cx1",
+                            "NCCL_IB_DISABLE": "0",
+                            "NCCL_IB_HCA": "roce0:1,roce1:1",
+                            "NCCL_IB_GID_INDEX": "3",
+                            "NCCL_NET_PLUGIN": "",
+                        },
+                    },
+                }
+            )
+            runtime_hash = hashlib.sha256(
+                json.dumps(
+                    policy["runtime_facts"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            policy["cluster_runtime"] = runtime_hash
+            policy["runtime_facts_sha256"] = runtime_hash
+            policy["serving_fingerprint"] = serving_policy_fingerprint(policy)
+            path = Path(tmp) / "serving_policy.json"
+            path.write_text(json.dumps(policy))
+            config = ExperimentConfig(
+                require_provenance=True,
+                out_dir=tmp,
+                config_label="single",
+                model=policy["model"],
+                model_revision=policy["revision"],
+                tokenizer=policy["tokenizer"],
+                tokenizer_revision=policy["tokenizer_revision"],
+                serving_fingerprint=policy["serving_fingerprint"],
+            )
+
+            loaded_policy, _ = _load_serving_policy(str(path), config)
+            self.assertEqual(loaded_policy, policy)
 
     def test_release_policy_file_is_mandatory(self):
         cfg = SimpleNamespace(require_provenance=True)

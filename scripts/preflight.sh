@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Run the full readiness sequence on Diya and remove campaign model snapshots
+# Run the full readiness sequence on the configured head and remove model snapshots
 # from both HF caches when the sequence finishes.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 REQUESTED_OUT_DIR="${OUT_DIR:-}"
 source "$HERE/scripts/connectx_env.sh" || exit 1
+require_local_connectx_ip "$HEAD_IP" "preflight head role" || exit 1
+validate_local_topology_links || exit 1
 acquire_resource_lock || exit 1
 
 if [[ -z "${PYTHON:-}" ]]; then
@@ -105,9 +107,7 @@ capture_preflight_system_snapshot() {
   echo "[preflight] === Capture read-only system snapshot ==="
   if "$PYTHON" "$HERE/scripts/system_snapshot.py" \
       --output "$snapshot_path" --container "$VLLM_CONTAINER" \
-      --image "$VLLM_IMAGE" --head-host "$HEAD_HOST" \
-      --worker-host "$HOEDUS_HOST" --head-ip "$HEAD_IP" \
-      --worker-ip "$HOEDUS_IP" 2>&1 \
+      --image "$VLLM_IMAGE" --cluster-config "$CLUSTER_CONFIG" 2>&1 \
       | tee "$PREFLIGHT_LOG_DIR/system-snapshot.log"; then
     echo "[preflight] system snapshot collection completed"
   else
@@ -156,14 +156,14 @@ purge_all_campaign_models() {
     both_nodes_status=$?
   fi
 
-  echo "[preflight] both-node purge failed (exit $both_nodes_status); retrying Diya's cache"
+  echo "[preflight] two-node purge failed (exit $both_nodes_status); retrying the head cache"
   if MODEL_LABELS="$ALL_CONFIGURED_MODEL_LABELS" PURGE_WORKER=0 \
       PURGE_CACHE_GARBAGE=1 scripts/purge_model_cache.sh; then
-    echo "[preflight] Diya's configured model snapshots were purged"
+    echo "[preflight] configured head snapshots were purged"
   else
-    echo "[preflight] Diya's cache purge also failed" >&2
+    echo "[preflight] head cache purge also failed" >&2
   fi
-  echo "[preflight] Hoedus cache cleanup could not be confirmed" >&2
+  echo "[preflight] worker cache cleanup could not be confirmed" >&2
   return 1
 }
 
@@ -171,7 +171,7 @@ finish_preflight() {
   local original_status="$?"
   trap - EXIT INT TERM
 
-  run_step "Purge all configured model snapshots on Diya and Hoedus" \
+  run_step "Purge all configured model snapshots on head and worker" \
     "purge-models" purge_all_campaign_models
   if (( LAST_STEP_STATUS != 0 )); then
     PREFLIGHT_FAILED=1

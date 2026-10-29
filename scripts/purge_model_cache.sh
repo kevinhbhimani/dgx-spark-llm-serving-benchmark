@@ -26,6 +26,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+require_local_connectx_ip "$HEAD_IP" "model cache cleanup head role" || exit 1
 acquire_resource_lock || exit 1
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
@@ -93,7 +94,7 @@ if [[ "$PURGE_WORKER" == "1" ]]; then
     echo "[purge] PURGE_WORKER=1 needs the Ray cluster; start it or set PURGE_WORKER=0" >&2
     exit 1
   fi
-  args+=(--worker "$HOEDUS_IP")
+  args+=(--worker "$WORKER_IP")
 fi
 
 if [[ "$PURGE_WORKER" == "1" ]]; then
@@ -103,8 +104,12 @@ else
 fi
 
 echo "[purge] ${#REPOS[@]} repo(s) for '${MODEL_LABELS:-none}'" \
-     "(worker: $([[ "$PURGE_WORKER" == "1" ]] && echo "$HOEDUS_IP" || echo no))"
+     "(worker: $([[ "$PURGE_WORKER" == "1" ]] && echo "$WORKER_IP" || echo no))"
 if [[ "$ray_up" == "1" ]]; then
+  validate_local_topology_links || exit 1
+  if [[ "$PURGE_WORKER" == "1" ]]; then
+    validate_cluster_runtime || exit 1
+  fi
   docker cp "$HERE/purge_model_cache_container.py" \
     "$VLLM_CONTAINER":/tmp/purge_model_cache_container.py
   docker exec -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
@@ -113,6 +118,7 @@ if [[ "$ray_up" == "1" ]]; then
     "$VLLM_CONTAINER" \
     python3 -u /tmp/purge_model_cache_container.py "${args[@]}" "${REPOS[@]}"
 else
+  validate_local_topology_links || exit 1
   docker run --rm -i -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
     -e HF_MODULES_CACHE=/hf-cache/modules \
     -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \

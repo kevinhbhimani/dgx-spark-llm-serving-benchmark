@@ -1,37 +1,215 @@
 #!/usr/bin/env bash
-# Shared ConnectX and container settings for the two node DGX Spark benchmark.
+# Shared topology and container settings for the two node DGX Spark benchmark.
 # Source from other scripts: source scripts/connectx_env.sh
-# cisc-diya = 10.10.10.1, cisc-hoedus = 10.10.10.2. These rendezvous names
-# resolve to the primary ConnectX addresses on both nodes via /etc/hosts.
-#
-# Defaults describe the campaign cluster: two QSFP cables, four ConnectX-7
-# interfaces per node (one subnet each, see docs/cluster-setup.md), RDMA (RoCEv2)
-# for every NCCL collective and point-to-point transfer, and NCCL logging of
-# the transport each channel actually used. NCCL_SOCKET_IFNAME and
-# GLOO_SOCKET_IFNAME inherit the full CX_IFACE list; DIYA_IP / HOEDUS_IP /
-# HEAD_IP stay on the first subnet for the Ray rendezvous. Override CX_IFACE
-# for a single cable and NCCL_IB_DISABLE=1 for the TCP-socket ablation.
 
 CONNECTX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONNECTX_REPO_ROOT="$(cd "$CONNECTX_SCRIPT_DIR/.." && pwd)"
 source "$CONNECTX_SCRIPT_DIR/load_env.sh"
 
-export CX_IFACE="${CX_IFACE:-enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1}"
+if ! declare -p CLUSTER_CONFIG >/dev/null 2>&1 || [[ -z "$CLUSTER_CONFIG" ]]; then
+  echo "[topology] set CLUSTER_CONFIG to the shared two-node YAML file" >&2
+  return 2 2>/dev/null || exit 2
+fi
+if [[ "$CLUSTER_CONFIG" != /* ]]; then
+  CLUSTER_CONFIG="$CONNECTX_REPO_ROOT/$CLUSTER_CONFIG"
+fi
+export CLUSTER_CONFIG
 
-export DIYA_HOST="${DIYA_HOST:-cisc-diya}"
-export HOEDUS_HOST="${HOEDUS_HOST:-cisc-hoedus}"
-export DIYA_IP="${DIYA_IP:-10.10.10.1}"
-export HOEDUS_IP="${HOEDUS_IP:-10.10.10.2}"
+connectx_topology_values_signature() {
+  printf '%s\0' \
+    "${SCHEMA_VERSION-}" "${TOPOLOGY_SHA256-}" \
+    "${HEAD_NODE_ID-}" "${WORKER_NODE_ID-}" "${LOCAL_NODE_ID-}" \
+    "${HEAD_HOST-}" "${WORKER_HOST-}" "${HEAD_IP-}" \
+    "${WORKER_IP-}" "${LOCAL_IP-}" "${RAY_PORT-}" \
+    "${CX_IFACE-}" "${VLLM_HOST_IP-}" \
+    "${NCCL_SOCKET_IFNAME-}" "${GLOO_SOCKET_IFNAME-}" \
+    "${HEAD_CX_IFACE-}" "${WORKER_CX_IFACE-}" \
+    | sha256sum | awk '{print $1}'
+}
 
-# head node for Ray and the torch rendezvous, Diya by default
-export HEAD_HOST="${HEAD_HOST:-$DIYA_HOST}"
-export HEAD_IP="${HEAD_IP:-$DIYA_IP}"
-export RAY_PORT="${RAY_PORT:-6379}"
+_previous_derived_config="${CONNECTX_DERIVED_CONFIG-}"
+_previous_derived_signature="${CONNECTX_DERIVED_VALUES_SHA256-}"
+_current_derived_signature="$(connectx_topology_values_signature)"
+_ignore_previous_derived_values=0
+if [[ -n "$_previous_derived_config" \
+      && "$_previous_derived_config" != "$CLUSTER_CONFIG" \
+      && "$_previous_derived_signature" =~ ^[0-9a-f]{64}$ \
+      && "$_current_derived_signature" == "$_previous_derived_signature" ]]; then
+  _ignore_previous_derived_values=1
+fi
 
-# Force every collective and control channel onto ConnectX, never the campus
-# wireless path that measured 64 to 132 ms against about 1 ms here.
+_provided_schema_version="${SCHEMA_VERSION-}"
+_provided_topology_sha256="${TOPOLOGY_SHA256-}"
+_provided_head_node_id="${HEAD_NODE_ID-}"
+_provided_worker_node_id="${WORKER_NODE_ID-}"
+_provided_local_node_id="${LOCAL_NODE_ID-}"
+_provided_head_host="${HEAD_HOST-}"
+_provided_worker_host="${WORKER_HOST-}"
+_provided_head_ip="${HEAD_IP-}"
+_provided_worker_ip="${WORKER_IP-}"
+_provided_local_ip="${LOCAL_IP-}"
+_provided_ray_port="${RAY_PORT-}"
+_provided_cx_iface="${CX_IFACE-}"
+_provided_vllm_host_ip="${VLLM_HOST_IP-}"
+_provided_nccl_socket_ifname="${NCCL_SOCKET_IFNAME-}"
+_provided_gloo_socket_ifname="${GLOO_SOCKET_IFNAME-}"
+_provided_head_cx_iface="${HEAD_CX_IFACE-}"
+_provided_worker_cx_iface="${WORKER_CX_IFACE-}"
+if (( _ignore_previous_derived_values )); then
+  for _provided_name in \
+      _provided_schema_version _provided_topology_sha256 \
+      _provided_head_node_id _provided_worker_node_id \
+      _provided_local_node_id _provided_head_host _provided_worker_host \
+      _provided_head_ip _provided_worker_ip _provided_local_ip \
+      _provided_ray_port _provided_cx_iface _provided_vllm_host_ip \
+      _provided_nccl_socket_ifname _provided_gloo_socket_ifname \
+      _provided_head_cx_iface _provided_worker_cx_iface; do
+    printf -v "$_provided_name" '%s' ""
+  done
+fi
+_topology_python="${TOPOLOGY_PYTHON:-${PYTHON:-}}"
+if [[ -z "$_topology_python" ]]; then
+  if [[ -x "$CONNECTX_REPO_ROOT/.venv/bin/python" ]]; then
+    _topology_python="$CONNECTX_REPO_ROOT/.venv/bin/python"
+  else
+    _topology_python=python3
+  fi
+fi
+_topology_record="$(mktemp "${TMPDIR:-/tmp}/cluster-topology.XXXXXX")" || {
+  echo "[topology] cannot create a temporary topology transfer file" >&2
+  return 1 2>/dev/null || exit 1
+}
+if ! "$_topology_python" "$CONNECTX_SCRIPT_DIR/cluster_topology.py" shell "$CLUSTER_CONFIG" >"$_topology_record"; then
+  rm -f "$_topology_record"
+  echo "[topology] validation failed with interpreter $_topology_python" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+_topology_field_index=0
+_topology_rail_index=0
+_topology_rail_count=""
+_topology_interface=""
+_topology_cidr=""
+_topology_peer_interface=""
+_topology_peer_cidr=""
+TOPOLOGY_RAILS=""
+TOPOLOGY_LOCAL_INTERFACES=""
+TOPOLOGY_LOCAL_CIDRS=""
+TOPOLOGY_PEER_INTERFACES=""
+TOPOLOGY_PEER_CIDRS=""
+while IFS= read -r -d '' _topology_field; do
+  case "$_topology_field_index" in
+    0) SCHEMA_VERSION="$_topology_field" ;;
+    1) TOPOLOGY_SHA256="$_topology_field" ;;
+    2) TOPOLOGY_RAW_SHA256="$_topology_field" ;;
+    3) HEAD_NODE_ID="$_topology_field" ;;
+    4) WORKER_NODE_ID="$_topology_field" ;;
+    5) LOCAL_NODE_ID="$_topology_field" ;;
+    6) HEAD_HOST="$_topology_field" ;;
+    7) WORKER_HOST="$_topology_field" ;;
+    8) HEAD_IP="$_topology_field" ;;
+    9) WORKER_IP="$_topology_field" ;;
+    10) LOCAL_IP="$_topology_field" ;;
+    11) RAY_PORT="$_topology_field" ;;
+    12) LOCAL_SSH_TARGET="$_topology_field" ;;
+    13) WORKER_SSH_TARGET="$_topology_field" ;;
+    14) _topology_rail_count="$_topology_field" ;;
+    *)
+      if (( _topology_field_index >= 15 + 5 * _topology_rail_count )); then
+        case $((_topology_field_index - 15 - 5 * _topology_rail_count)) in
+          0) HEAD_CX_IFACE="$_topology_field" ;;
+          1) WORKER_CX_IFACE="$_topology_field" ;;
+        esac
+      else
+        case $(((_topology_field_index - 15) % 5)) in
+          0) _topology_rail="$_topology_field" ;;
+          1) _topology_interface="$_topology_field" ;;
+          2) _topology_cidr="$_topology_field" ;;
+          3) _topology_peer_interface="$_topology_field" ;;
+          4)
+            _topology_peer_cidr="$_topology_field"
+            if [[ -n "$TOPOLOGY_RAILS" ]]; then
+              TOPOLOGY_RAILS+=","
+              TOPOLOGY_LOCAL_INTERFACES+=","
+              TOPOLOGY_LOCAL_CIDRS+=","
+              TOPOLOGY_PEER_INTERFACES+=","
+              TOPOLOGY_PEER_CIDRS+=","
+            fi
+            TOPOLOGY_RAILS+="$_topology_rail"
+            TOPOLOGY_LOCAL_INTERFACES+="$_topology_interface"
+            TOPOLOGY_LOCAL_CIDRS+="$_topology_cidr"
+            TOPOLOGY_PEER_INTERFACES+="$_topology_peer_interface"
+            TOPOLOGY_PEER_CIDRS+="$_topology_peer_cidr"
+            _topology_rail_index=$((_topology_rail_index + 1))
+            ;;
+        esac
+      fi
+      ;;
+  esac
+  _topology_field_index=$((_topology_field_index + 1))
+done <"$_topology_record"
+rm -f "$_topology_record"
+if [[ ! "$_topology_rail_count" =~ ^[1-9][0-9]*$ ]] || (( _topology_rail_index != _topology_rail_count )) || (( _topology_field_index != 17 + 5 * _topology_rail_count )) || [[ -z "$HEAD_CX_IFACE" || -z "$WORKER_CX_IFACE" ]]; then
+  echo "[topology] loader returned an invalid field record" >&2
+  return 1 2>/dev/null || exit 1
+fi
+TOPOLOGY_RAIL_COUNT="$_topology_rail_count"
+CX_IFACE="$TOPOLOGY_LOCAL_INTERFACES"
+
+connectx_check_topology_override() {
+  local variable_name="$1" current_value="$2" expected_value="$3"
+  if [[ -n "$current_value" && "$current_value" != "$expected_value" ]]; then
+    echo "[topology] inherited $variable_name='$current_value' conflicts with CLUSTER_CONFIG value '$expected_value'" >&2
+    return 1
+  fi
+}
+connectx_check_topology_override SCHEMA_VERSION "$_provided_schema_version" "$SCHEMA_VERSION" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override TOPOLOGY_SHA256 "$_provided_topology_sha256" "$TOPOLOGY_SHA256" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override HEAD_NODE_ID "$_provided_head_node_id" "$HEAD_NODE_ID" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override WORKER_NODE_ID "$_provided_worker_node_id" "$WORKER_NODE_ID" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override LOCAL_NODE_ID "$_provided_local_node_id" "$LOCAL_NODE_ID" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override HEAD_HOST "$_provided_head_host" "$HEAD_HOST" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override WORKER_HOST "$_provided_worker_host" "$WORKER_HOST" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override HEAD_IP "$_provided_head_ip" "$HEAD_IP" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override WORKER_IP "$_provided_worker_ip" "$WORKER_IP" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override LOCAL_IP "$_provided_local_ip" "$LOCAL_IP" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override RAY_PORT "$_provided_ray_port" "$RAY_PORT" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override HEAD_CX_IFACE "$_provided_head_cx_iface" "$HEAD_CX_IFACE" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override WORKER_CX_IFACE "$_provided_worker_cx_iface" "$WORKER_CX_IFACE" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override CX_IFACE "$_provided_cx_iface" "$CX_IFACE" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override VLLM_HOST_IP "$_provided_vllm_host_ip" "$LOCAL_IP" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override NCCL_SOCKET_IFNAME "$_provided_nccl_socket_ifname" "$CX_IFACE" || return 1 2>/dev/null || exit 1
+connectx_check_topology_override GLOO_SOCKET_IFNAME "$_provided_gloo_socket_ifname" "$CX_IFACE" || return 1 2>/dev/null || exit 1
+for _topology_name in DIYA_HOST DIYA_IP HOEDUS_HOST HOEDUS_IP; do
+  if declare -p "$_topology_name" >/dev/null 2>&1; then
+    echo "[topology] $_topology_name is obsolete; remove the fixed-node override and use CLUSTER_CONFIG" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+done
+
+export SCHEMA_VERSION TOPOLOGY_SHA256 TOPOLOGY_RAW_SHA256 HEAD_NODE_ID WORKER_NODE_ID LOCAL_NODE_ID
+export HEAD_HOST WORKER_HOST HEAD_IP WORKER_IP LOCAL_IP RAY_PORT
+export LOCAL_SSH_TARGET WORKER_SSH_TARGET TOPOLOGY_RAIL_COUNT
+export HEAD_CX_IFACE WORKER_CX_IFACE
+export CX_IFACE
 export NCCL_SOCKET_IFNAME="$CX_IFACE"
 export GLOO_SOCKET_IFNAME="$CX_IFACE"
-export VLLM_HOST_IP="${VLLM_HOST_IP:-$HEAD_IP}"
+export VLLM_HOST_IP="$LOCAL_IP"
+CONNECTX_DERIVED_CONFIG="$CLUSTER_CONFIG"
+CONNECTX_DERIVED_VALUES_SHA256="$(connectx_topology_values_signature)"
+export CONNECTX_DERIVED_CONFIG CONNECTX_DERIVED_VALUES_SHA256
+unset _provided_schema_version _provided_topology_sha256 _provided_head_node_id
+unset _provided_worker_node_id _provided_local_node_id _provided_head_host
+unset _provided_worker_host _provided_head_ip _provided_worker_ip _provided_local_ip
+unset _provided_ray_port _provided_cx_iface _provided_vllm_host_ip
+unset _provided_nccl_socket_ifname _provided_gloo_socket_ifname
+unset _provided_head_cx_iface _provided_worker_cx_iface
+unset _previous_derived_config _previous_derived_signature
+unset _current_derived_signature _ignore_previous_derived_values
+unset _provided_name
+unset _topology_python _topology_record _topology_field_index _topology_rail_index
+unset _topology_rail_count _topology_interface _topology_cidr
+unset _topology_peer_interface _topology_peer_cidr _topology_field _topology_name
 
 # NCCL data plane uses RDMA over ConnectX by default. Set NCCL_IB_DISABLE=1
 # to fall back to TCP sockets, for example to diagnose a RoCE fault.
@@ -43,9 +221,8 @@ export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
 # shows the wrong transport; audit_nccl_transport.py reports every launch.
 export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
 export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,NET}"
-# NCCL RDMA device allowlist. Empty discovers every device. Set for the
-# dual-cable layout when NCCL selects fewer than all four devices:
-# NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
+# NCCL RDMA device allowlist. Leave empty to use every device. Set a
+# per-host device list when required, for example NCCL_IB_HCA="mlx5_0:1,mlx5_1:1".
 export NCCL_IB_HCA="${NCCL_IB_HCA:-}"
 # Empty loads the library NCCL discovers. Set to "none" to use the built-in
 # IB transport instead of the HPC-X RDMA plugin bundled in the vLLM image.
@@ -109,39 +286,53 @@ check_hf_cache_access_in_image() {
 # CX_IFACE may be a comma-separated list. These functions iterate over every
 # interface in the list.
 connectx_local_ipv4() {
-  local iface
-  local -a ifaces
-  IFS=',' read -ra ifaces <<< "$CX_IFACE"
-  for iface in "${ifaces[@]}"; do
-    local addr
-    addr=$(ip -4 -o addr show "$iface" 2>/dev/null \
-      | awk 'NR == 1 {split($4, a, "/"); print a[1]}')
-    if [[ -n "$addr" ]]; then
-      echo "$addr"
-      return 0
-    fi
-  done
-  return 1
+  printf '%s\n' "$LOCAL_IP"
 }
 
 require_local_connectx_ip() {
   local expected="$1" role="${2:-requested role}"
-  local iface found=0
-  local -a ifaces
-  IFS=',' read -ra ifaces <<< "$CX_IFACE"
-  for iface in "${ifaces[@]}"; do
-    local actual
-    actual=$(ip -4 -o addr show "$iface" 2>/dev/null \
-      | awk '{split($4, a, "/"); print a[1]}')
-    if [[ -n "$actual" ]] && grep -Fxq -- "$expected" <<< "$actual"; then
-      found=1
-      break
-    fi
-  done
-  if [[ "$found" != "1" ]]; then
-    echo "[cluster] expected IP $expected for $role not found on any interface in CX_IFACE ($CX_IFACE)" >&2
+  if [[ "$expected" != "$LOCAL_IP" ]]; then
+    echo "[cluster] local node $LOCAL_NODE_ID has $LOCAL_IP, expected $expected for $role" >&2
     return 1
   fi
+}
+
+validate_local_topology_links() {
+  local index route route_interface route_source local_ip peer_ip address_output link_output
+  local -a rails interfaces local_cidrs peer_cidrs
+  IFS=',' read -ra rails <<<"$TOPOLOGY_RAILS"
+  IFS=',' read -ra interfaces <<<"$TOPOLOGY_LOCAL_INTERFACES"
+  IFS=',' read -ra local_cidrs <<<"$TOPOLOGY_LOCAL_CIDRS"
+  IFS=',' read -ra peer_cidrs <<<"$TOPOLOGY_PEER_CIDRS"
+  for index in "${!rails[@]}"; do
+    local_ip="${local_cidrs[$index]%/*}"
+    peer_ip="${peer_cidrs[$index]%/*}"
+    address_output="$(ip -4 -o addr show dev "${interfaces[$index]}" 2>/dev/null | awk '$3 == "inet" {print $4}')"
+    if ! grep -Fxq -- "${local_cidrs[$index]}" <<<"$address_output"; then
+      echo "[cluster] rail ${rails[$index]} local ${interfaces[$index]} expected ${local_cidrs[$index]}, observed '${address_output:-none}'" >&2
+      return 1
+    fi
+    if ! link_output="$(ip -o link show dev "${interfaces[$index]}" 2>/dev/null)" || [[ "$link_output" != *"state UP"* ]]; then
+      echo "[cluster] rail ${rails[$index]} local ${interfaces[$index]} to peer ${peer_cidrs[$index]} is not link-up" >&2
+      return 1
+    fi
+    if ! route="$(ip -4 route get "$peer_ip" from "$local_ip" 2>/dev/null)"; then
+      echo "[cluster] rail ${rails[$index]} route to peer ${peer_cidrs[$index]} from local ${local_cidrs[$index]} failed" >&2
+      return 1
+    fi
+    route_interface="$(awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}' <<<"$route")"
+    route_source="$(awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}' <<<"$route")"
+    if [[ "$route_interface" != "${interfaces[$index]}" || "$route_source" != "$local_ip" ]]; then
+      echo "[cluster] rail ${rails[$index]} route to peer ${peer_cidrs[$index]} expected dev ${interfaces[$index]} src $local_ip, observed dev ${route_interface:-unknown} src ${route_source:-unknown}" >&2
+      return 1
+    fi
+    echo "[cluster] rail ${rails[$index]} local ${interfaces[$index]} $local_ip to peer $peer_ip"
+    if ! ping -I "${interfaces[$index]}" -W 2 -c 3 "$peer_ip"; then
+      echo "[cluster] rail ${rails[$index]} ping failed from ${local_cidrs[$index]} to ${peer_cidrs[$index]}" >&2
+      return 1
+    fi
+  done
+  require_connectx_rdma
 }
 
 # Link reachability through TCP does not prove that verbs are available. Check
@@ -152,28 +343,181 @@ require_connectx_rdma() {
     0) ;;
     *) echo "[cluster] NCCL_IB_DISABLE must be 0 (RDMA) or 1 (TCP)" >&2; return 1 ;;
   esac
-  local iface links
-  local -a ifaces
+  local iface links index line token link_name rdma_device rdma_port netdev
+  local state physical_state selector selector_device selector_port selector_exact
+  local -a ifaces rails local_cidrs peer_cidrs fields
+  local -a hca_selectors
+  local -A expected_interfaces selected_interfaces matched_selectors
+  local topology_endpoints="rails $TOPOLOGY_RAILS local $TOPOLOGY_LOCAL_CIDRS to peers $TOPOLOGY_PEER_CIDRS"
   command -v rdma >/dev/null || {
-    echo "[cluster] rdma command missing; install iproute2 RDMA tooling" >&2
+    echo "[cluster] rdma command missing for $topology_endpoints; install iproute2 RDMA tooling" >&2
     return 1
   }
-  links="$(rdma link show)" || return 1
-  IFS=',' read -ra ifaces <<< "$CX_IFACE"
+  if ! links="$(rdma link show)"; then
+    echo "[cluster] cannot read RDMA link state for $topology_endpoints" >&2
+    return 1
+  fi
+  IFS=',' read -ra ifaces <<< "$TOPOLOGY_LOCAL_INTERFACES"
+  IFS=',' read -ra rails <<< "$TOPOLOGY_RAILS"
+  IFS=',' read -ra local_cidrs <<< "$TOPOLOGY_LOCAL_CIDRS"
+  IFS=',' read -ra peer_cidrs <<< "$TOPOLOGY_PEER_CIDRS"
   for iface in "${ifaces[@]}"; do
-    if ! awk -v iface="$iface" '
-      {active=0; linked=0; physical=0;
-       for(i=1;i<NF;i++) {
-         if($i=="state" && $(i+1)=="ACTIVE") active=1;
-         if($i=="physical_state" && $(i+1)=="LINK_UP") physical=1;
-         if($i=="netdev" && $(i+1)==iface) linked=1;
-       }
-       if(active && physical && linked) found=1}
-      END {exit !found}' <<< "$links"; then
-      echo "[cluster] no ACTIVE/LINK_UP RDMA port mapped to $iface" >&2
+    expected_interfaces["$iface"]=1
+  done
+  if [[ -n "$NCCL_IB_HCA" ]]; then
+    IFS=',' read -ra hca_selectors <<< "$NCCL_IB_HCA"
+    for selector in "${hca_selectors[@]}"; do
+      if [[ ! "$selector" =~ ^=?[A-Za-z0-9_.-]+(:[0-9]+)?$ ]]; then
+        echo "[cluster] unsupported NCCL_IB_HCA selector '$selector'; use device names with optional :port; configured $topology_endpoints" >&2
+        return 1
+      fi
+    done
+  fi
+  for index in "${!ifaces[@]}"; do
+    iface="${ifaces[$index]}"
+    if [[ -z "$NCCL_IB_HCA" ]]; then
+      if awk -v iface="$iface" '
+        {active=0; linked=0; physical=0;
+         for(i=1;i<NF;i++) {
+           if($i=="state" && $(i+1)=="ACTIVE") active=1;
+           if($i=="physical_state" && $(i+1)=="LINK_UP") physical=1;
+           if($i=="netdev" && $(i+1)==iface) linked=1;
+         }
+         if(active && physical && linked) found=1}
+        END {exit !found}' <<< "$links"; then
+        continue
+      fi
+      echo "[cluster] rail ${rails[$index]} local $iface ${local_cidrs[$index]} to peer ${peer_cidrs[$index]} has no ACTIVE/LINK_UP RDMA port" >&2
       return 1
     fi
   done
+  if [[ -n "$NCCL_IB_HCA" ]]; then
+    while IFS= read -r line; do
+      read -r -a fields <<< "$line"
+      (( ${#fields[@]} >= 2 )) || continue
+      [[ "${fields[0]}" == "link" ]] || continue
+      link_name="${fields[1]}"
+      [[ "$link_name" == */* ]] || continue
+      rdma_device="${link_name%/*}"
+      rdma_port="${link_name##*/}"
+      netdev=""
+      state=""
+      physical_state=""
+      for ((index = 2; index + 1 < ${#fields[@]}; index += 2)); do
+        case "${fields[index]}" in
+          netdev) netdev="${fields[index + 1]}" ;;
+          state) state="${fields[index + 1]}" ;;
+          physical_state) physical_state="${fields[index + 1]}" ;;
+        esac
+      done
+      for selector in "${hca_selectors[@]}"; do
+        selector_exact=0
+        [[ "$selector" == =* ]] && selector_exact=1
+        selector="${selector#=}"
+        selector_device="${selector%%:*}"
+        selector_port=""
+        [[ "$selector" == *:* ]] && selector_port="${selector##*:}"
+        if (( selector_exact )); then
+          [[ "$rdma_device" == "$selector_device" ]] || continue
+        else
+          [[ "$rdma_device" == "$selector_device"* ]] || continue
+        fi
+        [[ -z "$selector_port" || "$rdma_port" == "$selector_port" ]] || continue
+        matched_selectors["$selector"]=1
+        if [[ -z "$netdev" ]]; then
+          echo "[cluster] NCCL_IB_HCA selector '$selector' maps $rdma_device/$rdma_port without a netdev; configured rails $TOPOLOGY_RAILS map $TOPOLOGY_LOCAL_CIDRS to peers $TOPOLOGY_PEER_CIDRS" >&2
+          return 1
+        fi
+        if [[ -z "${expected_interfaces[$netdev]+x}" ]]; then
+          echo "[cluster] NCCL_IB_HCA selector '$selector' maps $rdma_device/$rdma_port to unconfigured netdev '$netdev'; configured rails $TOPOLOGY_RAILS map $TOPOLOGY_LOCAL_CIDRS to peers $TOPOLOGY_PEER_CIDRS" >&2
+          return 1
+        fi
+        if [[ "$state" != "ACTIVE" || "$physical_state" != "LINK_UP" ]]; then
+          for index in "${!ifaces[@]}"; do
+            if [[ "${ifaces[$index]}" == "$netdev" ]]; then
+              echo "[cluster] rail ${rails[$index]} local $netdev ${local_cidrs[$index]} to peer ${peer_cidrs[$index]} maps to NCCL_IB_HCA device $rdma_device/$rdma_port without ACTIVE/LINK_UP state" >&2
+              return 1
+            fi
+          done
+        fi
+        selected_interfaces["$netdev"]=1
+      done
+    done <<< "$links"
+    for selector in "${hca_selectors[@]}"; do
+      selector="${selector#=}"
+      if [[ -z "${matched_selectors[$selector]+x}" ]]; then
+        echo "[cluster] NCCL_IB_HCA selector '$selector' has no RDMA port mapping; configured rails $TOPOLOGY_RAILS map $TOPOLOGY_LOCAL_CIDRS to peers $TOPOLOGY_PEER_CIDRS" >&2
+        return 1
+      fi
+    done
+    for index in "${!ifaces[@]}"; do
+      iface="${ifaces[$index]}"
+      if [[ -z "${selected_interfaces[$iface]+x}" ]]; then
+        echo "[cluster] rail ${rails[$index]} local $iface ${local_cidrs[$index]} to peer ${peer_cidrs[$index]} is not covered by NCCL_IB_HCA='$NCCL_IB_HCA'" >&2
+        return 1
+      fi
+    done
+  fi
+}
+
+validate_cluster_runtime() {
+  local runtime_facts runtime_sha256
+  if ! runtime_facts="$(docker exec -i "$VLLM_CONTAINER" python3 - \
+      "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+      "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
+      "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
+      < "$CONNECTX_SCRIPT_DIR/cluster_runtime_fingerprint.py")"; then
+    echo "[cluster] per-node Ray runtime or topology validation failed" >&2
+    return 1
+  fi
+  runtime_sha256="$(printf '%s' "$runtime_facts" | sha256sum | awk '{print $1}')"
+  echo "[cluster] Ray runtime verified for topology $TOPOLOGY_SHA256 ($runtime_sha256)"
+}
+
+validate_local_ray_container() {
+  docker exec -i "$VLLM_CONTAINER" python3 - \
+      "$TOPOLOGY_SHA256" "$LOCAL_NODE_ID" "$LOCAL_IP" "$CX_IFACE" \
+      "$NCCL_IB_DISABLE" "$NCCL_IB_HCA" "$NCCL_IB_GID_INDEX" \
+      "$NCCL_NET_PLUGIN" <<'PY'
+import os
+import sys
+
+(
+    expected_topology_sha256,
+    expected_node_id,
+    expected_ip,
+    expected_interfaces,
+    expected_ib_disable,
+    expected_ib_hca,
+    expected_gid_index,
+    expected_net_plugin,
+) = sys.argv[1:]
+expected_values = {
+    "TOPOLOGY_SHA256": expected_topology_sha256,
+    "LOCAL_NODE_ID": expected_node_id,
+    "VLLM_HOST_IP": expected_ip,
+    "NCCL_SOCKET_IFNAME": expected_interfaces,
+    "GLOO_SOCKET_IFNAME": expected_interfaces,
+    "NCCL_IB_DISABLE": expected_ib_disable,
+    "NCCL_IB_HCA": expected_ib_hca,
+    "NCCL_IB_GID_INDEX": expected_gid_index,
+    "NCCL_NET_PLUGIN": expected_net_plugin,
+}
+mismatches = [
+    f"{name}={os.environ.get(name, '')!r}, expected {expected!r}"
+    for name, expected in expected_values.items()
+    if os.environ.get(name, "") != expected
+]
+if mismatches:
+    raise SystemExit(
+        "[cluster] local Ray container topology/runtime mismatch: "
+        + "; ".join(mismatches)
+    )
+print(
+    f"[cluster] local Ray container matches node {expected_node_id} "
+    f"at {expected_ip} for topology {expected_topology_sha256}"
+)
+PY
 }
 
 # One physical head GPU and its local cache are shared by every campaign,
@@ -289,7 +633,7 @@ resource_check_once() {
       echo "[resources] UNKNOWN: required Ray container $VLLM_CONTAINER is not running" >&2
       return 2
     fi
-    local -a worker_check_args=(--mode "$mode" --worker --head-ip "$HEAD_IP" --worker-ip "$HOEDUS_IP")
+    local -a worker_check_args=(--mode "$mode" --worker --head-ip "$HEAD_IP" --worker-ip "$WORKER_IP")
     [[ "$worker_scope" == "auto" ]] && worker_check_args+=(--allow-missing-worker)
     if worker_output="$(docker exec -i "$VLLM_CONTAINER" python3 - "${worker_check_args[@]}" \
         < "$manager" 2>&1)"; then
