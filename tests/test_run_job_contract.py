@@ -1,14 +1,44 @@
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from utils.campaign_output import fingerprint_identity, prepare_campaign
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class RunJobContractTests(unittest.TestCase):
+    def test_explicit_out_dir_rejects_incompatible_campaign_in_plan_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "campaign"
+            prepare_campaign(output, fingerprint_identity([], ["run=previous"]))
+            marker = output / "results" / "campaign_run.json"
+            marker_before = marker.read_bytes()
+            environment = os.environ.copy()
+            environment.update({
+                "PYTHON": sys.executable,
+                "PLAN_ONLY": "1",
+                "OUT_DIR": str(output),
+            })
+            result = subprocess.run(
+                ["bash", "scripts/run_job.sh"],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not a compatible resume", result.stderr)
+            self.assertEqual(marker.read_bytes(), marker_before)
+            self.assertFalse((output / "logs").exists())
+
     def test_plan_clears_inherited_campaign_overrides(self):
         with tempfile.TemporaryDirectory() as temporary:
             environment = os.environ.copy()

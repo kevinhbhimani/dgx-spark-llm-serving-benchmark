@@ -11,7 +11,7 @@ from utils.campaign_output import (
     campaign_logs_dir,
     campaign_results_dir,
     fingerprint_identity,
-    prepare_implicit_campaign,
+    prepare_campaign,
     campaign_root_from_input,
     resolve_campaign_dir,
     resolve_campaign_output_path,
@@ -56,7 +56,7 @@ class CampaignOutputTests(unittest.TestCase):
     def test_plan_only_does_not_create_default_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = resolve_campaign_dir(cwd=temporary)
-            resumed = prepare_implicit_campaign(
+            resumed = prepare_campaign(
                 output, fingerprint_identity([], ["run=same"]), plan_only=True
             )
             self.assertFalse(resumed)
@@ -66,13 +66,57 @@ class CampaignOutputTests(unittest.TestCase):
         identity = fingerprint_identity([], ["run=same"])
         with tempfile.TemporaryDirectory() as temporary:
             output = resolve_campaign_dir(cwd=temporary)
-            self.assertFalse(prepare_implicit_campaign(output, identity))
+            self.assertFalse(prepare_campaign(output, identity))
             self.assertTrue((output / "results" / "campaign_run.json").is_file())
-            self.assertTrue(prepare_implicit_campaign(output, identity))
+            self.assertTrue(prepare_campaign(output, identity))
             with self.assertRaisesRegex(ValueError, "not a compatible resume"):
-                prepare_implicit_campaign(
+                prepare_campaign(
                     output, fingerprint_identity([], ["run=different"])
                 )
+
+    def test_explicit_existing_empty_directory_can_be_claimed(self) -> None:
+        identity = fingerprint_identity([], ["run=same"])
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "campaign"
+            output.mkdir()
+            self.assertFalse(
+                prepare_campaign(
+                    output, identity, plan_only=True, allow_empty_existing=True
+                )
+            )
+            self.assertEqual(list(output.iterdir()), [])
+            self.assertFalse(
+                prepare_campaign(output, identity, allow_empty_existing=True)
+            )
+            self.assertTrue(prepare_campaign(output, identity))
+            marker = output / "results" / "campaign_run.json"
+            marker_before = marker.read_bytes()
+            with self.assertRaisesRegex(ValueError, "not a compatible resume"):
+                prepare_campaign(
+                    output,
+                    fingerprint_identity([], ["run=different"]),
+                    allow_empty_existing=True,
+                )
+            self.assertEqual(marker.read_bytes(), marker_before)
+
+    def test_explicit_markerless_results_are_rejected(self) -> None:
+        identity = fingerprint_identity([], ["run=same"])
+        with tempfile.TemporaryDirectory() as temporary:
+            for name, index_path in (
+                ("legacy", "index.csv"),
+                ("nested", "results/index.csv"),
+            ):
+                with self.subTest(name=name):
+                    output = Path(temporary) / name
+                    index = output / index_path
+                    index.parent.mkdir(parents=True)
+                    index.write_text("existing results\n", encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "not a compatible resume"):
+                        prepare_campaign(
+                            output, identity, allow_empty_existing=True
+                        )
+                    self.assertEqual(index.read_text(encoding="utf-8"), "existing results\n")
+                    self.assertFalse((output / "results" / "campaign_run.json").exists())
 
     def test_manifest_names_date_and_resolved_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
