@@ -1485,7 +1485,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument(
         "--out-dir",
         default=None,
-        help="result directory (default: OUT_DIR or results/benchmark-<UTC-date>)",
+        help="result directory (default: OUT_DIR or results/benchmark-<UTC-date>-001)",
     )
     verify_parser.add_argument(
         "--manifest",

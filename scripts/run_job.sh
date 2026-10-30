@@ -7,8 +7,8 @@
 #   configured head:   scripts/run_job.sh
 #
 # scripts/connectx_env.sh loads the topology and enables NCCL transport logging.
-# An unset OUT_DIR uses the next available results/benchmark-<UTC-date> path.
-# A bare OUT_DIR names the campaign prefix before benchmark and the UTC date.
+# An unset OUT_DIR uses results/benchmark-<UTC-date>-001 or the next sequence.
+# A bare OUT_DIR names the prefix before benchmark, date, and sequence number.
 # A path-style OUT_DIR is the complete campaign path for resuming a campaign.
 #
 # Model lifecycle. The matrix never has to fit on disk at once. Each model in

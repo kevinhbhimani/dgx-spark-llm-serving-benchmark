@@ -16,9 +16,11 @@ DEFAULT_CAMPAIGN_NAME = "benchmark"
 RESULTS_DIRECTORY = "results"
 LOGS_DIRECTORY = "logs"
 IDENTITY_FILENAME = "campaign_run.json"
+PREFLIGHT_DIRECTORY = "preflight"
 DATE_SUFFIX = re.compile(r"-(\d{4}-\d{2}-\d{2})(?:-(\d{3,}))?$")
 CAMPAIGN_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 CAMPAIGN_COUNTER_WIDTH: int = 3
+FIRST_CAMPAIGN_COUNTER: int = 1
 
 
 def utc_date(now: datetime | None = None) -> str:
@@ -29,6 +31,45 @@ def utc_date(now: datetime | None = None) -> str:
     return current.astimezone(timezone.utc).date().isoformat()
 
 
+def _is_bare_campaign_name(raw_target: str) -> bool:
+    """Return whether an output value is a name instead of a filesystem path."""
+    target = Path(raw_target).expanduser()
+    return (
+        not target.is_absolute()
+        and os.sep not in raw_target
+        and raw_target not in {".", ".."}
+    )
+
+
+def _has_valid_campaign_date_suffix(name: str) -> bool:
+    """Return whether a name ends in a valid campaign date and optional counter."""
+    match: re.Match[str] | None = DATE_SUFFIX.search(name)
+    if match is None:
+        return False
+    try:
+        date.fromisoformat(match.group(1))
+    except ValueError:
+        return False
+    return True
+
+
+def _campaign_base_dir(
+    default_name: str,
+    *,
+    cwd: str | os.PathLike[str] | None,
+    now: datetime | None,
+) -> Path:
+    """Build the unnumbered result path used to allocate a campaign sequence."""
+    if not CAMPAIGN_NAME_PATTERN.fullmatch(default_name):
+        raise ValueError(f"invalid default campaign name: {default_name!r}")
+    base = (
+        Path(cwd)
+        if cwd is not None
+        else Path(__file__).resolve().parents[1]
+    )
+    return base / RESULTS_DIRECTORY / f"{default_name}-{utc_date(now)}"
+
+
 def resolve_campaign_dir(
     out_dir: str | os.PathLike[str] | None = None,
     *,
@@ -36,32 +77,31 @@ def resolve_campaign_dir(
     cwd: str | os.PathLike[str] | None = None,
     now: datetime | None = None,
 ) -> Path:
-    """Resolve a path-style output, a bare campaign prefix, or the default path."""
+    """Resolve a complete path, a campaign prefix, or a dated campaign name."""
     if out_dir:
         base = Path(cwd) if cwd is not None else Path.cwd()
         raw_target: str = os.fspath(out_dir)
         target = Path(raw_target).expanduser()
         if not target.is_absolute():
-            if os.sep not in raw_target and raw_target not in {".", ".."}:
-                campaign_name = f"{raw_target}-{default_name}"
-                if not CAMPAIGN_NAME_PATTERN.fullmatch(campaign_name):
-                    raise ValueError(f"invalid campaign name: {raw_target!r}")
-                target = (
-                    base
-                    / RESULTS_DIRECTORY
-                    / f"{campaign_name}-{utc_date(now)}"
-                )
+            if _is_bare_campaign_name(raw_target):
+                if _has_valid_campaign_date_suffix(raw_target):
+                    target = base / RESULTS_DIRECTORY / raw_target
+                else:
+                    campaign_name = f"{raw_target}-{default_name}"
+                    if not CAMPAIGN_NAME_PATTERN.fullmatch(campaign_name):
+                        raise ValueError(f"invalid campaign name: {raw_target!r}")
+                    return next_available_campaign_dir(
+                        default_name=campaign_name, cwd=base, now=now
+                    ).resolve()
             else:
                 target = base / target
     else:
-        base = (
-            Path(cwd)
-            if cwd is not None
-            else Path(__file__).resolve().parents[1]
+        campaign_base: Path = _campaign_base_dir(
+            default_name, cwd=cwd, now=now
         )
-        if not CAMPAIGN_NAME_PATTERN.fullmatch(default_name):
-            raise ValueError(f"invalid default campaign name: {default_name!r}")
-        target = base / RESULTS_DIRECTORY / f"{default_name}-{utc_date(now)}"
+        target = campaign_base.with_name(
+            f"{campaign_base.name}-{FIRST_CAMPAIGN_COUNTER:0{CAMPAIGN_COUNTER_WIDTH}d}"
+        )
     return target.resolve()
 
 
@@ -71,17 +111,14 @@ def next_available_campaign_dir(
     cwd: str | os.PathLike[str] | None = None,
     now: datetime | None = None,
 ) -> Path:
-    """Select the default campaign path or the next unused numbered path."""
-    target = resolve_campaign_dir(default_name=default_name, cwd=cwd, now=now)
+    """Select the next unused numbered path for a campaign name."""
+    target = _campaign_base_dir(default_name, cwd=cwd, now=now)
     maximum_counter = 0
     counter_prefix = f"{target.name}-"
     for existing_path in target.parent.glob(f"{target.name}-*"):
         suffix = existing_path.name[len(counter_prefix) :]
         if suffix.isdigit() and (existing_path.exists() or existing_path.is_symlink()):
             maximum_counter = max(maximum_counter, int(suffix))
-
-    if not target.exists() and not target.is_symlink() and maximum_counter == 0:
-        return target
 
     counter = maximum_counter + 1
     while True:
@@ -91,6 +128,24 @@ def next_available_campaign_dir(
         if not candidate.exists() and not candidate.is_symlink():
             return candidate
         counter += 1
+
+
+def resolve_new_campaign_dir(
+    out_dir: str | os.PathLike[str] | None = None,
+    *,
+    default_name: str = DEFAULT_CAMPAIGN_NAME,
+    cwd: str | os.PathLike[str] | None = None,
+    now: datetime | None = None,
+) -> Path:
+    """Select a numbered path for a new campaign or preserve an explicit path."""
+    if not out_dir:
+        return next_available_campaign_dir(
+            default_name=default_name, cwd=cwd, now=now
+        )
+
+    return resolve_campaign_dir(
+        out_dir, default_name=default_name, cwd=cwd, now=now
+    )
 
 
 def campaign_metadata(out_dir: str | os.PathLike[str]) -> dict[str, str | None]:
@@ -148,6 +203,32 @@ def _has_legacy_campaign_artifacts(directory: Path) -> bool:
         for pattern in patterns
         for path in directory.glob(pattern)
     )
+
+
+def _has_only_preflight_artifacts(directory: Path) -> bool:
+    """Return whether a new campaign root contains only preflight output."""
+    children: list[Path] = list(directory.iterdir())
+    allowed_names: set[str] = {
+        PREFLIGHT_DIRECTORY,
+        RESULTS_DIRECTORY,
+        LOGS_DIRECTORY,
+    }
+    if not children or any(child.name not in allowed_names for child in children):
+        return False
+
+    preflight_directory = directory / PREFLIGHT_DIRECTORY
+    if preflight_directory.is_symlink() or not preflight_directory.is_dir():
+        return False
+
+    for subdirectory_name in (RESULTS_DIRECTORY, LOGS_DIRECTORY):
+        subdirectory = directory / subdirectory_name
+        if subdirectory.is_symlink():
+            return False
+        if not subdirectory.exists():
+            continue
+        if not subdirectory.is_dir() or any(subdirectory.iterdir()):
+            return False
+    return True
 
 
 def resolve_campaign_results_dir(out_dir: str | os.PathLike[str]) -> Path:
@@ -300,8 +381,10 @@ def prepare_campaign(
     plan_only: bool = False,
     allow_empty_existing: bool = False,
 ) -> bool:
-    """Create a campaign marker or accept a matching resume.
+    """Create a marker or accept a matching resume.
 
+    If allowed, an existing root may contain only preflight output and empty
+    campaign results and logs directories.
     Returns True for an existing compatible campaign and False for a new one.
     Plan-only mode validates existing paths without creating files or folders.
     """
@@ -320,7 +403,15 @@ def prepare_campaign(
         existing_identity = _read_existing_identity(directory)
         if existing_identity == identity:
             return True
-        if any(directory.iterdir()) or (not created_directory and not allow_empty_existing):
+        existing_paths: list[Path] = list(directory.iterdir())
+        if existing_paths and not (
+            allow_empty_existing and _has_only_preflight_artifacts(directory)
+        ):
+            raise ValueError(
+                f"campaign path already exists and is not a compatible "
+                f"resume: {directory}; set OUT_DIR to a fresh path"
+            )
+        if not existing_paths and not created_directory and not allow_empty_existing:
             raise ValueError(
                 f"campaign path already exists and is not a compatible "
                 f"resume: {directory}; set OUT_DIR to a fresh path"
@@ -366,7 +457,7 @@ def _parser() -> argparse.ArgumentParser:
     resolve.add_argument(
         "--next-available",
         action="store_true",
-        help="select the next unused default path for a new campaign",
+        help="select the next numbered default path for a new campaign",
     )
 
     results = commands.add_parser("results-dir", help="resolve a campaign results directory")
@@ -402,7 +493,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.next_available and not args.out_dir:
                 output_dir = next_available_campaign_dir(default_name=default_name)
             else:
-                output_dir = resolve_campaign_dir(
+                output_dir = resolve_new_campaign_dir(
                     args.out_dir, default_name=default_name
                 )
             print(output_dir)

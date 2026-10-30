@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Run the master preflight, including its forced canary, before the full campaign.
-# OUT_DIR selects the campaign path; preflight artifacts use its .preflight sibling.
+# Run the master preflight and full campaign under one output directory.
 set -euo pipefail
 
 if (( $# != 0 )); then
@@ -27,10 +26,8 @@ else
   CAMPAIGN_OUT_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" resolve \
     --next-available)" || exit 1
 fi
-PREFLIGHT_OUT_DIR="${CAMPAIGN_OUT_DIR}.preflight"
-
-echo "[serial] preflight output: $PREFLIGHT_OUT_DIR"
-if env OUT_DIR="$PREFLIGHT_OUT_DIR" "$HERE/scripts/preflight.sh"; then
+echo "[serial] campaign output: $CAMPAIGN_OUT_DIR"
+if env OUT_DIR="$CAMPAIGN_OUT_DIR" "$HERE/scripts/preflight.sh"; then
   echo "[serial] all preflights and the canary passed"
 else
   status=$?
