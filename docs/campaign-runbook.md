@@ -44,22 +44,24 @@ paths may differ:
 
 ## Campaign output path
 
-`OUT_DIR` is the complete campaign output path. Set `GPU_UTIL` to override the
-default `0.80` target. Use the same value when resuming so validation expects
-the target recorded by each serving policy. Use a new `OUT_DIR` when changing
-`GPU_UTIL`. If `OUT_DIR` is unset,
+`OUT_DIR` selects a campaign prefix or a complete campaign output path. Set
+`GPU_UTIL` to override the default `0.80` target. Use the same value when
+resuming so validation expects the target recorded by each serving policy. Use
+a new `OUT_DIR` when changing `GPU_UTIL`. If `OUT_DIR` is unset,
 `scripts/run_job.sh` resolves the next unused path beginning with
-`results/benchmark-<UTC-date>` and passes that absolute path to its child
-processes. Later paths use suffixes such as `-001` and `-002`. `PLAN_ONLY=1`
-prints the selected path without creating it. Set `CAMPAIGN_NAME` to prepend a
-name to the generated directory while retaining the benchmark name and date.
-For example, `CAMPAIGN_NAME=rdma-v4-paper` selects
-`results/rdma-v4-paper-benchmark-<UTC-date>`, followed by `-001`, `-002`, and
-later suffixes when paths already exist. This applies when `OUT_DIR` is unset.
-Set `OUT_DIR` to an existing path with a matching `results/campaign_run.json`
-to resume a campaign. `run_job.sh` rejects a nonempty markerless path
-and a path whose recorded campaign identity differs from the current
-inputs. An existing empty directory can start a new campaign.
+`results/benchmark-<UTC-date>-NNN` and passes that absolute path to its child
+processes. A bare name such as `OUT_DIR=rdma-v4-paper` selects the next unused
+`results/rdma-v4-paper-benchmark-<UTC-date>-NNN` path. Sequence numbers begin
+at `001`. `CAMPAIGN_NAME` adds the same prefix when `OUT_DIR` is unset.
+`PLAN_ONLY=1` prints the selected path without creating it. A bare name ending
+in a valid campaign date, with an optional sequence number, identifies that
+directory under `results/`. A relative path with a directory component or an
+absolute path is used as given. Set `OUT_DIR` to an existing complete path
+with a matching `results/campaign_run.json` to resume a campaign.
+`run_job.sh` rejects a nonempty markerless path and a path whose recorded
+campaign identity differs from the current inputs. A new campaign can claim
+an existing root that contains only preflight artifacts and empty
+`results/` and `logs/` directories.
 
 The campaign identity includes the raw cluster YAML file hash and canonical
 topology digest. New campaigns copy `cluster.yaml` and its raw and canonical
@@ -74,15 +76,16 @@ the campaign's resolved `GPU_UTIL` value to the smoke test.
 
 Set `OUT_DIR` to a bare campaign name or a complete output path. For
 `run_job.sh`, a bare name such as `rdma-v4-paper` selects
-`results/rdma-v4-paper-benchmark-<UTC-date>`. Other entrypoints use their
-command-specific default campaign name. A relative path with a directory
-component, such as `results/rdma-v4-paper-2026-10-22`, and an absolute path
-select their exact locations. Use a complete path such as
-`./results-rdma-v4-paper` when resuming an existing campaign. Campaign
-manifests record the campaign name, date when present in
+`results/rdma-v4-paper-benchmark-<UTC-date>-001` or the next unused sequence.
+Other entrypoints use their command-specific default campaign name. A relative
+path with a directory component or an absolute path selects its exact location.
+Use a complete path such as
+`results/rdma-v4-paper-benchmark-2026-10-22-001` when resuming an existing
+campaign. Campaign manifests record the campaign name, date when present in
 the directory name, and absolute path. New campaigns put result artifacts
-under `OUT_DIR/results/`, figures and reports under `OUT_DIR/figs/`, and logs
-under `OUT_DIR/logs/`. Plotting accepts the campaign directory or its
+under `OUT_DIR/results/`, figures and reports under `OUT_DIR/figs/`, logs
+under `OUT_DIR/logs/`, and preflight artifacts under
+`OUT_DIR/preflight/<run-id>/`. Plotting accepts the campaign directory or its
 `results/index.csv`; default figures and reports go under `OUT_DIR/figs/`.
 
 ## Where to run commands
@@ -270,10 +273,10 @@ client, power sampler, or plotting path needs an independent check:
 scripts/hardware_smoke.sh
 ```
 
-The smoke test writes to `results/smoke-<UTC-date>` by default. It uses its own
-container and port and defaults to `SMOKE_GPU_UTIL=0.80`. Its generated
-one-model YAML uses that value as the diagnostic run's global cap. It does not
-replace the campaign canary.
+The smoke test writes to `results/smoke-<UTC-date>-001` or the next unused
+sequence by default. It uses its own container and port and defaults to
+`SMOKE_GPU_UTIL=0.80`. Its generated one-model YAML uses that value as the
+diagnostic run's global cap. It does not replace the campaign canary.
 
 ## Resource locking and idle checks
 
@@ -305,12 +308,13 @@ on the selected head after starting Ray on both nodes:
 OUT_DIR=xyz scripts/preflight.sh
 ```
 
-The bare name resolves to `results/xyz-benchmark-<UTC-date>`. Campaign results
+The bare name resolves to `results/xyz-benchmark-<UTC-date>-001` or the next
+unused sequence number. Campaign results
 go under `OUT_DIR/results/`; campaign logs go under `OUT_DIR/logs/`. Each
 preflight run gets a unique top-level subdirectory:
 
 ```text
-results/xyz-benchmark-<UTC-date>/
+results/xyz-benchmark-<UTC-date>-001/
   results/                  campaign measurement outputs
   figs/                     campaign figures, tables, and reports
   logs/                     server and job logs

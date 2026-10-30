@@ -136,7 +136,7 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
             self.preflight_out_dir_log.read_text(encoding="utf-8").strip(),
-            f"{self.campaign_out_dir}.preflight",
+            str(self.campaign_out_dir),
         )
         self.assertEqual(
             self.preflight_stage_log.read_text(encoding="utf-8").splitlines(),

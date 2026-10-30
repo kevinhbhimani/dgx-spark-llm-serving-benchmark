@@ -12,9 +12,10 @@
 # GPU memory target. Nothing it writes is a paper result. The host and
 # interface values in CLUSTER_CONFIG must match this system.
 #
-# Env: OUT_DIR (default results/smoke-<UTC-date>; a bare name prefixes this
-#      default), SMOKE_LABEL (default llama3.1-8b-nvfp4,
-#      any label in configs/models.yaml that can run single), SMOKE_GPU_UTIL
+# Env: OUT_DIR (default results/smoke-<UTC-date>-001; a bare name prefixes this
+#      default and selects the next sequence number), SMOKE_LABEL (default
+#      llama3.1-8b-nvfp4; any label in configs/models.yaml that can run single),
+#      SMOKE_GPU_UTIL
 #      (default 0.80), SMOKE_CONCURRENCIES (default "1 4"), PORT (default
 #      8100), SMOKE_VLLM_CONTAINER (default vllm-spark-smoke), PYTHON,
 #      DROP_CACHES
@@ -24,7 +25,7 @@
 # only under load. Stress a suspect checkpoint at the campaign's top load:
 #
 #   SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
-#     SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22 \
+#     SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22-001 \
 #     scripts/hardware_smoke.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

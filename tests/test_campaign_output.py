@@ -26,7 +26,7 @@ class CampaignOutputTests(unittest.TestCase):
         local_time = datetime(2026, 10, 21, 23, 30, tzinfo=timezone(timedelta(hours=-4)))
         with tempfile.TemporaryDirectory() as temporary:
             resolved = resolve_campaign_dir(cwd=temporary, now=local_time)
-        self.assertEqual(resolved.name, "benchmark-2026-10-22")
+        self.assertEqual(resolved.name, "benchmark-2026-10-22-001")
 
     def test_explicit_nested_path_is_complete_and_absolute(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -196,7 +196,9 @@ class CampaignOutputTests(unittest.TestCase):
             finally:
                 os.chdir(original_cwd)
         repository = Path(__file__).resolve().parents[1]
-        self.assertEqual(resolved, repository / "results/benchmark-2026-10-22")
+        self.assertEqual(
+            resolved, repository / "results/benchmark-2026-10-22-001"
+        )
 
 
 if __name__ == "__main__":

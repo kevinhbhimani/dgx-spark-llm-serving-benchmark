@@ -388,8 +388,8 @@ fields:
   and release runs do not depend on post-measurement network metadata lookups.
 - Campaign output paths are selected with `OUT_DIR`, not in the experiment
   YAML. New benchmark runs without `OUT_DIR` select the next available
-  `results/benchmark-<UTC-date>` path, adding `-001`, `-002`, and later suffixes
-  when earlier paths exist.
+  `results/benchmark-<UTC-date>-001` path. Later runs use the next available
+  sequence number.
 - `run_note`: free-form note preserved in the resolved configuration block.
 
 Each full result records methodology `steady-exact-v4`, the YAML and harness
@@ -828,20 +828,17 @@ Ray, or a failed cache purge stops the campaign. Rerun the same `OUT_DIR` with
 
 ### Final unattended campaign
 
-`OUT_DIR` selects a campaign output path. A bare name such as
-`OUT_DIR=rdma-v4-paper` selects `results/rdma-v4-paper-benchmark-<UTC-date>`.
-A relative path with a directory component, such as
-`OUT_DIR=results/rdma-v4-paper-2026-10-22`, and an absolute path are used as
-given. With no `OUT_DIR`, `run_job.sh` resolves the next unused path beginning
-with `results/benchmark-<UTC-date>` and passes the absolute path to every child
-process. Later paths use suffixes such as `-001` and `-002`. Set
-`CAMPAIGN_NAME` to prepend a name when `OUT_DIR` is unset. For example,
-`CAMPAIGN_NAME=rdma-v4-paper` selects
-`results/rdma-v4-paper-benchmark-<UTC-date>`, followed by the same numbered
-suffixes when paths already exist. Set `OUT_DIR` to a path with a directory
-component or to an absolute path to resume a campaign at that exact location.
-`PLAN_ONLY=1` prints the selected path without creating it. Explicit legacy
-paths remain available for existing campaigns and resume.
+`OUT_DIR` selects a campaign prefix or a complete campaign path. A bare name
+such as `OUT_DIR=rdma-v4-paper` selects the next unused path matching
+`results/rdma-v4-paper-benchmark-<UTC-date>-NNN`, beginning at `-001`. With no
+`OUT_DIR`, `run_job.sh` selects the next unused
+`results/benchmark-<UTC-date>-NNN` path. `CAMPAIGN_NAME=rdma-v4-paper` adds the
+same prefix when `OUT_DIR` is unset. A bare name already ending in a valid
+campaign date, with an optional sequence number, identifies that directory
+under `results/`.
+A relative path with a directory component or an absolute path is used as
+given, including paths used to resume existing campaigns. `PLAN_ONLY=1` prints
+the selected path without creating it.
 
 New campaigns store result artifacts in `OUT_DIR/results/`, figures and tables
 in `OUT_DIR/figs/`, and logs in `OUT_DIR/logs/`. Plotting accepts a campaign
@@ -849,9 +846,10 @@ directory or an explicit `index.csv` path. When `--out` is omitted, figures and
 tables go under `OUT_DIR/figs/`. The campaign manifest records the campaign
 name, date when present in the directory name, and resolved absolute path.
 Each campaign invocation also saves a read-only system inventory JSON under
-`OUT_DIR/logs/`; preflight runs save one under their unique preflight log
-directory. The inventory records host and serving-container software and
-selected hardware firmware versions for both nodes when available.
+`OUT_DIR/logs/`. Preflight inventories and stage logs are stored under
+`OUT_DIR/preflight/<run-id>/logs/`. The inventory records host and
+serving-container software and selected hardware firmware versions for both
+nodes when available.
 
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
