@@ -80,6 +80,55 @@ measures transport *and* software together. To attribute a difference to RDMA
 alone, use the transport ablation described in the top-level README, which
 reruns a subset over TCP with the same image and harness.
 
+## Poster figures
+
+Regenerate the four Qwen3-Next 80B NVFP4 poster figures with:
+
+```bash
+python plotting/plot_results.py \
+  --index baselines/rdma-pilot-2026-10/index.csv \
+  --poster --format both --dpi 300
+```
+
+The command writes `ttft_by_concurrency`, `itl_by_concurrency`,
+`goodput_by_concurrency`, and `energy_by_concurrency` as PDF and PNG files in
+`baselines/rdma-pilot-2026-10/figs/poster/qwen3-next-80b-nvfp4/`. It filters
+concurrency 128 in the plotting input and uses equally spaced x positions for
+1, 2, 4, 8, 16, 32, and 64. Use `--model <model_label>` with `--poster` to
+select a different model present in the selected index. The default model is
+`qwen3-next-80b-nvfp4`. The command does not modify the campaign index.
+
+The plots read measured summary values from `index.csv`: median TTFT from
+`ttft_p50`, median token-gap ITL from `itl_p50`, strict-SLO goodput from
+`goodput_rps`, and GPU energy per received token from `energy_per_token_j`.
+`goodput_rps` uses the request-level mean ITL SLO calculation in
+`bench/metrics.py`. `energy_per_token_j` sums sampled GPU energy across the
+participating nodes and divides by output tokens received in the measurement
+window.
+
+The RDMA pilot's request-level raw telemetry files are absent from this
+checkout. The figures can be regenerated from the retained measured summary
+index. The request-level and power-sample metrics cannot be recomputed from
+raw telemetry in this checkout.
+
+Generate the aggregate output-throughput figure without changing the four
+figures above with:
+
+```bash
+python plotting/plot_poster_throughput.py \
+  --index baselines/rdma-pilot-2026-10/index.csv \
+  --format both --dpi 300
+```
+
+The command writes `output_throughput_by_concurrency.pdf` and `.png` in
+`baselines/rdma-pilot-2026-10/figs/poster/qwen3-next-80b-nvfp4/`. It uses the
+measured `tok_thru_tps` values from the index, which record output token IDs
+received during the measurement window divided by the measurement duration.
+The plotted input filters to concurrency 1, 2, 4, 8, 16, 32, and 64. The
+index and raw measurements remain unchanged. Pass `--model <model_label>` to
+select another model in the index. The script uses the shared poster plot
+renderer for dimensions, colors, markers, labels, and legend styling.
+
 ## Raw telemetry
 
 The `*.raw.jsonl`, `*.power.jsonl`, and `*.vllm_metrics.jsonl` files here were
