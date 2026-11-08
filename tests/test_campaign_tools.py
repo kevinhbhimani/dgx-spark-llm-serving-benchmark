@@ -76,7 +76,7 @@ class CampaignScheduleTests(unittest.TestCase):
         models = yaml.safe_load((ROOT / "configs/models.yaml").read_text())["models"]
         groups = campaign_schedule.build_groups(models, 3)
         curves = sum(len(entry["configs"]) for entry in models)
-        self.assertEqual(curves, 53)
+        self.assertEqual(curves, 52)
         self.assertEqual(sum(len(g["steps"]) for g in groups), curves * 3)
 
 

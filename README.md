@@ -54,7 +54,9 @@ start benchmark containers or require a GPU or sudo. Docker launchers and
 campaign scripts require access to Docker's GPU runtime and a writable
 Hugging Face cache on each participating node.
 
-Before touching the GPUs, validate the complete default campaign definition:
+Before touching the GPUs, validate the complete default campaign definition.
+Topology entrypoints use `<repo-root>/configs/cluster.yaml` unless
+`CLUSTER_CONFIG` selects an override.
 
 ```bash
 PLAN_ONLY=1 scripts/run_job.sh
@@ -79,16 +81,30 @@ mode when access fails. Scripts do not change cache ownership.
 If the default cache belongs to another account or has insufficient space, set
 `HF_CACHE` in the repo-local `.env` on each node. Use a directory owned by the
 account running the benchmark. Use a writable local scratch path when the home
-filesystem lacks 200 GB. The head and worker use separate caches. The regular
-test and benchmark commands do not invoke sudo. `DROP_CACHES=1` is optional and
-invokes sudo to flush the host page cache. Docker commands require permission
-to access the Docker daemon. Put `HF_TOKEN` in `.env` on the head node for
-gated models and run `chmod 600 .env` after adding the token.
+filesystem lacks 200 GB. The head and worker use separate caches. The model
+launcher flushes host page cache before each server start. This requires
+noninteractive sudo permission for `/usr/bin/tee /proc/sys/vm/drop_caches` on
+each participating node. Dual-node launches require batch SSH access from the
+head to the worker through `ssh_target`. Add a restricted sudoers rule for the
+benchmark account on each node, then validate it with `visudo`:
+
+```text
+dmihovch ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches
+```
+
+Replace `dmihovch` with the account that runs the benchmark. Direct
+`launch_server.sh` calls can use `DROP_CACHES=1` to flush the local host cache.
+Docker commands require permission to access the Docker daemon. Put `HF_TOKEN`
+in `.env` on the head node for gated models and run `chmod 600 .env` after
+adding the token.
 
 3. Start a vLLM server. If you are using the included Docker launcher on one
    Spark node, run this in one terminal:
 
 ```bash
+# The default is <repo-root>/configs/cluster.yaml on both Spark hosts.
+# Set CLUSTER_CONFIG only when using a different topology file.
+# export CLUSTER_CONFIG=/path/to/site/cluster.yaml
 export MODEL=Qwen/Qwen3-8B
 export REVISION=b968826d9c46dd6066d109eabc6255188de91218
 # export HF_TOKEN=...    # only needed for gated Hugging Face models
@@ -372,8 +388,8 @@ fields:
   and release runs do not depend on post-measurement network metadata lookups.
 - Campaign output paths are selected with `OUT_DIR`, not in the experiment
   YAML. New benchmark runs without `OUT_DIR` select the next available
-  `results/benchmark-<UTC-date>` path, adding `-001`, `-002`, and later suffixes
-  when earlier paths exist.
+  `results/benchmark-<UTC-date>-001` path. Later runs use the next available
+  sequence number.
 - `run_note`: free-form note preserved in the resolved configuration block.
 
 Each full result records methodology `steady-exact-v4`, the YAML and harness
@@ -441,10 +457,9 @@ export HF_TOKEN=...
 # export CONTAINER_DNS=8.8.8.8
 # Optional download-only override; defaults to CONTAINER_DNS.
 # export DOWNLOAD_DNS=8.8.8.8
-# RDMA over all four dual-cable interfaces is the default. Override CX_IFACE
-# for a single cable.
-# export CX_IFACE=enp1s0f0np0
-# export NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0,rocep1s0f1,roceP2p1s0f1"
+# NCCL selects RDMA devices automatically when NCCL_IB_HCA is empty.
+# Set NCCL_IB_HCA separately on each host when device names differ.
+# export NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0"
 # export NCCL_IB_DISABLE=1   # TCP-socket fallback
 # Per-channel transport evidence in every dual-node server log (the
 # connectx_env.sh default; read by run_models.sh and audit_nccl_transport.py).
@@ -488,24 +503,17 @@ Do not put an arbitrary `SERVING_FINGERPRINT` in `.env` to satisfy the full
 config. It must be the SHA-256 hash of the server's actual launch policy;
 `run_models.sh` computes and forwards it together with the pinned revisions.
 
-Dual-node network defaults live in `scripts/connectx_env.sh`. Override them
-before running the scripts if your node names, IPs, or interface differ:
+Topology values come from `CLUSTER_CONFIG`. The loader identifies the local
+node by matching `hostname -s` to one YAML entry. It derives the head and worker
+addresses, local interface list, socket interface variables, and Ray port.
+`DIYA_*`, `HOEDUS_*`, and conflicting `CX_IFACE` or IP overrides fail with a
+migration message. The canonical topology digest must match on both systems.
+The local YAML paths may differ.
 
-```bash
-export CX_IFACE="enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1"
-export DIYA_HOST=cisc-diya
-export HOEDUS_HOST=cisc-hoedus
-export DIYA_IP=10.10.10.1
-export HOEDUS_IP=10.10.10.2
-export HEAD_IP=$DIYA_IP
-export RAY_PORT=6379
-```
-
-`CX_IFACE` takes one interface for a single-cable setup or a comma-separated
-list for the dual-cable setup. NCCL RDMA device selection uses `NCCL_IB_HCA`
-and auto-discovery when that variable is empty. `CX_IFACE` also feeds the NCCL
-and Gloo socket interface lists and the serving fingerprint. The RDMA setup
-and verification sequence lives in
+`configs/cluster.yaml` is the default topology file.
+`configs/cluster.example.yaml` contains documentation-only hostnames and
+reserved IPv4 ranges. Set `CLUSTER_CONFIG` to use another topology file. The
+RDMA setup and verification sequence is in
 [docs/cluster-setup.md](docs/cluster-setup.md). The per-device RDMA perftest
 matrix runs from the standalone `perftest-suite-dgx-spark-cluster` repository.
 
@@ -532,12 +540,12 @@ largest request is `8192` input tokens and `512` output tokens. The launcher
 defaults to `8704`; if you lower it, also lower the largest workload bucket.
 
 On Grace unified memory, clean page cache can make `MemFree` look too small even
-when `MemAvailable` is sufficient. The single-node launcher now checks both and
-uses `posix_fadvise` to drop only clean file pages in the local Hugging Face
-cache before vLLM starts. It never allocates anonymous memory to
-pressure the host cache. If free memory remains below the target, launch fails
-and asks the operator to use `DROP_CACHES=1` or free the owning process.
-`DROP_CACHES=1` remains an optional proactive flush and requires sudo:
+when `MemAvailable` is sufficient. `run_models.sh` flushes host page cache after
+model files are staged and before each server starts. It records `MemFree` and
+`MemAvailable` before and after the flush. The server memory preflight then
+checks the same `GPU_UTIL x MemTotal` threshold that vLLM uses. A remaining
+shortage stops the launch before measurement. Direct `launch_server.sh` calls
+can use `DROP_CACHES=1` for a local proactive flush:
 
 ```bash
 DROP_CACHES=1 \
@@ -674,12 +682,12 @@ For `tp2` and `pp2` the launcher runs a preflight over the Ray cluster before
 starting `vllm serve`: it reads free memory on every node and fails fast if any
 node is below `GPU_UTIL x total`, which is the same bound vLLM enforces per
 worker at startup (on Grace unified memory, CUDA free memory tracks the host's
-`MemFree`). As in single-node mode, a task pinned to each Ray node drops only
-clean Hugging Face checkpoint pages; it never induces general memory pressure.
-The preflight names any node that remains low and asks for an explicit
-`DROP_CACHES=1` restart or removal of a live owner. Without the preflight, the
-same condition surfaces minutes later as an opaque `EngineCore failed to
-start` traceback from a remote Ray worker. If free memory stays tens of GiB
+`MemFree`). Before a distributed server starts, `run_models.sh` flushes page
+cache on the head and worker after model files are staged. The preflight still
+checks every node and stops before measurement if free memory remains below
+the target. Without the preflight, the same condition surfaces minutes later
+as an opaque `EngineCore failed to start` traceback from a remote Ray worker.
+If free memory stays tens of GiB
 short with no owning process, `nvidia-smi` lists no processes, and `buff/cache`
 is small, the NVIDIA driver has leaked unified memory from a killed CUDA
 process — dropping caches will not recover it. Stop the Ray container
@@ -780,10 +788,10 @@ CONCURRENCIES="1 4 8 16 32 64" scripts/run_models.sh single
 
 # Dual-node models. Start Ray on both nodes first; run_models.sh then cycles
 # only the vLLM serve process between models and leaves the Ray cluster up.
-scripts/start_ray.sh head                      # on Diya
-scripts/start_ray.sh worker                    # on Hoedus
+scripts/start_ray.sh head
+scripts/start_ray.sh worker
 # Each node has its own HF cache, and the worker cannot reach huggingface.co.
-# run_models.sh acquires on Diya and mirrors to Hoedus automatically.
+# run_models.sh acquires on the selected head and mirrors to the worker.
 CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed launch
 CANARY_ONLY=1 scripts/run_models.sh pp2
 scripts/run_models.sh tp2
@@ -820,18 +828,17 @@ Ray, or a failed cache purge stops the campaign. Rerun the same `OUT_DIR` with
 
 ### Final unattended campaign
 
-`OUT_DIR` selects the campaign output path. A bare name such as
-`OUT_DIR=rdma-v4-paper` resolves to `results/rdma-v4-paper`. A relative path
-with a directory component, such as `OUT_DIR=results/rdma-v4-paper-2026-10-22`,
-and an absolute path are used as given. With no `OUT_DIR`, `run_job.sh` resolves
-the next unused path beginning with `results/benchmark-<UTC-date>` and passes
-the absolute path to every child process. Later paths use suffixes such as
-`-001` and `-002`. Set `CAMPAIGN_NAME` to prepend a name to this generated
-directory. For example, `CAMPAIGN_NAME=rdma-v4-paper` selects
-`results/rdma-v4-paper-benchmark-<UTC-date>`, followed by the same numbered
-suffixes when paths already exist. `PLAN_ONLY=1` prints the selected path
-without creating it. Set `OUT_DIR` to an existing path to resume a campaign.
-Explicit legacy paths remain available for existing campaigns and resume.
+`OUT_DIR` selects a campaign prefix or a complete campaign path. A bare name
+such as `OUT_DIR=rdma-v4-paper` selects the next unused path matching
+`results/rdma-v4-paper-benchmark-<UTC-date>-NNN`, beginning at `-001`. With no
+`OUT_DIR`, `run_job.sh` selects the next unused
+`results/benchmark-<UTC-date>-NNN` path. `CAMPAIGN_NAME=rdma-v4-paper` adds the
+same prefix when `OUT_DIR` is unset. A bare name already ending in a valid
+campaign date, with an optional sequence number, identifies that directory
+under `results/`.
+A relative path with a directory component or an absolute path is used as
+given, including paths used to resume existing campaigns. `PLAN_ONLY=1` prints
+the selected path without creating it.
 
 New campaigns store result artifacts in `OUT_DIR/results/`, figures and tables
 in `OUT_DIR/figs/`, and logs in `OUT_DIR/logs/`. Plotting accepts a campaign
@@ -839,9 +846,10 @@ directory or an explicit `index.csv` path. When `--out` is omitted, figures and
 tables go under `OUT_DIR/figs/`. The campaign manifest records the campaign
 name, date when present in the directory name, and resolved absolute path.
 Each campaign invocation also saves a read-only system inventory JSON under
-`OUT_DIR/logs/`; preflight runs save one under their unique preflight log
-directory. The inventory records host and serving-container software and
-selected hardware firmware versions for both nodes when available.
+`OUT_DIR/logs/`. Preflight inventories and stage logs are stored under
+`OUT_DIR/preflight/<run-id>/logs/`. The inventory records host and
+serving-container software and selected hardware firmware versions for both
+nodes when available.
 
 Finalize and commit the benchmark code and configuration before allocating the
 GPUs. The campaign refuses tracked, staged, or untracked changes under the
@@ -867,9 +875,10 @@ concurrencies) expect ~247 h of measurement, plus ~17 h of model launches,
 ~9 h for the canary pass, and ~3 h of downloads: ~279 h (about 11.6 days),
 or ~312 h (13 days) with pessimistic latencies. Of the 954 windows, 684 use
 two GB10s, so the campaign is at least ~341 GB10-hours of accelerator use;
-this is not "198 GPU-hours." Then start Ray on Diya and Hoedus and run this on
-Diya inside `tmux`, using the same `OUT_DIR`. `scripts/connectx_env.sh` already
-defaults to the dual-cable RDMA layout with NCCL transport logging:
+this is not "198 GPU-hours." Start Ray on the YAML-selected head and worker,
+then run this on the selected head inside `tmux`, using the same `OUT_DIR`.
+`scripts/connectx_env.sh` loads the topology and defaults to RDMA with NCCL
+transport logging:
 
 ```bash
 scripts/run_job.sh
@@ -1108,12 +1117,14 @@ large share of their per-token time) and the overlap with the PMBS26 baseline:
 ```bash
 # On both nodes: restart Ray with the TCP fallback.
 scripts/start_ray.sh stop
-NCCL_IB_DISABLE=1 scripts/start_ray.sh head        # Hoedus: ... worker
-# On Diya: same harness, TCP all-reduce thresholds, subset of the matrix.
+NCCL_IB_DISABLE=1 scripts/start_ray.sh head
+# Run the same worker command on the configured worker.
+# On the selected head: same harness, TCP all-reduce thresholds, subset matrix.
 NCCL_IB_DISABLE=1 ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8 ALLREDUCE_MAX_8B_LATENCY_S=0.005 \
   OUT_DIR=results/tcp-ablation-2026-10-22 \
   CAMPAIGN_LABELS="llama3.1-8b nemotron3-super-120b-a12b-nvfp4" \
-  CAMPAIGN_CONFIGS="tp2 pp2" scripts/run_job.sh
+  CAMPAIGN_CONFIGS="tp2 pp2" \
+  scripts/run_job.sh
 ```
 
 That subset is 12 launches and 72 windows (about 1 day). Finalization runs with
@@ -1182,6 +1193,10 @@ Every measurement point writes these files under `out_dir`:
   power samples used for window integration, with GPU temperature in Celsius
   and GPU/node identity when the sensor reports it. It is written whenever a
   power backend is active.
+- `<run_tag>.thermal.log`: timestamped output from `sensors`, sampled once per
+  second on the head and, for dual-node runs, the worker. The summary records
+  its path, SHA-256, and byte count under `artifacts.thermal_samples`. Canary
+  captures use the same format in the campaign `logs/` directory.
 - `<run_tag>.vllm_metrics.jsonl`: timestamped raw values and label sets for the
   required vLLM Prometheus series whenever metrics scraping is active.
 - `<run_tag>.summary.json`: aggregate metrics, capacity samples, server-side
@@ -1509,8 +1524,9 @@ Temperature fields use telemetry schema version 2. Summary values include the
 window-only mean, maximum, valid sample count, maximum observed sample gap,
 sensor source, units, and head/worker coverage. Missing readings remain null
 with an explicit status. GPU temperature is diagnostic and does not gate a
-result. Validate sensor support and behavior on the pinned GB10 image before
-using temperature to interpret a hardware failure.
+result. The thermal log contains timestamped host `sensors` output, including
+available NIC ASIC sensors. A missing `sensors` command is recorded in that
+log and does not gate a result.
 
 ## Troubleshooting
 
@@ -1633,9 +1649,9 @@ using temperature to interpret a hardware failure.
   startup: the model exceeds available unified memory. The campaign defaults to
   `0.80`; set a lower `GPU_UTIL` for the campaign or lower `gpu_util_default`
   in `configs/models.yaml` for a persistent change.
-- Dual-node performance looks like Wi-Fi or management-network traffic: rerun
-  `scripts/verify_connectx.sh`, check `CX_IFACE`, and watch interface byte
-  counters during a `tp2` run.
+- Dual-node performance looks like management-network traffic: run
+  `scripts/verify_connectx.sh` on each host, check the declared rail routes in
+  `CLUSTER_CONFIG`, and watch interface byte counters during a `tp2` run.
 - No energy figure is generated: rerun with a non-`none` power backend. The
   plotting script skips energy when the index has no power columns.
 - `plot_results.py` reports `Expected N fields` (and the schema versions match):

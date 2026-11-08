@@ -1,0 +1,22 @@
+% Requires \usepackage{booktabs}.
+\begin{tabular}{l r r r r r r r r r r r r r r r }
+\toprule
+Model & Config & HF weight (GiB) & HF KV (GiB) & Worker weight (GiB) & Worker KV (GiB) & KV tokens & GPU blocks & Block & KV dtype & GPU mem util & max\_model\_len & max conc. & Hybrid cache & KV token source & vLLM \\
+\midrule
+nemotron-super-49b-nvfp4 & Single Spark & -- & -- & 29.0 & 64.2 & 686,880 & 42,930 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 78.9 & no & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-super-49b-nvfp4 & Dual Spark, TP=2 & -- & -- & 14.5 & 79.5 & 1,701,200 & 106,325 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 195.4 & no & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-super-49b-nvfp4 & Dual Spark, PP=2 & -- & -- & 10.0 & 85.1 & 1,056,288 & 66,018 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 121.4 & no & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-super-49b-bf16 & Dual Spark, TP=2 & -- & -- & 46.5 & 47.6 & 508,624 & 31,789 & 16 & auto & 0.80 & 8,704 & 58.4 & no & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-puzzle-75b-nvfp4 & Single Spark & -- & -- & 44.6 & 49.7 & 2,170,112 & 2,076 & 6272 & fp8\_e4m3 & 0.80 & 8,704 & 296.6 & yes & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-puzzle-75b-nvfp4 & Dual Spark, TP=2 & -- & -- & 23.0 & 71.5 & 6,240,640 & 5,971 & 6272 & fp8\_e4m3 & 0.80 & 8,704 & 853.0 & yes & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-puzzle-75b-nvfp4 & Dual Spark, PP=2 & -- & -- & 21.7 & 72.9 & 5,964,672 & 5,708 & 6272 & fp8\_e4m3 & 0.80 & 8,704 & 815.4 & yes & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-puzzle-75b-bf16 & Dual Spark, TP=2 & -- & -- & 70.8 & 25.3 & 1,028,608 & 1,972 & 3136 & auto & 0.80 & 8,704 & 246.5 & yes & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+nemotron-puzzle-75b-bf16 & Dual Spark, PP=2 & -- & -- & 65.7 & 28.5 & 765,184 & 1,469 & 3136 & auto & 0.80 & 8,704 & 183.6 & yes & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+qwen3-next-80b-nvfp4 & Single Spark & -- & -- & 44.2 & 50.0 & 1,092,368 & 4,077 & 1072 & fp8\_e4m3 & 0.80 & 8,704 & 339.8 & no & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+qwen3-next-80b-nvfp4 & Dual Spark, TP=2 & -- & -- & 22.2 & 72.2 & 3,154,896 & 11,774 & 1072 & fp8\_e4m3 & 0.80 & 8,704 & 981.2 & no & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+qwen3-next-80b-nvfp4 & Dual Spark, PP=2 & -- & -- & 22.7 & 71.9 & 3,137,744 & 11,709 & 1072 & fp8\_e4m3 & 0.80 & 8,704 & 975.8 & no & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+qwen3-next-80b-bf16 & Dual Spark, TP=2 & -- & -- & 74.3 & 21.9 & 443,904 & 3,267 & 544 & auto & 0.80 & 8,704 & 171.9 & yes & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+qwen3-next-80b-bf16 & Dual Spark, PP=2 & -- & -- & 74.8 & 22.5 & 440,640 & 3,242 & 544 & auto & 0.80 & 8,704 & 170.6 & yes & vllm\_startup\_log & 0.19.0+6bc3197f.nv26.04.48680843 \\
+\bottomrule
+\end{tabular}
+% HF weight/KV columns are optional full-model estimates. Worker columns come from the vLLM startup log and are per serving worker.

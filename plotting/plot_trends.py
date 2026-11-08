@@ -59,7 +59,7 @@ from plot_results import (
     collapse_repeats, configs_present, draw_band, group, has,
     head_only_power, load_index, models_present, save, set_load_axis, set_rc,
 )
-from campaign_output import resolve_campaign_output_path, resolve_index_path
+from utils.campaign_output import resolve_campaign_output_path, resolve_index_path
 
 # ---- model metadata ----------------------------------------------------------
 # Keyed by model_label (configs/models.yaml). params_b/active_b are nominal

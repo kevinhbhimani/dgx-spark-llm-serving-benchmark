@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Collect read-only evidence after a node went down, froze, or rebooted during
-# a campaign. Run on EACH node (Diya and Hoedus); nothing is changed on the host.
+# a campaign. Run on each configured node; nothing is changed on the host.
 #
 #   sudo scripts/node_postmortem.sh [CAMPAIGN_DIR]
 #

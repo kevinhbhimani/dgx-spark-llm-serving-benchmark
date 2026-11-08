@@ -13,19 +13,19 @@ campaign_resolve_out_dir() {
   fi
   export CAMPAIGN_OUT_DIR_IMPLICIT
   if [[ "${CAMPAIGN_PATH_PREPARED:-0}" == "1" && -n "${OUT_DIR:-}" ]]; then
-    OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" resolve \
+    OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/utils/campaign_output.py" resolve \
       --out-dir "$OUT_DIR")" || return 1
   elif [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "1" ]]; then
-    OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" resolve \
+    OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/utils/campaign_output.py" resolve \
       --next-available --default-name "$default_name")" || return 1
   else
-    OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" resolve \
+    OUT_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/utils/campaign_output.py" resolve \
       --out-dir "$OUT_DIR")" || return 1
   fi
   export OUT_DIR
-  CAMPAIGN_RESULTS_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" \
+  CAMPAIGN_RESULTS_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/utils/campaign_output.py" \
     results-dir --out-dir "$OUT_DIR")" || return 1
-  CAMPAIGN_LOGS_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/campaign_output.py" \
+  CAMPAIGN_LOGS_DIR="$(python3 "$CAMPAIGN_OUTPUT_ROOT/utils/campaign_output.py" \
     logs-dir --out-dir "$OUT_DIR")" || return 1
   export CAMPAIGN_RESULTS_DIR CAMPAIGN_LOGS_DIR
 }

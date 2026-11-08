@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 from typing import Mapping, Sequence
 
-from campaign_output import campaign_metadata
+from utils.campaign_output import campaign_metadata
 from scripts.campaign.plan import Campaign
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -80,10 +80,11 @@ def build_manifest(
     skipped_combos: Sequence[str] = (),
     allow_source_match_commits: bool = False,
     harness_git_commits: Sequence[str] = (),
+    topology: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Describe the verified campaign and sorted artifact inventory."""
-    return {
-        "schema_version": 1,
+    manifest: dict[str, object] = {
+        "schema_version": 2 if topology is not None else 1,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "campaign": {
             **campaign_metadata(out_dir),
@@ -106,5 +107,8 @@ def build_manifest(
             for kind, paths in artifacts.items()
         },
     }
+    if topology is not None:
+        manifest["topology"] = dict(topology)
+    return manifest
 
 

@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
-source "$HERE/campaign_output.sh"
+source "$HERE/../utils/campaign_output.sh"
 LABEL="${1-single}"
 case "$LABEL" in
   single|tp2|pp2) ;;
@@ -76,12 +76,12 @@ fi
 # the serving container, so per-token energy covers both nodes. Set
 # WORKER_POWER_NODE_IP="" to disable (rows then record power_nodes=1).
 if [[ "$LABEL" != "single" ]]; then
-  WORKER_POWER_NODE_IP="${WORKER_POWER_NODE_IP-$HOEDUS_IP}"
+  WORKER_POWER_NODE_IP="${WORKER_POWER_NODE_IP-$WORKER_IP}"
   WORKER_POWER_CONTAINER="${WORKER_POWER_CONTAINER:-${VLLM_CONTAINER:-vllm-spark}}"
   if [[ -n "$WORKER_POWER_NODE_IP" && \
-        ( "$WORKER_POWER_NODE_IP" != "$HOEDUS_IP" || \
+        ( "$WORKER_POWER_NODE_IP" != "$WORKER_IP" || \
           "$WORKER_POWER_NODE_IP" == "$HEAD_IP" ) ]]; then
-    echo "[sweep] dual-node WORKER_POWER_NODE_IP must equal HOEDUS_IP ($HOEDUS_IP) and differ from HEAD_IP ($HEAD_IP); got '$WORKER_POWER_NODE_IP'" >&2
+    echo "[sweep] dual-node WORKER_POWER_NODE_IP must equal WORKER_IP ($WORKER_IP) and differ from HEAD_IP ($HEAD_IP); got '$WORKER_POWER_NODE_IP'" >&2
     exit 1
   fi
 else
@@ -94,6 +94,7 @@ else
 fi
 
 require_local_connectx_ip "$HEAD_IP" "benchmark head role" || exit 1
+validate_local_topology_links || exit 1
 acquire_campaign_lock || exit 1
 
 # Optional passthroughs, set by the multi-model orchestrator (run_models.sh) or
