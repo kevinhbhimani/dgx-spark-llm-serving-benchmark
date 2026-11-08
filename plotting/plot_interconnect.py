@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two-node interconnect figure: latency and bandwidth by transport and primitive.
+"""Two-node interconnect figure: bandwidth by transport and primitive.
 
 Reads the interconnect_extra_*.csv files written by
 scripts/interconnect_extra_bench.sh (columns: collective, transport, bytes,
@@ -31,12 +31,12 @@ from matplotlib.ticker import FuncFormatter, NullFormatter
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import (
+from utils.campaign_output import (
     campaign_root_from_input,
     resolve_campaign_output_path,
     resolve_campaign_results_dir,
 )
-from plot_results import COL_W, save, set_rc
+from plot_results import save, set_rc
 
 # Okabe-Ito pair (CVD-safe); same hues as the PMBS26 interconnect figure.
 TRANSPORT_STYLE = {
@@ -49,6 +49,8 @@ COLLECTIVE_STYLE = {
 }
 # ConnectX-7 on DGX Spark: 200 Gb/s per node.
 LINE_RATE_GBPS = 25.0
+INTERCONNECT_FIGURE_WIDTH_INCHES: float = 4.8
+INTERCONNECT_FIGURE_ASPECT_RATIO: float = 3.0
 REQUIRED = {"collective", "transport", "bytes", "avg_s"}
 
 
@@ -86,13 +88,16 @@ def load(dirs: list[str]) -> pd.DataFrame:
 
 def fig_interconnect(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
     agg = (df.groupby(["collective", "transport", "bytes"], as_index=False)
-             .agg(avg_s=("avg_s", "mean"), avg_lo=("avg_s", "min"),
-                  avg_hi=("avg_s", "max"), bw=("bw", "mean"),
+             .agg(avg_s=("avg_s", "mean"), bw=("bw", "mean"),
                   bw_lo=("bw", "min"), bw_hi=("bw", "max"), runs=("bw", "size")))
     transports = sorted(agg["transport"].unique(), key=lambda t: (t != "roce", t))
     collectives = [c for c in COLLECTIVE_STYLE if c in set(agg["collective"])]
 
-    fig, (axt, axb) = plt.subplots(2, 1, figsize=(COL_W, 3.4), sharex=True)
+    figure_size: tuple[float, float] = (
+        INTERCONNECT_FIGURE_WIDTH_INCHES,
+        INTERCONNECT_FIGURE_WIDTH_INCHES / INTERCONNECT_FIGURE_ASPECT_RATIO,
+    )
+    fig, ax = plt.subplots(figsize=figure_size, constrained_layout=False)
     for transport in transports:
         color = _style(transport)["color"]
         for coll in collectives:
@@ -103,39 +108,41 @@ def fig_interconnect(df: pd.DataFrame, out: str, fmts: list[str]) -> None:
             line = dict(color=color, linestyle=COLLECTIVE_STYLE[coll]["linestyle"],
                         marker=COLLECTIVE_STYLE[coll]["marker"], markersize=2.6,
                         linewidth=1.1)
-            axt.plot(sub["bytes"], sub["avg_s"] * 1e6, **line)
-            axt.fill_between(sub["bytes"], sub["avg_lo"] * 1e6, sub["avg_hi"] * 1e6,
-                             color=color, alpha=0.15, linewidth=0)
-            axb.plot(sub["bytes"], sub["bw"], **line)
-            axb.fill_between(sub["bytes"], sub["bw_lo"], sub["bw_hi"],
-                             color=color, alpha=0.15, linewidth=0)
-    axt.set_yscale("log")
-    axt.set_ylabel("Latency (µs)", fontsize=8)
-    axb.set_yscale("log")
+            ax.plot(sub["bytes"], sub["bw"], **line)
+            ax.fill_between(sub["bytes"], sub["bw_lo"], sub["bw_hi"],
+                            color=color, alpha=0.15, linewidth=0)
+    ax.set_yscale("log")
     # Keep the line-rate reference in view even when every transport is far
     # below it (TCP plateaus near 2-3 GB/s).
-    axb.set_ylim(1e-3, max(float(agg["bw_hi"].max()), LINE_RATE_GBPS) * 2)
-    axb.set_ylabel("Bus bandwidth (GB/s)", fontsize=8)
-    axb.set_xlabel("Message size", fontsize=8)
-    axb.axhline(LINE_RATE_GBPS, color="0.35", linestyle=":", linewidth=0.9)
-    axb.annotate(f"200 Gb/s line rate ({LINE_RATE_GBPS:.0f} GB/s)",
-                 xy=(float(agg["bytes"].min()) * 2, LINE_RATE_GBPS),
-                 xytext=(0, -8), textcoords="offset points",
-                 fontsize=6.0, color="0.25", va="top")
-    axb.set_xscale("log", base=2)
+    ax.set_ylim(1e-3, max(float(agg["bw_hi"].max()), LINE_RATE_GBPS) * 2)
+    ax.set_ylabel("Bus bandwidth (GB/s)", fontsize=8)
+    ax.set_xlabel("Message size", fontsize=8)
+    ax.axhline(LINE_RATE_GBPS, color="0.35", linestyle=":", linewidth=0.9)
+    ax.annotate(f"200 Gb/s line rate ({LINE_RATE_GBPS:.0f} GB/s)",
+                xy=(float(agg["bytes"].min()) * 2, LINE_RATE_GBPS),
+                xytext=(0, -8), textcoords="offset points",
+                fontsize=6.0, color="0.25", va="top")
+    ax.set_xscale("log", base=2)
     ticks = [2 ** k for k in (3, 7, 11, 15, 19, 23, 27, 30)]
-    axb.set_xticks([t for t in ticks if agg["bytes"].min() <= t <= agg["bytes"].max()])
-    axb.xaxis.set_major_formatter(FuncFormatter(_bytes_fmt))
-    axb.xaxis.set_minor_formatter(NullFormatter())
-    for ax in (axt, axb):
-        ax.tick_params(labelsize=6.5)
-    plt.setp(axb.get_xticklabels(), rotation=30, ha="right")
+    ax.set_xticks([t for t in ticks if agg["bytes"].min() <= t <= agg["bytes"].max()])
+    ax.xaxis.set_major_formatter(FuncFormatter(_bytes_fmt))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.tick_params(labelsize=6.5)
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+    fig.subplots_adjust(left=0.2, right=0.98, bottom=0.42, top=0.76)
     handles = [Line2D([], [], color=_style(t)["color"], label=_style(t)["label"])
                for t in transports]
     handles += [Line2D([], [], color="0.35", linestyle=COLLECTIVE_STYLE[c]["linestyle"],
                        marker=COLLECTIVE_STYLE[c]["marker"], markersize=3,
                        label=COLLECTIVE_STYLE[c]["label"]) for c in collectives]
-    axt.legend(handles=handles, fontsize=5.8, ncol=2, frameon=False, loc="upper left")
+    fig.legend(
+        handles=handles,
+        fontsize=5.8,
+        ncol=4,
+        frameon=False,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.98),
+    )
     save(fig, "interconnect", out, fmts)
 
     # Plateau and floor per transport/primitive, for the text.
@@ -172,7 +179,8 @@ def main() -> int:
     if df.empty:
         print("no interconnect_extra_*.csv found; run scripts/interconnect_extra_bench.sh")
         return 0
-    fig_interconnect(df, args.out, ["pdf", "png"] if args.format == "both" else [args.format])
+    figure_formats = ["png", "pdf"] if args.format == "both" else [args.format]
+    fig_interconnect(df, args.out, figure_formats)
     return 0
 
 

@@ -150,10 +150,14 @@ models:
     max_model_len: 8704
     meta: {pretty: "Gemma-4-31B NVFP4", arch: dense, attention: sliding-window, quant: nvfp4, params_b: 31.0, active_b: 31.0, nvidia: true}
 
+  # vLLM 0.29.0 on NGC 26.09 raises NotImplementedError for this model's
+  # w1/w3 padding on the FLASHINFER_CUTLASS NVFP4 MoE path under TP2.
+  # single and pp2 passed campaign-2026-10-29-002; keep TP2 excluded until a
+  # compatible backend passes a targeted canary.
   - name: nvidia/Gemma-4-26B-A4B-NVFP4                # 18.8 GB, base gemma-4-26B-A4B-it
     label: gemma4-26b-a4b-nvfp4
     revision: a19cfe00be84568a6867111c9a68c9c44fdcffe6
-    configs: [single, tp2, pp2]
+    configs: [single, pp2]
     max_model_len: 8704
     meta: {pretty: "Gemma-4-26B-A4B NVFP4", arch: moe, attention: sliding-window, quant: nvfp4, params_b: 25.0, active_b: 4.0, nvidia: true}
 

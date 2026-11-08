@@ -6,16 +6,16 @@
 #   (short windows, release gates on) -> resume status -> figures and
 #   replicate statistics -> purge
 #
-#   scripts/hardware_smoke.sh                 # on Diya, with or without Ray up
+#   scripts/hardware_smoke.sh                 # on the configured head, with or without Ray up
 #
 # It uses its own container name, port, and output directory, and the campaign's
-# GPU memory target. Nothing it writes is a paper result. On a machine without
-# the ConnectX addresses, point CX_IFACE/HEAD_IP at a local interface and its
-# address.
+# GPU memory target. Nothing it writes is a paper result. The host and
+# interface values in CLUSTER_CONFIG must match this system.
 #
-# Env: OUT_DIR (default results/smoke-<UTC-date>), SMOKE_LABEL (default
-#      llama3.1-8b-nvfp4,
-#      any label in configs/models.yaml that can run single), SMOKE_GPU_UTIL
+# Env: OUT_DIR (default results/smoke-<UTC-date>-001; a bare name prefixes this
+#      default and selects the next sequence number), SMOKE_LABEL (default
+#      llama3.1-8b-nvfp4; any label in configs/models.yaml that can run single),
+#      SMOKE_GPU_UTIL
 #      (default 0.80), SMOKE_CONCURRENCIES (default "1 4"), PORT (default
 #      8100), SMOKE_VLLM_CONTAINER (default vllm-spark-smoke), PYTHON,
 #      DROP_CACHES
@@ -25,13 +25,13 @@
 # only under load. Stress a suspect checkpoint at the campaign's top load:
 #
 #   SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
-#     SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22 \
+#     SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22-001 \
 #     scripts/hardware_smoke.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 
-source "$HERE/scripts/campaign_output.sh"
+source "$HERE/utils/campaign_output.sh"
 campaign_resolve_out_dir smoke
 campaign_reject_existing_implicit_out_dir || exit 1
 CAMPAIGN_FIGURES_DIR="$OUT_DIR/figs"
@@ -53,6 +53,8 @@ fi
 export PYTHON PYTHONNOUSERSITE=1
 
 source scripts/connectx_env.sh
+require_local_connectx_ip "$HEAD_IP" "hardware smoke head role" || exit 1
+validate_local_topology_links || exit 1
 CAMPAIGN_VLLM_CONTAINER="$VLLM_CONTAINER"
 SMOKE_VLLM_CONTAINER="${SMOKE_VLLM_CONTAINER:-vllm-spark-smoke}"
 if [[ "$SMOKE_VLLM_CONTAINER" == "$CAMPAIGN_VLLM_CONTAINER" ]]; then

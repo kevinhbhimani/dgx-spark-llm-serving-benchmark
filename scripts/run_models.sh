@@ -54,7 +54,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_CONTAINER, HEAD_IP, and .env
-source "$HERE/campaign_output.sh"
+source "$HERE/../utils/campaign_output.sh"
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2) ;; *)
@@ -72,6 +72,9 @@ fi
 export HF_HUB_OFFLINE
 
 require_local_connectx_ip "$HEAD_IP" "model benchmark head role" || exit 1
+if [[ "${STATUS_ONLY:-0}" != "1" ]]; then
+  validate_local_topology_links || exit 1
+fi
 acquire_campaign_lock || exit 1
 
 SKIP_DONE="${SKIP_DONE:-0}"
@@ -247,6 +250,7 @@ if [[ "$CONFIG" == "single" ]]; then
   if ! RUNTIME_FACTS_JSON="$("$PYTHON" - "$SINGLE_CONTAINER" <<'PY'
 import csv
 import json
+import os
 import subprocess
 import sys
 
@@ -317,6 +321,21 @@ for (name, _), value in zip(query, values):
 facts = {
     "gpus": [dict((name, value) for (name, _), value in zip(query, values))],
     "query_fields": [field for _, field in query],
+    "node_id": os.environ["HEAD_NODE_ID"],
+    "node_ip": os.environ["HEAD_IP"],
+    "topology_sha256": os.environ["TOPOLOGY_SHA256"],
+    "expected_interfaces": os.environ["HEAD_CX_IFACE"],
+    "runtime_env": {
+        name: os.environ.get(name, "")
+        for name in (
+            "NCCL_SOCKET_IFNAME",
+            "GLOO_SOCKET_IFNAME",
+            "NCCL_IB_DISABLE",
+            "NCCL_IB_HCA",
+            "NCCL_IB_GID_INDEX",
+            "NCCL_NET_PLUGIN",
+        )
+    },
     # Which container hosts the TP=1 server. Part of the hashed runtime
     # identity, so standalone and in-Ray single rows never resume together.
     "serving_container": serving_container,
@@ -331,7 +350,9 @@ PY
 else
   RUNTIME_SCOPE="dual-cluster"
   if ! cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" \
-      python3 - "$HEAD_IP" "$HOEDUS_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+      python3 - "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+      "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
+      "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
       < "$HERE/cluster_runtime_fingerprint.py")"; then
     echo "[models] dual-node runtime identity preflight failed" >&2
     exit 1
@@ -346,6 +367,7 @@ echo "[models] $RUNTIME_SCOPE runtime facts: $RUNTIME_FACTS_JSON"
 LAUNCH_PID=""
 ACTIVE_CHILD=""
 LAST_SERVER_LOG=""
+THERMAL_PID=""
 STATUS_MISSING=0
 
 server_ready() {
@@ -484,7 +506,31 @@ wait_ready() {
   return 1
 }
 
+stop_thermal_capture() {
+  if [[ -z "$THERMAL_PID" ]]; then
+    return 0
+  fi
+  kill -TERM "$THERMAL_PID" 2>/dev/null || true
+  wait "$THERMAL_PID" 2>/dev/null || true
+  THERMAL_PID=""
+}
+
+start_thermal_capture() {
+  local output_path="$1"
+  local -a arguments=(--output "$output_path" --head-ip "$HEAD_IP")
+  if [[ "$CONFIG" != "single" ]]; then
+    arguments+=(
+      --worker-node-ip "$WORKER_IP"
+      --worker-ssh-target "$WORKER_SSH_TARGET"
+    )
+  fi
+  "$PYTHON" "$HERE/capture_thermals.py" "${arguments[@]}" &
+  THERMAL_PID=$!
+  echo "[models] thermal sensor log: $output_path"
+}
+
 teardown() {
+  stop_thermal_capture
   # A status query never launched anything. Above all it must not remove the
   # Ray head container, which a standalone single teardown would do.
   [[ "$STATUS_ONLY" == "1" ]] && return 0
@@ -625,28 +671,68 @@ serving_fingerprint() {
   local name="$1" revision="$2" tokenizer="$3" tokrev="$4"
   local maxlen="$5" gpu_util="$6" quant="$7" trust="$8"
   local max_num_seqs="${9:-}"
-  {
-    printf 'schema=serving-v1\n'
-    printf 'config=%s\n' "$CONFIG"
-    printf 'image=%s\n' "$VLLM_IMAGE"
-    printf 'model=%s\nrevision=%s\n' "$name" "$revision"
-    printf 'tokenizer=%s\ntokenizer_revision=%s\n' "$tokenizer" "$tokrev"
-    printf 'dtype=%s\nquant=%s\n' "${DTYPE:-auto}" "$quant"
-    printf 'max_model_len=%s\ngpu_util=%s\n' "$maxlen" "$gpu_util"
-    printf 'prefix_caching=%s\ngeneration_config=%s\n' \
-      "${PREFIX_CACHING:-0}" "${GENERATION_CONFIG:-vllm}"
-    printf 'torchinductor_autograd_cache=%s\nhf_hub_offline=%s\n' \
-      "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" "${HF_HUB_OFFLINE:-1}"
-    printf 'trust_remote_code=%s\nray_version=%s\n' "$trust" "$RAY_VERSION"
-    printf 'connectx_iface=%s\nnccl_ib_disable=%s\n' "$CX_IFACE" "$NCCL_IB_DISABLE"
-    printf 'head_ip=%s\nworker_ip=%s\npower_backend=%s\n' \
-      "$HEAD_IP" "$HOEDUS_IP" "$EFFECTIVE_POWER_BACKEND"
-    printf 'cluster_runtime=%s\n' "$CLUSTER_RUNTIME_FINGERPRINT"
-    [[ -z "$max_num_seqs" ]] || printf 'max_num_seqs=%s\n' "$max_num_seqs"
-    # Recorded only when it departs from vLLM's default (autotune on), so a
-    # policy that keeps the default reproduces its earlier fingerprint.
-    [[ "$FLASHINFER_AUTOTUNE" == "1" ]] || printf 'flashinfer_autotune=0\n'
-  } | sha256sum | awk '{print $1}'
+  PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - \
+    "$CONFIG" "$VLLM_IMAGE" "$name" "$revision" "$tokenizer" "$tokrev" \
+    "${DTYPE:-auto}" "$quant" "$maxlen" "$gpu_util" \
+    "${PREFIX_CACHING:-0}" "${GENERATION_CONFIG:-vllm}" \
+    "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" "${HF_HUB_OFFLINE:-1}" \
+    "$trust" "$RAY_VERSION" "$CX_IFACE" "$NCCL_IB_DISABLE" \
+    "$HEAD_IP" "$WORKER_IP" "$EFFECTIVE_POWER_BACKEND" \
+    "$CLUSTER_RUNTIME_FINGERPRINT" "$TOPOLOGY_SHA256" \
+    "$HEAD_NODE_ID" "$WORKER_NODE_ID" "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
+    "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" "${NCCL_NET_PLUGIN:-}" \
+    "$max_num_seqs" "$FLASHINFER_AUTOTUNE" <<'PY'
+import sys
+
+from bench.release_contracts import serving_policy_fingerprint
+
+(
+    config, image, model, revision, tokenizer, tokenizer_revision, dtype, quant,
+    max_model_len, gpu_util, prefix_caching, generation_config,
+    torchinductor_autograd_cache, hf_hub_offline, trust_remote_code, ray_version,
+    connectx_iface, nccl_ib_disable, head_ip, worker_ip, power_backend,
+    runtime_hash, topology_sha256, head_node_id, worker_node_id, head_cx_iface,
+    worker_cx_iface, nccl_ib_hca, nccl_ib_gid_index, nccl_net_plugin,
+    max_num_seqs, flashinfer_autotune,
+) = sys.argv[1:]
+policy = {
+    "schema": "serving-v2",
+    "config": config,
+    "image": image,
+    "model": model,
+    "revision": revision,
+    "tokenizer": tokenizer,
+    "tokenizer_revision": tokenizer_revision,
+    "dtype": dtype,
+    "quant": quant,
+    "max_model_len": max_model_len,
+    "gpu_util": gpu_util,
+    "prefix_caching": prefix_caching,
+    "generation_config": generation_config,
+    "torchinductor_autograd_cache": torchinductor_autograd_cache,
+    "hf_hub_offline": hf_hub_offline,
+    "trust_remote_code": trust_remote_code,
+    "ray_version": ray_version,
+    "connectx_iface": connectx_iface,
+    "nccl_ib_disable": nccl_ib_disable,
+    "head_ip": head_ip,
+    "worker_ip": worker_ip,
+    "power_backend": power_backend,
+    "cluster_runtime": runtime_hash,
+    "runtime_facts_sha256": runtime_hash,
+    "topology_sha256": topology_sha256,
+    "head_node_id": head_node_id,
+    "worker_node_id": worker_node_id,
+    "head_cx_iface": head_cx_iface,
+    "worker_cx_iface": worker_cx_iface,
+    "nccl_ib_hca": nccl_ib_hca,
+    "nccl_ib_gid_index": nccl_ib_gid_index,
+    "nccl_net_plugin": nccl_net_plugin,
+    "max_num_seqs": max_num_seqs,
+    "flashinfer_autotune": flashinfer_autotune,
+}
+print(serving_policy_fingerprint(policy))
+PY
 }
 
 
@@ -655,15 +741,18 @@ write_serving_policy() {
   local tokenizer="$5" tokrev="$6" maxlen="$7" gpu_util="$8"
   local quant="$9" trust="${10}"
   local max_num_seqs="${11:-}"
-  "$PYTHON" - "$destination" "$fingerprint" "serving-v1" "$CONFIG" \
+  PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - "$destination" "$fingerprint" "serving-v2" "$CONFIG" \
     "$VLLM_IMAGE" "$name" "$revision" "$tokenizer" "$tokrev" \
     "${DTYPE:-auto}" "$quant" "$maxlen" "$gpu_util" \
     "${PREFIX_CACHING:-0}" "${GENERATION_CONFIG:-vllm}" \
     "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" "${HF_HUB_OFFLINE:-1}" \
     "$trust" "$RAY_VERSION" "$CX_IFACE" "$NCCL_IB_DISABLE" \
-    "$HEAD_IP" "$HOEDUS_IP" "$EFFECTIVE_POWER_BACKEND" \
+    "$HEAD_IP" "$WORKER_IP" "$EFFECTIVE_POWER_BACKEND" \
     "$CLUSTER_RUNTIME_FINGERPRINT" "$RUNTIME_SCOPE" \
-    "$RUNTIME_FACTS_JSON" "$max_num_seqs" "$FLASHINFER_AUTOTUNE" <<'PY'
+    "$RUNTIME_FACTS_JSON" "$max_num_seqs" "$FLASHINFER_AUTOTUNE" \
+    "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
+    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "${NCCL_IB_HCA:-}" \
+    "${NCCL_IB_GID_INDEX:-}" "${NCCL_NET_PLUGIN:-}" <<'PY'
 import hashlib
 import json
 import os
@@ -701,7 +790,17 @@ from pathlib import Path
     runtime_json,
     max_num_seqs,
     flashinfer_autotune,
+    topology_sha256,
+    head_node_id,
+    worker_node_id,
+    head_cx_iface,
+    worker_cx_iface,
+    nccl_ib_hca,
+    nccl_ib_gid_index,
+    nccl_net_plugin,
 ) = sys.argv[1:]
+
+from bench.release_contracts import serving_policy_fingerprint
 
 try:
     runtime_facts = json.loads(runtime_json)
@@ -717,39 +816,11 @@ if computed_runtime_hash != runtime_hash:
         f"{computed_runtime_hash} != {runtime_hash}"
     )
 
-# This is the existing serving-v1 line serialization. Keeping it here as an
-# assertion prevents the human-readable policy and resume fingerprint from
-# silently drifting apart; dual-node fingerprints remain backward-compatible.
-legacy_input = "".join((
-    f"schema={schema}\n",
-    f"config={config}\n",
-    f"image={image}\n",
-    f"model={model}\nrevision={revision}\n",
-    f"tokenizer={tokenizer}\ntokenizer_revision={tokenizer_revision}\n",
-    f"dtype={dtype}\nquant={quant}\n",
-    f"max_model_len={max_model_len}\ngpu_util={gpu_util}\n",
-    f"prefix_caching={prefix_caching}\ngeneration_config={generation_config}\n",
-    "torchinductor_autograd_cache="
-    f"{torchinductor_autograd_cache}\nhf_hub_offline={hf_hub_offline}\n",
-    f"trust_remote_code={trust_remote_code}\nray_version={ray_version}\n",
-    f"connectx_iface={connectx_iface}\nnccl_ib_disable={nccl_ib_disable}\n",
-    f"head_ip={head_ip}\nworker_ip={worker_ip}\npower_backend={power_backend}\n",
-    f"cluster_runtime={runtime_hash}\n",
-))
 if max_num_seqs:
     if not max_num_seqs.isascii() or not max_num_seqs.isdigit() or int(max_num_seqs) <= 0:
         raise SystemExit("[models] max_num_seqs must be a positive integer")
-    legacy_input += f"max_num_seqs={max_num_seqs}\n"
 if flashinfer_autotune not in ("0", "1"):
     raise SystemExit("[models] flashinfer_autotune must be 0 or 1")
-if flashinfer_autotune == "0":
-    legacy_input += "flashinfer_autotune=0\n"
-computed_fingerprint = hashlib.sha256(legacy_input.encode()).hexdigest()
-if computed_fingerprint != fingerprint:
-    raise SystemExit(
-        "[models] serving policy fields do not reproduce fingerprint: "
-        f"{computed_fingerprint} != {fingerprint}"
-    )
 
 policy = {
     "cluster_runtime": runtime_hash,
@@ -779,11 +850,21 @@ policy = {
     "torchinductor_autograd_cache": torchinductor_autograd_cache,
     "trust_remote_code": trust_remote_code,
     "worker_ip": worker_ip,
+    "topology_sha256": topology_sha256,
+    "head_node_id": head_node_id,
+    "worker_node_id": worker_node_id,
+    "head_cx_iface": head_cx_iface,
+    "worker_cx_iface": worker_cx_iface,
+    "nccl_ib_hca": nccl_ib_hca,
+    "nccl_ib_gid_index": nccl_ib_gid_index,
+    "nccl_net_plugin": nccl_net_plugin,
+    "max_num_seqs": max_num_seqs,
+    "flashinfer_autotune": flashinfer_autotune,
 }
-if max_num_seqs:
-    policy["max_num_seqs"] = max_num_seqs
-if flashinfer_autotune == "0":
-    policy["flashinfer_autotune"] = "0"
+if serving_policy_fingerprint(policy) != fingerprint:
+    raise SystemExit(
+        "[models] serving policy fields do not reproduce fingerprint"
+    )
 encoded = (
     json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
 ).encode()
@@ -839,7 +920,8 @@ run_one() {
   local label="$1" name="$2" revision="$3" maxlen="$4" gpu_util="$5"
   local quant="$6" tok="$7" tokrev="$8" trust="$9"
   local max_num_seqs="${10:-}"
-  local log="" policy_file="" launch_timestamp="" fingerprint_prefix=""
+  local log="" thermal_log="" policy_file="" launch_timestamp=""
+  local fingerprint_prefix=""
   local tokenizer="${tok:-$name}"
   local tokenizer_revision="$tokrev"
   local actual_maxlen="${maxlen:-8704}"
@@ -956,6 +1038,13 @@ run_one() {
     return 1
   fi
   LAST_SERVER_LOG="$log"
+  LAST_FAILURE_STAGE="memory-preparation"
+  if ! "$HERE/flush_page_cache.sh" "$CONFIG" 2>&1 | tee -a "$log"; then
+    echo "[models] page-cache preparation failed for $label/$CONFIG" >&2
+    return 1
+  fi
+  thermal_log="$CAMPAIGN_LOGS_DIR/thermal_${label}_${CONFIG}_${fingerprint_prefix}_${launch_timestamp}_pid$$.log"
+  start_thermal_capture "$thermal_log"
 
   local sweep_env=(MODEL="$name" MODEL_LABEL="$label" SERVER_LOG="$log"
                    SERVING_POLICY_FILE="$policy_file"
@@ -1045,6 +1134,8 @@ PY
     return 0
   fi
 
+  stop_thermal_capture
+
   # Sweep this model. run_all.sh receives the model, label, immutable server log,
   # and canonical serving-policy path so rows can retain the complete launch
   # provenance while recording capacity figures.
@@ -1090,7 +1181,7 @@ for entry in "${ENTRIES[@]}"; do
       FAILURES=$((FAILURES + 1))
       failure="label=$label model=$name revision=${revision:0:12} "\
 "config=$CONFIG replicate=$replicate stage=$LAST_FAILURE_STAGE rc=$status "\
-"node_scope=$RUNTIME_SCOPE head=$HEAD_IP worker=$HOEDUS_IP "\
+"node_scope=$RUNTIME_SCOPE head=$HEAD_IP worker=$WORKER_IP "\
 "results=$OUT_DIR server_log=${LAST_SERVER_LOG:-none}"
       FAILED_ITEMS+=("$failure")
       echo "[models] FAILURE: $failure; inspect campaign and server logs," \

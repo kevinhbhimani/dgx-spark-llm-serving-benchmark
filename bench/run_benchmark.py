@@ -7,15 +7,18 @@ import math
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import time
 import urllib.request
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+THERMAL_CAPTURE_STOP_TIMEOUT_SECONDS: float = 15.0
+THERMAL_CAPTURE_KILL_TIMEOUT_SECONDS: float = 5.0
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import (
+from utils.campaign_output import (
     next_available_campaign_dir,
     resolve_campaign_dir,
     resolve_campaign_results_dir,
@@ -54,6 +57,51 @@ from .release_contracts import (
     validate_provenance as _validate_provenance,
     validate_result_quality as _validate_result_quality,
 )
+
+
+def _start_thermal_capture(
+    output_path: Path,
+    *,
+    head_node_ip: str | None,
+    worker_node_ip: str | None,
+    worker_ssh_target: str | None,
+) -> subprocess.Popen[str] | None:
+    """Start the timestamped host ``sensors`` output capture process."""
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "capture_thermals.py"),
+        "--output",
+        str(output_path),
+        "--head-ip",
+        head_node_ip or "",
+    ]
+    if worker_node_ip:
+        command.extend(("--worker-node-ip", worker_node_ip))
+    if worker_ssh_target:
+        command.extend(("--worker-ssh-target", worker_ssh_target))
+    try:
+        return subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError as error:
+        print(f"[bench] WARNING: could not start sensors capture: {error}")
+        return None
+
+
+def _stop_thermal_capture(process: subprocess.Popen[str] | None) -> None:
+    """Stop the sensor capture subprocess without changing benchmark status."""
+    if process is None:
+        return
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=THERMAL_CAPTURE_STOP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=THERMAL_CAPTURE_KILL_TIMEOUT_SECONDS)
 
 
 def _capture_client_environment() -> tuple[dict[str, object], str]:
@@ -228,7 +276,7 @@ def main() -> None:
                     "--worker-power-node-ip, samples the worker node's GPU "
                     "power so dual-node energy covers both nodes")
     ap.add_argument("--worker-power-node-ip",
-                    help="Ray node IP of the worker to sample (e.g. 10.10.10.2)")
+                    help="Ray node IP of the worker to sample (e.g. 192.0.2.11)")
     ap.add_argument("--head-node-ip",
                     help="Ray/head node IP; required with release-grade dual "
                     "power sampling to prove the worker is distinct")
@@ -385,6 +433,20 @@ def main() -> None:
         wpower = WorkerPowerSampler(cfg.worker_power_container,
                                     cfg.worker_power_node_ip)
     vmet = VLLMMetricsScraper(cfg.base_url) if cfg.scrape_vllm_metrics else None
+    thermal_name = f"{tag}.thermal.log"
+    thermal_path = Path(cfg.out_dir) / thermal_name
+    dual_node_run = cfg.config_label in {"tp2", "pp2"}
+    thermal_capture = _start_thermal_capture(
+        thermal_path,
+        head_node_ip=cfg.head_node_ip or os.environ.get("HEAD_IP"),
+        worker_node_ip=(
+            cfg.worker_power_node_ip or os.environ.get("WORKER_IP")
+            if dual_node_run else None
+        ),
+        worker_ssh_target=(
+            os.environ.get("WORKER_SSH_TARGET") if dual_node_run else None
+        ),
+    )
     # One continuous phase. Closed-loop warmup is automatically extended until
     # every worker's initial request has completed. Cooldown is a minimum: load
     # remains at its configured level until every measurement request finishes,
@@ -418,6 +480,7 @@ def main() -> None:
             wpower.stop()
         if vmet:
             vmet.stop()
+        _stop_thermal_capture(thermal_capture)
     window_start = phase["window_start"]
     window_end = phase["window_end"]
     actual_warmup_s = window_start - phase["phase_start"]
@@ -520,6 +583,10 @@ def main() -> None:
         for record in records
     ).encode()
     artifacts = {"raw": _artifact_metadata(raw_name, raw_data)}
+    if thermal_path.is_file():
+        artifacts["thermal_samples"] = _artifact_metadata(
+            thermal_name, thermal_path.read_bytes()
+        )
     if serving_policy_artifact is not None:
         artifacts["serving_policy"] = serving_policy_artifact
 

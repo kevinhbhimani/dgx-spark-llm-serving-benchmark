@@ -80,14 +80,32 @@ def _gpu_processes() -> list[str]:
     return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
 
-def _worker(rank, world, head_ip, iface, port, sizes, iters, warmup):
+def _worker(
+    rank: int,
+    world: int,
+    head_ip: str,
+    interfaces_by_ip: dict[str, str],
+    port: int,
+    sizes: list[int],
+    iters: int,
+    warmup: int,
+) -> tuple[str, list[tuple[int, float, float]], str]:
     import datetime
     import os
+    import ray as node_ray
 
-    os.environ["NCCL_SOCKET_IFNAME"] = iface
-    os.environ["GLOO_SOCKET_IFNAME"] = iface
-    # Observe each Ray worker's existing policy. The driver environment alone
-    # cannot change the containers on both nodes, so prove the actual data path.
+    node_ip = node_ray.util.get_node_ip_address()
+    expected_interface = interfaces_by_ip.get(node_ip)
+    if expected_interface is None:
+        raise RuntimeError(f"rank {rank} ran on undeclared Ray node {node_ip}")
+    for variable in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME"):
+        observed_interface = os.environ.get(variable, "")
+        if observed_interface != expected_interface:
+            raise RuntimeError(
+                f"rank {rank} on {node_ip} has {variable}={observed_interface!r}, "
+                f"expected {expected_interface!r}"
+            )
+    # Preserve the Ray worker's local interface policy and verify its channel.
     debug_path = f"/tmp/nccl_allreduce_rank{rank}_{os.getpid()}.log"
     os.environ["NCCL_DEBUG"] = "INFO"
     os.environ["NCCL_DEBUG_SUBSYS"] = "INIT,NET"
@@ -141,17 +159,22 @@ def _worker(rank, world, head_ip, iface, port, sizes, iters, warmup):
             dist.destroy_process_group()
 
 def main() -> int:
-    if not 4 <= len(sys.argv) <= 7:
+    if not 5 <= len(sys.argv) <= 8:
         sys.stderr.write(
-            "usage: ray_allreduce_bench.py HEAD_IP WORKER_IP IFACE "
+            "usage: ray_allreduce_bench.py HEAD_IP WORKER_IP "
+            "HEAD_IFACES WORKER_IFACES "
             "[PORT [MIN_BW [MAX_LATENCY]]]\n"
         )
         return 2
-    head_ip, worker_ip, iface = sys.argv[1], sys.argv[2], sys.argv[3]
+    head_ip, worker_ip, head_interface, worker_interface = sys.argv[1:5]
+    interfaces_by_ip = {
+        head_ip: head_interface,
+        worker_ip: worker_interface,
+    }
     try:
-        port = int(sys.argv[4]) if len(sys.argv) > 4 else 29517
-        min_bw = float(sys.argv[5]) if len(sys.argv) > 5 else 16.0
-        max_latency = float(sys.argv[6]) if len(sys.argv) > 6 else 0.0001
+        port = int(sys.argv[5]) if len(sys.argv) > 5 else 29517
+        min_bw = float(sys.argv[6]) if len(sys.argv) > 6 else 16.0
+        max_latency = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0001
     except ValueError as exc:
         sys.stderr.write(f"[microbench] invalid numeric argument: {exc}\n")
         return 2
@@ -208,7 +231,9 @@ def main() -> int:
             num_cpus=0, num_gpus=1, resources={f"node:{ip}": 0.001}
         )(_worker)
         remotes.append(
-            fn.remote(rank, 2, head_ip, iface, port, sizes, iters, warmup)
+            fn.remote(
+                rank, 2, head_ip, interfaces_by_ip, port, sizes, iters, warmup
+            )
         )
     try:
         all_results = ray.get(remotes, timeout=1800)

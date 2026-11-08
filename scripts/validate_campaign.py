@@ -29,7 +29,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from campaign_output import (
+from utils.campaign_output import (
     resolve_campaign_dir,
     resolve_campaign_logs_dir,
     resolve_campaign_results_dir,
@@ -59,6 +59,7 @@ from scripts.contracts.dependency_lock import (
     normalize_distribution_name,
     parse_lock,
 )
+from scripts.cluster_topology import TopologyError, read_topology
 
 
 DIGEST_RE = re.compile(r"[0-9a-fA-F]{64}")
@@ -808,15 +809,31 @@ def _expected_allreduce_fingerprint(
         digest = sha256_file(path)
         source_lines.extend(f"{digest}  {path.resolve()}\n".encode())
     source_fingerprint = hashlib.sha256(source_lines).hexdigest()
-    values = (
-        runtime_fingerprint,
-        source_fingerprint,
-        os.environ.get("ALLREDUCE_PORT", "29517"),
-        str(policy["connectx_iface"]),
-        str(policy["nccl_ib_disable"]),
-        os.environ.get("ALLREDUCE_MIN_1G_BUSBW_GBPS", "16"),
-        os.environ.get("ALLREDUCE_MAX_8B_LATENCY_S", "0.0001"),
-    )
+    if policy.get("schema") == "serving-v1":
+        values = (
+            runtime_fingerprint,
+            source_fingerprint,
+            os.environ.get("ALLREDUCE_PORT", "29517"),
+            str(policy["connectx_iface"]),
+            str(policy["nccl_ib_disable"]),
+            os.environ.get("ALLREDUCE_MIN_1G_BUSBW_GBPS", "16"),
+            os.environ.get("ALLREDUCE_MAX_8B_LATENCY_S", "0.0001"),
+        )
+    else:
+        values = (
+            runtime_fingerprint,
+            source_fingerprint,
+            os.environ.get("ALLREDUCE_PORT", "29517"),
+            str(policy["topology_sha256"]),
+            str(policy["head_cx_iface"]),
+            str(policy["worker_cx_iface"]),
+            str(policy["nccl_ib_disable"]),
+            str(policy["nccl_ib_hca"]),
+            str(policy["nccl_ib_gid_index"]),
+            str(policy["nccl_net_plugin"]),
+            os.environ.get("ALLREDUCE_MIN_1G_BUSBW_GBPS", "16"),
+            os.environ.get("ALLREDUCE_MAX_8B_LATENCY_S", "0.0001"),
+        )
     serialized = "".join(f"{value}\n" for value in values).encode()
     return hashlib.sha256(serialized).hexdigest()
 
@@ -948,6 +965,8 @@ def verify_campaign(
     launch_repeats: dict[Path, tuple[str, str, int]] = {}
     raw_paths: list[Path] = []
     serving_policy_paths: list[Path] = []
+    topology_artifact_paths: list[Path] = []
+    topology_manifest: dict[str, str] | None = None
     summary_paths: list[Path] = []
     log_paths: list[Path] = []
     power_sample_paths: list[Path] = []
@@ -1118,6 +1137,12 @@ def verify_campaign(
             "worker_ip",
             "power_backend",
         )
+        policy_schema = str(serving_policy.get("schema") or "")
+        previous_schema = consistent_policy.setdefault("schema", policy_schema)
+        if previous_schema != policy_schema:
+            raise CampaignValidationError(
+                "campaign mixes serving policy schemas"
+            )
         for field in global_policy_fields:
             value = serving_policy.get(field)
             if value in (None, ""):
@@ -1132,6 +1157,30 @@ def verify_campaign(
                 raise CampaignValidationError(
                     f"campaign mixes multiple serving-policy {field} values"
                 )
+        if policy_schema == "serving-v2":
+            topology_policy_fields = (
+                "topology_sha256",
+                "head_node_id",
+                "worker_node_id",
+                "head_cx_iface",
+                "worker_cx_iface",
+                "nccl_ib_hca",
+                "nccl_ib_gid_index",
+                "nccl_net_plugin",
+            )
+            for field in topology_policy_fields:
+                if field not in serving_policy or serving_policy[field] is None:
+                    raise CampaignValidationError(
+                        f"{context} serving policy has no {field}"
+                    )
+                canonical = json.dumps(
+                    serving_policy[field], sort_keys=True, separators=(",", ":")
+                )
+                previous = consistent_policy.setdefault(field, canonical)
+                if previous != canonical:
+                    raise CampaignValidationError(
+                        f"campaign mixes multiple serving-policy {field} values"
+                    )
         # Optional field: absent means vLLM's default (autotune on). Kernel
         # selection must be one policy across single, tp2, and pp2.
         autotune = str(serving_policy.get("flashinfer_autotune") or "1")
@@ -1182,6 +1231,80 @@ def verify_campaign(
             power_sample_paths.append(power_sample_path)
         if vllm_sample_path is not None:
             vllm_sample_paths.append(vllm_sample_path)
+
+    if consistent_policy.get("schema") == "serving-v2":
+        topology_path = output / "inputs" / "cluster.yaml"
+        topology_metadata_path = output / "inputs" / "cluster_topology.json"
+        try:
+            topology = read_topology(topology_path)
+        except TopologyError as exc:
+            raise CampaignValidationError(
+                f"campaign topology input is invalid: {exc}"
+            ) from exc
+        try:
+            topology_metadata = json.loads(
+                topology_metadata_path.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise CampaignValidationError(
+                f"campaign topology metadata is unreadable: {exc}"
+            ) from exc
+        if not isinstance(topology_metadata, dict):
+            raise CampaignValidationError(
+                "campaign topology metadata must contain an object"
+            )
+        if topology_metadata.get("file") != "cluster.yaml":
+            raise CampaignValidationError(
+                "campaign topology metadata names an unexpected file"
+            )
+        if topology_metadata.get("raw_sha256") != topology.raw_sha256:
+            raise CampaignValidationError(
+                "campaign topology metadata raw digest does not match cluster.yaml"
+            )
+        if topology_metadata.get("topology_sha256") != topology.canonical_sha256:
+            raise CampaignValidationError(
+                "campaign topology metadata canonical digest does not match cluster.yaml"
+            )
+        if consistent_policy.get("topology_sha256") != json.dumps(
+            topology.canonical_sha256, separators=(",", ":")
+        ):
+            raise CampaignValidationError(
+                "serving policy topology digest does not match saved cluster.yaml"
+            )
+        head_node = topology.head_node_record
+        worker_node = topology.worker_node
+        head_interface_list = ",".join(
+            interface.name
+            for interface in sorted(head_node.interfaces, key=lambda item: item.rail)
+        )
+        worker_interface_list = ",".join(
+            interface.name
+            for interface in sorted(worker_node.interfaces, key=lambda item: item.rail)
+        )
+        head_ip = str(head_node.interface_for(topology.rendezvous_rail).address)
+        worker_ip = str(worker_node.interface_for(topology.rendezvous_rail).address)
+        expected_topology_policy = {
+            "head_node_id": head_node.node_id,
+            "worker_node_id": worker_node.node_id,
+            "head_cx_iface": head_interface_list,
+            "worker_cx_iface": worker_interface_list,
+            "head_ip": head_ip,
+            "worker_ip": worker_ip,
+        }
+        for field, expected_value in expected_topology_policy.items():
+            if consistent_policy.get(field) != json.dumps(
+                expected_value, sort_keys=True, separators=(",", ":")
+            ):
+                raise CampaignValidationError(
+                    f"serving policy {field} does not match saved cluster.yaml"
+                )
+        topology_artifact_paths = [topology_path, topology_metadata_path]
+        topology_manifest = {
+            "topology_sha256": topology.canonical_sha256,
+            "raw_sha256": topology.raw_sha256,
+            "head_node_id": head_node.node_id,
+            "worker_node_id": worker_node.node_id,
+        }
 
     # Derived from the verified set, not the full plan, so a completed-only run
     # of single-node combos does not demand a dual-node all-reduce artifact.
@@ -1274,6 +1397,7 @@ def verify_campaign(
         "source": source_paths,
         "environment": environment_paths,
         "serving_policy": serving_policy_paths,
+        "topology_input": topology_artifact_paths,
         "figure": figure_paths,
     }
     manifest_written: str | None = None
@@ -1297,6 +1421,7 @@ def verify_campaign(
             skipped_combos=skipped_combos,
             allow_source_match_commits=allow_source_match_commits,
             harness_git_commits=sorted(commit_values),
+            topology=topology_manifest,
         )
         write_json_atomic(destination, manifest)
         manifest_written = str(destination)
@@ -1360,7 +1485,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument(
         "--out-dir",
         default=None,
-        help="result directory (default: OUT_DIR or results/benchmark-<UTC-date>)",
+        help="result directory (default: OUT_DIR or results/benchmark-<UTC-date>-001)",
     )
     verify_parser.add_argument(
         "--manifest",

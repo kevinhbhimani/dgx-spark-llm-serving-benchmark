@@ -57,6 +57,54 @@ class ServingPolicyConfig(Protocol):
 
 # Summaries and policies contain heterogeneous nested JSON objects.
 JSONMapping = Mapping[str, Any]
+SERVING_V2_FINGERPRINT_FIELDS = (
+    "schema",
+    "config",
+    "image",
+    "model",
+    "revision",
+    "tokenizer",
+    "tokenizer_revision",
+    "dtype",
+    "quant",
+    "max_model_len",
+    "gpu_util",
+    "prefix_caching",
+    "generation_config",
+    "torchinductor_autograd_cache",
+    "hf_hub_offline",
+    "trust_remote_code",
+    "ray_version",
+    "connectx_iface",
+    "nccl_ib_disable",
+    "head_ip",
+    "worker_ip",
+    "power_backend",
+    "cluster_runtime",
+    "runtime_facts_sha256",
+    "topology_sha256",
+    "head_node_id",
+    "worker_node_id",
+    "head_cx_iface",
+    "worker_cx_iface",
+    "nccl_ib_hca",
+    "nccl_ib_gid_index",
+    "nccl_net_plugin",
+    "max_num_seqs",
+    "flashinfer_autotune",
+)
+
+
+def serving_policy_fingerprint(policy: Mapping[str, object]) -> str:
+    """Hash topology-aware serving fields as canonical JSON."""
+    missing = [field for field in SERVING_V2_FINGERPRINT_FIELDS if field not in policy]
+    if missing:
+        raise RuntimeError(
+            "serving-v2 fingerprint input is missing: " + ", ".join(missing)
+        )
+    fields = {field: policy[field] for field in SERVING_V2_FINGERPRINT_FIELDS}
+    encoded = json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def validate_observability(
@@ -283,7 +331,9 @@ def load_serving_policy(
         raise RuntimeError(
             f"serving policy {source} is missing: " + ", ".join(missing)
         )
-    if policy["schema"] != "serving-v1":
+    if not isinstance(policy["schema"], str) or policy["schema"] not in {
+        "serving-v1", "serving-v2"
+    }:
         raise RuntimeError(
             f"unsupported serving policy schema {policy['schema']!r}"
         )
@@ -338,15 +388,184 @@ def load_serving_policy(
     # Present only when autotuning was disabled; absence is vLLM's default.
     flashinfer_autotune = policy.get("flashinfer_autotune", "")
     if flashinfer_autotune != "":
-        if flashinfer_autotune != "0":
+        allowed_autotune = (
+            {"0"} if policy["schema"] == "serving-v1" else {"0", "1"}
+        )
+        if not isinstance(flashinfer_autotune, str) or flashinfer_autotune not in allowed_autotune:
             raise RuntimeError(
-                "serving policy flashinfer_autotune must be \"0\" when present"
+                "serving policy flashinfer_autotune has an unsupported value"
             )
-        legacy_input += "flashinfer_autotune=0\n"
-    if hashlib.sha256(legacy_input.encode()).hexdigest() != fingerprint:
+        if policy["schema"] == "serving-v1" and flashinfer_autotune == "0":
+            legacy_input += "flashinfer_autotune=0\n"
+    if policy["schema"] == "serving-v1" and hashlib.sha256(legacy_input.encode()).hexdigest() != fingerprint:
         raise RuntimeError(
             "serving policy fields do not reproduce serving_fingerprint"
         )
+    if policy["schema"] == "serving-v2":
+        topology_fields = (
+            "topology_sha256", "head_node_id", "worker_node_id",
+            "head_cx_iface", "worker_cx_iface", "nccl_ib_hca",
+            "nccl_ib_gid_index", "nccl_net_plugin", "max_num_seqs",
+            "flashinfer_autotune",
+        )
+        missing_topology_fields = [
+            field for field in topology_fields if field not in policy
+        ]
+        if missing_topology_fields:
+            raise RuntimeError(
+                "serving-v2 policy is missing: "
+                + ", ".join(missing_topology_fields)
+            )
+        non_string_fields = [
+            field
+            for field in SERVING_V2_FINGERPRINT_FIELDS
+            if not isinstance(policy.get(field), str)
+        ]
+        if non_string_fields:
+            raise RuntimeError(
+                "serving-v2 fingerprint fields must be strings: "
+                + ", ".join(non_string_fields)
+            )
+        if re.fullmatch(r"[0-9a-f]{64}", str(policy["topology_sha256"])) is None:
+            raise RuntimeError("serving policy topology digest is invalid")
+        if not isinstance(policy["nccl_ib_disable"], str) or policy["nccl_ib_disable"] not in {"0", "1"}:
+            raise RuntimeError("serving policy NCCL transport mode is invalid")
+        if policy["connectx_iface"] != policy["head_cx_iface"]:
+            raise RuntimeError(
+                "serving-v2 connectx_iface does not match the head interfaces"
+            )
+        if serving_policy_fingerprint(policy) != fingerprint:
+            raise RuntimeError(
+                "serving-v2 fields do not reproduce serving_fingerprint"
+            )
+        expected_runtime_scope = (
+            "single-host" if policy["config"] == "single" else "dual-cluster"
+        )
+        if policy.get("runtime_scope") != expected_runtime_scope:
+            raise RuntimeError(
+                f"serving-v2 runtime_scope must be {expected_runtime_scope}"
+            )
+        if expected_runtime_scope == "single-host":
+            runtime_fact = policy["runtime_facts"]
+            if not isinstance(runtime_fact, dict):
+                raise RuntimeError(
+                    "single serving-v2 policy needs one runtime fact object"
+                )
+            if runtime_fact.get("node_id") != policy["head_node_id"]:
+                raise RuntimeError(
+                    "single serving-v2 runtime node ID does not match the head"
+                )
+            if runtime_fact.get("node_ip") != policy["head_ip"]:
+                raise RuntimeError(
+                    "single serving-v2 runtime IP does not match the head"
+                )
+            if runtime_fact.get("topology_sha256") != policy["topology_sha256"]:
+                raise RuntimeError(
+                    "single serving-v2 runtime topology digest does not match"
+                )
+            expected_interfaces = policy["head_cx_iface"]
+            if runtime_fact.get("expected_interfaces") != expected_interfaces:
+                raise RuntimeError(
+                    "single serving-v2 runtime interfaces do not match the head"
+                )
+            runtime_environment = runtime_fact.get("runtime_env")
+            if not isinstance(runtime_environment, dict):
+                raise RuntimeError(
+                    "single serving-v2 runtime has no environment facts"
+                )
+            expected_runtime_environment = {
+                "NCCL_SOCKET_IFNAME": expected_interfaces,
+                "GLOO_SOCKET_IFNAME": expected_interfaces,
+                "NCCL_IB_DISABLE": policy["nccl_ib_disable"],
+                "NCCL_IB_HCA": policy["nccl_ib_hca"],
+                "NCCL_IB_GID_INDEX": policy["nccl_ib_gid_index"],
+                "NCCL_NET_PLUGIN": policy["nccl_net_plugin"],
+            }
+            for variable, expected_value in expected_runtime_environment.items():
+                if runtime_environment.get(variable) != expected_value:
+                    raise RuntimeError(
+                        f"single serving-v2 {variable} does not match the head"
+                    )
+        else:
+            runtime_facts = policy["runtime_facts"]
+            if not isinstance(runtime_facts, list) or len(runtime_facts) != 2:
+                raise RuntimeError(
+                    "dual serving-v2 policy needs two per-node runtime facts"
+                )
+            expected_nodes = {
+                str(policy["head_node_id"]): (
+                    str(policy["head_ip"]), str(policy["head_cx_iface"])
+                ),
+                str(policy["worker_node_id"]): (
+                    str(policy["worker_ip"]), str(policy["worker_cx_iface"])
+                ),
+            }
+            observed_nodes: set[str] = set()
+            runtime_environments: dict[str, dict[str, object]] = {}
+            for runtime_fact in runtime_facts:
+                if not isinstance(runtime_fact, dict):
+                    raise RuntimeError("serving-v2 node runtime fact is malformed")
+                node_id = str(runtime_fact.get("node_id", ""))
+                expected_node = expected_nodes.get(node_id)
+                if expected_node is None or node_id in observed_nodes:
+                    raise RuntimeError(
+                        f"serving-v2 runtime has invalid node ID {node_id!r}"
+                    )
+                observed_nodes.add(node_id)
+                runtime_environment = runtime_fact.get("runtime_env")
+                if not isinstance(runtime_environment, dict):
+                    raise RuntimeError(
+                        f"serving-v2 runtime for {node_id} has no environment facts"
+                    )
+                runtime_environments[node_id] = runtime_environment
+                expected_ip, expected_interfaces = expected_node
+                if runtime_fact.get("node_ip") != expected_ip:
+                    raise RuntimeError(
+                        f"serving-v2 node {node_id} IP does not match topology"
+                    )
+                if runtime_fact.get("topology_sha256") != policy["topology_sha256"]:
+                    raise RuntimeError(
+                        f"serving-v2 node {node_id} topology digest does not match"
+                    )
+                if runtime_fact.get("expected_interfaces") != expected_interfaces:
+                    raise RuntimeError(
+                        f"serving-v2 node {node_id} interfaces do not match topology"
+                    )
+                for variable in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME"):
+                    if runtime_environment.get(variable) != expected_interfaces:
+                        raise RuntimeError(
+                            f"serving-v2 {variable} does not match for {node_id}"
+                        )
+                for variable in ("NCCL_IB_DISABLE", "NCCL_NET_PLUGIN"):
+                    value = runtime_environment.get(variable)
+                    expected_value = (
+                        policy["nccl_ib_disable"]
+                        if variable == "NCCL_IB_DISABLE"
+                        else policy["nccl_net_plugin"]
+                    )
+                    if value != expected_value:
+                        raise RuntimeError(
+                            f"serving-v2 {variable} does not match shared policy "
+                            f"for {node_id}"
+                        )
+                for variable in ("NCCL_IB_HCA", "NCCL_IB_GID_INDEX"):
+                    if not isinstance(runtime_environment.get(variable), str):
+                        raise RuntimeError(
+                            f"serving-v2 runtime for {node_id} has no {variable} fact"
+                        )
+            head_environment = runtime_environments[str(policy["head_node_id"])]
+            for variable, field in (
+                ("NCCL_IB_HCA", "nccl_ib_hca"),
+                ("NCCL_IB_GID_INDEX", "nccl_ib_gid_index"),
+            ):
+                if head_environment.get(variable) != policy[field]:
+                    raise RuntimeError(
+                        f"serving-v2 {variable} does not match the head policy"
+                    )
+            if observed_nodes != set(expected_nodes):
+                raise RuntimeError(
+                    "serving-v2 runtime does not cover both topology nodes"
+                )
 
     expected = {
         "config": cfg.config_label,

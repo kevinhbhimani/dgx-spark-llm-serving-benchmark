@@ -11,10 +11,10 @@
 # restart Ray on both nodes with NCCL_IB_DISABLE=1 and rerun; each CSV
 # carries its own transport column, so runs never overwrite each other:
 #
-#   scripts/start_ray.sh head            # Hoedus: scripts/start_ray.sh worker
+#   scripts/start_ray.sh head            # run worker command on the other host
 #   scripts/interconnect_extra_bench.sh                      # -> transport=roce
 #   # then, the TCP fallback:
-#   NCCL_IB_DISABLE=1 scripts/start_ray.sh head   # and on Hoedus
+#   NCCL_IB_DISABLE=1 scripts/start_ray.sh head   # and on the worker
 #   scripts/interconnect_extra_bench.sh                      # -> transport=tcp
 #
 # Writes result CSVs under $OUT_DIR/results/ and diagnostic streams under
@@ -22,10 +22,15 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
-source "$HERE/campaign_output.sh"
+source "$HERE/../utils/campaign_output.sh"
 campaign_resolve_out_dir
 campaign_reject_existing_implicit_out_dir || exit 1
 require_local_connectx_ip "$HEAD_IP" "interconnect benchmark head role" || exit 1
+if [[ "${1:-}" == "--fingerprint-only" ]]; then
+  validate_local_topology_links >/dev/null || exit 1
+else
+  validate_local_topology_links || exit 1
+fi
 acquire_campaign_lock || exit 1
 
 PORT="${INTERCONNECT_PORT:-29518}"
@@ -35,7 +40,9 @@ if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$PORT < 1 || 10#$PORT > 65535 )); th
 fi
 if [[ -z "${CLUSTER_RUNTIME_FINGERPRINT:-}" ]]; then
   cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" python3 - \
-    "$HEAD_IP" "$HOEDUS_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+    "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
+    "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
+    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
     < "$HERE/cluster_runtime_fingerprint.py")"
   CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$cluster_runtime_json" \
     | sha256sum | awk '{print $1}')"
@@ -43,7 +50,9 @@ fi
 SOURCE_FINGERPRINT="$(sha256sum "$HERE/ray_interconnect_bench.py" \
   "$HERE/interconnect_extra_bench.sh" | sha256sum | awk '{print $1}')"
 ARTIFACT_FINGERPRINT="$(printf '%s\n' "$CLUSTER_RUNTIME_FINGERPRINT" \
-  "$SOURCE_FINGERPRINT" "$PORT" "$CX_IFACE" "$NCCL_IB_DISABLE" \
+  "$SOURCE_FINGERPRINT" "$PORT" "$TOPOLOGY_SHA256" \
+  "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$NCCL_IB_DISABLE" \
+  "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" "${NCCL_NET_PLUGIN:-}" \
   | sha256sum | awk '{print $1}')"
 if [[ "${1:-}" == "--fingerprint-only" ]]; then
   printf '%s\n' "$ARTIFACT_FINGERPRINT"
@@ -64,9 +73,10 @@ trap 'rm -f "$TMP"' EXIT
 # "via NET/Socket" log lines, so a RoCE request that silently falls back to
 # sockets is labelled tcp rather than roce.
 docker exec -i \
-  -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE" \
+  -e NCCL_SOCKET_IFNAME="$HEAD_CX_IFACE" -e GLOO_SOCKET_IFNAME="$HEAD_CX_IFACE" \
   -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG" \
-  "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$HOEDUS_IP" "$CX_IFACE" "$PORT" \
+  "$VLLM_CONTAINER" python3 -u - "$HEAD_IP" "$WORKER_IP" \
+  "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$PORT" \
   < "$HERE/ray_interconnect_bench.py" 2> >(tee "$DIAG" >&2) | tee "$RAW"
 
 # Ray writes cluster status and log-deduplication notices to stdout, the same

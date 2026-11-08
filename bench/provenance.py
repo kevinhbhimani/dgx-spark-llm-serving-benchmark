@@ -180,7 +180,13 @@ def source_fingerprint() -> str:
     paths = list((root / "bench").glob("*.py"))
     paths += [root / "scripts" / name for name in (
         "launch_server.sh", "start_ray.sh", "run_all.sh", "run_models.sh",
-        "models_for_config.py", "swept_concurrencies.py",
+        "run_job.sh", "preflight.sh", "hardware_smoke.sh",
+        "predownload.sh", "mirror_worker_cache.sh", "purge_model_cache.sh",
+        "ray_allreduce_bench.sh", "interconnect_extra_bench.sh",
+        "connectx_env.sh", "verify_connectx.sh", "cluster_topology.py",
+        "system_snapshot.py", "capture_thermals.py", "models_for_config.py",
+        "swept_concurrencies.py",
+        "ray_allreduce_bench.py", "ray_interconnect_bench.py",
         "cluster_runtime_fingerprint.py", "contracts/dependency_lock.py",
         "campaign/plan.py", "campaign/manifest.py",
     )]
