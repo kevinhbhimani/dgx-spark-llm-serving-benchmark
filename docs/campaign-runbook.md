@@ -49,6 +49,9 @@ SINGLE_NODE_ONLY=1 PLAN_ONLY=1 scripts/run_job.sh
 # Run local preflight followed by the campaign.
 SINGLE_NODE_ONLY=1 scripts/run_preflight_then_benchmark.sh
 
+# Set vLLM's per-instance GPU memory target to 70% for both stages.
+SINGLE_NODE_ONLY=1 GPU_UTIL=0.70 scripts/run_preflight_then_benchmark.sh
+
 # Run selected labels. Dual-only labels are listed as excluded.
 SINGLE_NODE_ONLY=1 CAMPAIGN_LABELS='llama3.1-8b qwen3.6-27b' \
   scripts/run_job.sh
@@ -59,6 +62,11 @@ Solo mode resolves selected model configurations to `single`. An explicit
 cleanup. `CAMPAIGN_CONFIGS=single` is accepted. Selection uses the same typed
 model/config rule in scheduling and final verification. Verification requires
 every selected concurrency and repeat row.
+
+`GPU_UTIL` sets vLLM's `--gpu-memory-utilization` fraction and the matching
+free-memory preflight target. It does not cap GPU compute utilization. The
+default is `0.80`. The serial entrypoint selects one output directory and uses
+it for preflight and campaign execution.
 
 Model acquisition uses the local Hugging Face cache and online Hub access by
 default. `HF_HUB_OFFLINE=1` requires the selected pinned revisions to be cached.
