@@ -1,0 +1,43 @@
+{
+  "campaign_date": "2026-10-30",
+  "campaign_directory": "RDMA-Betelgeuse-Suite-benchmark-2026-10-30-001",
+  "campaign_name": "RDMA-Betelgeuse-Suite-benchmark",
+  "created_at_utc": "2026-10-31T01:06:26.179931+00:00",
+  "identity": {
+    "files": {
+      "cluster.yaml": "44ae7244287edf4255dc2d41d7bc9ea01a365b525299f14b9c77a42f935c82ab",
+      "experiment.yaml": "00c3b6867f22f5992b197ec673874712c6a7386369c40c7d0632eb2583faef8d",
+      "models.yaml": "5b62a56435906c216ae00283b917c126647591cebf7ce5f92239f4ce089e7d54"
+    },
+    "sha256": "a46e295e332bed02ab218bc582fd494a072f40140cc415906242210549f2545c",
+    "values": {
+      "campaign_configs": "",
+      "campaign_labels": "",
+      "concurrencies": "1 4 8 16 32 64",
+      "connectx_iface": "enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1",
+      "dtype": "auto",
+      "flashinfer_autotune": "0",
+      "generation_config": "vllm",
+      "gid_index": "",
+      "git_commit": "9c14fab3a64d416bb5f58e16324663a9b9a9c0f2",
+      "gpu_util_override": "",
+      "head_cx_iface": "enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1",
+      "head_ip": "10.10.10.1",
+      "head_node_id": "diya",
+      "ib_hca": "",
+      "image": "nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2",
+      "inductor_cache": "0",
+      "net_plugin": "",
+      "network_policy": "0",
+      "prefix_caching": "0",
+      "ray_version": "2.56.1",
+      "repeats": "3",
+      "single_container": "ray",
+      "topology_sha256": "a0eaad4f3ab4e6784284657d45d268e1f7e9ec7b2bb21c6f8704d0a609e7aba5",
+      "worker_cx_iface": "enp1s0f0np0,enP2p1s0f0np0,enp1s0f1np1,enP2p1s0f1np1",
+      "worker_ip": "10.10.10.3",
+      "worker_node_id": "betelgeuse"
+    }
+  },
+  "resolved_out_dir": "/home/dmihovch/dgx-spark-llm-serving-benchmark/results/RDMA-Betelgeuse-Suite-benchmark-2026-10-30-001"
+}
