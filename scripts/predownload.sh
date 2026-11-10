@@ -44,14 +44,18 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"     # VLLM_IMAGE, HF_CACHE, HF_TOKEN, and .env
-require_local_connectx_ip "$HEAD_IP" "model acquisition head role" || exit 1
-acquire_resource_lock || exit 1
-wait_for_resources_idle auto || exit 1
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2|all) ;; *)
   echo "usage: predownload.sh [single|tp2|pp2|all]" >&2; exit 1 ;;
 esac
+if [[ "$SINGLE_NODE_ONLY" == "1" && ( "$CONFIG" == "tp2" || "$CONFIG" == "pp2" ) ]]; then
+  echo "[predownload] $CONFIG requires dual-node execution" >&2
+  exit 2
+fi
+validate_execution_environment "${HEAD_IP:-}" "model acquisition role" 0 || exit 1
+acquire_resource_lock || exit 1
+wait_for_resources_idle auto || exit 1
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 PYTHON="${PYTHON:-python3}"
@@ -63,7 +67,9 @@ DOWNLOAD_WORKERS="${DOWNLOAD_WORKERS:-1}"
 # Which serving configs to cover. "all" unions every config so a shared repo is
 # still fetched once.
 CONFIGS=("$CONFIG")
-if [[ "$CONFIG" == "all" ]]; then CONFIGS=(single tp2 pp2); fi
+if [[ "$CONFIG" == "all" ]]; then
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then CONFIGS=(single); else CONFIGS=(single tp2 pp2); fi
+fi
 
 # Collect unique repo/revision pairs (model names, plus any explicit tokenizer
 # repos) in first-seen order. The kind is retained so the local check can require
@@ -126,7 +132,7 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-validate_local_topology_links || exit 1
+validate_execution_environment "${HEAD_IP:-}" "model acquisition role" || exit 1
 
 if [[ -z "${HF_TOKEN:-}" ]]; then
   echo "[predownload] note: HF_TOKEN is unset; gated repos (e.g. meta-llama) will fail." >&2

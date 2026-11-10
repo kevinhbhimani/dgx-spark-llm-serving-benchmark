@@ -1,7 +1,7 @@
 """Validate campaign configuration and construct its expected execution grid."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 import json
 import math
@@ -44,6 +44,60 @@ class Campaign:
     models: tuple[ModelSpec, ...]
     experiment: Mapping[str, object]
     largest_request_tokens: int
+
+
+@dataclass(frozen=True)
+class ModelSelection:
+    models: tuple[ModelSpec, ...]
+    excluded_labels: tuple[str, ...]
+
+
+def select_models(
+    models: Sequence[ModelSpec],
+    labels: Sequence[str] | None = None,
+    configs: Sequence[str] | None = None,
+    single_node_only: bool = False,
+) -> ModelSelection:
+    """Select validated model records and filter their serving configurations."""
+    requested_labels = set(labels or ())
+    requested_configs = set(configs or ())
+    unknown_labels = requested_labels - {model.label for model in models}
+    if unknown_labels:
+        raise CampaignValidationError(
+            "unknown label(s): " + " ".join(sorted(unknown_labels))
+        )
+    unknown_configs = requested_configs - ALLOWED_CONFIGS
+    if unknown_configs:
+        raise CampaignValidationError(
+            "configs must be among single tp2 pp2: "
+            + " ".join(sorted(unknown_configs))
+        )
+    if single_node_only and requested_configs - {"single"}:
+        raise CampaignValidationError(
+            "SINGLE_NODE_ONLY=1 permits only CAMPAIGN_CONFIGS=single"
+        )
+
+    selected: list[ModelSpec] = []
+    excluded: list[str] = []
+    for model in models:
+        if requested_labels and model.label not in requested_labels:
+            continue
+        if single_node_only:
+            if "single" not in model.configs:
+                excluded.append(model.label)
+                continue
+            selected.append(replace(model, configs=("single",)))
+            continue
+        filtered_configs = tuple(
+            config
+            for config in model.configs
+            if not requested_configs or config in requested_configs
+        )
+        if filtered_configs:
+            selected.append(replace(model, configs=filtered_configs))
+    if not selected:
+        raise CampaignValidationError("the model/config selection is empty")
+    return ModelSelection(tuple(selected), tuple(excluded))
 
 
 @dataclass(frozen=True, order=True)
@@ -451,12 +505,18 @@ def plan_campaign(
     experiment_path: str | os.PathLike[str],
     concurrencies: Sequence[object] | str,
     repeats: object,
+    labels: Sequence[str] | None = None,
+    configs: Sequence[str] | None = None,
+    single_node_only: bool = False,
 ) -> dict[str, object]:
     """Validate a campaign and return its JSON-serializable execution plan."""
     campaign = load_campaign(models_path, experiment_path)
+    selection = select_models(
+        campaign.models, labels, configs, single_node_only
+    )
     loads = parse_concurrencies(concurrencies)
     repeat_count = positive_integer(repeats, "repeats")
-    grid = build_expected_grid(campaign.models, loads, repeat_count)
+    grid = build_expected_grid(selection.models, loads, repeat_count)
     matrix = [
         {
             "model_label": model.label,
@@ -467,17 +527,22 @@ def plan_campaign(
             "repeat_ids": list(range(1, repeat_count + 1)),
             "expected_count": len(loads) * repeat_count,
         }
-        for model in campaign.models
+        for model in selection.models
         for config in model.configs
     ]
     return {
-        "schema_version": 1,
+        "schema_version": 2 if single_node_only else 1,
         "models_yaml": str(campaign.models_path),
         "experiment_yaml": str(campaign.experiment_path),
         "gpu_utilization": campaign.models[0].gpu_utilization,
         "largest_request_tokens": campaign.largest_request_tokens,
-        "model_count": len(campaign.models),
+        "model_count": len(selection.models),
         "model_config_count": len(matrix),
+        "selection": {
+            "labels": [model.label for model in selection.models],
+            "configs": sorted({config for model in selection.models for config in model.configs}),
+            "excluded_labels": list(selection.excluded_labels),
+        },
         "concurrencies": list(loads),
         "repeats": repeat_count,
         "expected_count": len(grid),

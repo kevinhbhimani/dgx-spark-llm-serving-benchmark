@@ -81,10 +81,14 @@ def build_manifest(
     allow_source_match_commits: bool = False,
     harness_git_commits: Sequence[str] = (),
     topology: Mapping[str, str] | None = None,
+    execution: Mapping[str, object] | None = None,
+    selection: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Describe the verified campaign and sorted artifact inventory."""
     manifest: dict[str, object] = {
-        "schema_version": 2 if topology is not None else 1,
+        "schema_version": (
+            3 if execution is not None else 2 if topology is not None else 1
+        ),
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "campaign": {
             **campaign_metadata(out_dir),
@@ -98,6 +102,7 @@ def build_manifest(
             "skipped_combos": list(skipped_combos),
             "allow_source_match_commits": allow_source_match_commits,
             "harness_git_commits": list(harness_git_commits),
+            **({"selection": dict(selection)} if selection is not None else {}),
         },
         "artifacts": {
             kind: [
@@ -109,6 +114,8 @@ def build_manifest(
     }
     if topology is not None:
         manifest["topology"] = dict(topology)
+    if execution is not None:
+        manifest["execution"] = dict(execution)
     return manifest
 
 

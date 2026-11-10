@@ -53,13 +53,17 @@
 # supplies an explicit tokenizer.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$HERE/connectx_env.sh"     # VLLM_CONTAINER, HEAD_IP, and .env
+source "$HERE/connectx_env.sh" || exit 1 # mode, topology, and shared environment
 source "$HERE/../utils/campaign_output.sh"
 
 CONFIG="${1:-single}"
 case "$CONFIG" in single|tp2|pp2) ;; *)
   echo "usage: run_models.sh [single|tp2|pp2] [--skip-done]" >&2; exit 1 ;;
 esac
+if [[ "$SINGLE_NODE_ONLY" == "1" && "$CONFIG" != "single" ]]; then
+  echo "[models] $CONFIG requires dual-node execution" >&2
+  exit 2
+fi
 if [[ "$CONFIG" == "single" ]]; then
   HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
 else
@@ -70,12 +74,6 @@ else
   fi
 fi
 export HF_HUB_OFFLINE
-
-require_local_connectx_ip "$HEAD_IP" "model benchmark head role" || exit 1
-if [[ "${STATUS_ONLY:-0}" != "1" ]]; then
-  validate_local_topology_links || exit 1
-fi
-acquire_campaign_lock || exit 1
 
 SKIP_DONE="${SKIP_DONE:-0}"
 for arg in "${@:2}"; do
@@ -106,6 +104,7 @@ ONLY_REPEAT="${ONLY_REPEAT:-}"
 STATUS_ONLY="${STATUS_ONLY:-0}"
 RUN_JOB_CACHE_READY="${RUN_JOB_CACHE_READY:-0}"
 SINGLE_CONTAINER="${SINGLE_CONTAINER:-standalone}"
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then SINGLE_CONTAINER=standalone; fi
 PYTHON="${PYTHON:-python3}"
 
 case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
@@ -237,6 +236,12 @@ if [[ -n "$MODEL_LABELS" ]]; then
   ENTRIES=("${FILTERED[@]}")
 fi
 echo "[models] $CONFIG: ${#ENTRIES[@]} model(s) from $MODELS_YAML"
+validate_execution_environment "${HEAD_IP:-}" "model benchmark role" \
+  "$([[ "$STATUS_ONLY" == "1" ]] && printf '0' || printf '1')" || exit 1
+if [[ "$STATUS_ONLY" != "1" ]]; then
+  refuse_solo_ray_container_collision || exit 1
+fi
+acquire_campaign_lock || exit 1
 
 # Runtime identity is collected before any resume decision. Dual runs execute
 # model code on both containers, so their existing canonical two-node snapshot
@@ -246,7 +251,23 @@ echo "[models] $CONFIG: ${#ENTRIES[@]} model(s) from $MODELS_YAML"
 RUNTIME_SCOPE="single-host"
 RUNTIME_FACTS_JSON=""
 CLUSTER_RUNTIME_FINGERPRINT=""
-if [[ "$CONFIG" == "single" ]]; then
+SOLO_EXECUTION_SHA256=""
+if [[ "$CONFIG" == "single" && "$SINGLE_NODE_ONLY" == "1" ]]; then
+  if ! SOLO_EXECUTION_SHA256="$(PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON" -m bench.local_execution record "$CAMPAIGN_RESULTS_DIR" \
+      "$LOCAL_HOSTNAME" standalone)"; then
+    echo "[models] local execution record could not be installed" >&2
+    exit 1
+  fi
+  if ! RUNTIME_FACTS_JSON="$(PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" \
+      HF_HUB_OFFLINE="$HF_HUB_OFFLINE" \
+      TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
+      "$PYTHON" -m bench.local_execution runtime "$SOLO_EXECUTION_SHA256" \
+      "$LOCAL_HOSTNAME" standalone "$VLLM_IMAGE")"; then
+    echo "[models] solo runtime identity preflight failed" >&2
+    exit 1
+  fi
+elif [[ "$CONFIG" == "single" ]]; then
   if ! RUNTIME_FACTS_JSON="$("$PYTHON" - "$SINGLE_CONTAINER" <<'PY'
 import csv
 import json
@@ -517,7 +538,7 @@ stop_thermal_capture() {
 
 start_thermal_capture() {
   local output_path="$1"
-  local -a arguments=(--output "$output_path" --head-ip "$HEAD_IP")
+  local -a arguments=(--output "$output_path" --head-ip "${HEAD_IP:-$SOLO_LOOPBACK_ADDRESS}")
   if [[ "$CONFIG" != "single" ]]; then
     arguments+=(
       --worker-node-ip "$WORKER_IP"
@@ -671,6 +692,66 @@ serving_fingerprint() {
   local name="$1" revision="$2" tokenizer="$3" tokrev="$4"
   local maxlen="$5" gpu_util="$6" quant="$7" trust="$8"
   local max_num_seqs="${9:-}"
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - \
+      "$VLLM_IMAGE" "$name" "$revision" "$tokenizer" "$tokrev" \
+      "${DTYPE:-auto}" "$quant" "$maxlen" "$gpu_util" \
+      "${PREFIX_CACHING:-0}" "${GENERATION_CONFIG:-vllm}" \
+      "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" "$HF_HUB_OFFLINE" \
+      "$trust" "$EFFECTIVE_POWER_BACKEND" "$CLUSTER_RUNTIME_FINGERPRINT" \
+      "$RUNTIME_FACTS_JSON" "$max_num_seqs" "$FLASHINFER_AUTOTUNE" \
+      "$SOLO_EXECUTION_SHA256" "$LOCAL_HOSTNAME" standalone <<'PY'
+import hashlib
+import json
+import sys
+
+from bench.release_contracts import serving_policy_fingerprint
+
+(
+    image, model, revision, tokenizer, tokenizer_revision, dtype, quant,
+    max_model_len, gpu_util, prefix_caching, generation_config,
+    torchinductor_autograd_cache, hf_hub_offline, trust_remote_code,
+    power_backend, runtime_hash, runtime_json, max_num_seqs,
+    flashinfer_autotune, execution_sha256, hostname, serving_container,
+) = sys.argv[1:]
+runtime_facts = json.loads(runtime_json)
+if hashlib.sha256(
+    json.dumps(runtime_facts, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest() != runtime_hash:
+    raise SystemExit("[models] local runtime facts do not match their digest")
+policy = {
+    "schema": "serving-v3",
+    "config": "single",
+    "image": image,
+    "model": model,
+    "revision": revision,
+    "tokenizer": tokenizer,
+    "tokenizer_revision": tokenizer_revision,
+    "dtype": dtype,
+    "quant": quant,
+    "max_model_len": max_model_len,
+    "gpu_util": gpu_util,
+    "prefix_caching": prefix_caching,
+    "generation_config": generation_config,
+    "torchinductor_autograd_cache": torchinductor_autograd_cache,
+    "hf_hub_offline": hf_hub_offline,
+    "trust_remote_code": trust_remote_code,
+    "power_backend": power_backend,
+    "cluster_runtime": runtime_hash,
+    "runtime_facts_sha256": runtime_hash,
+    "runtime_scope": "single-host",
+    "runtime_facts": runtime_facts,
+    "max_num_seqs": max_num_seqs,
+    "flashinfer_autotune": flashinfer_autotune,
+    "execution_scope": "single-node",
+    "execution_sha256": execution_sha256,
+    "hostname": hostname,
+    "serving_container": serving_container,
+}
+print(serving_policy_fingerprint(policy))
+PY
+    return $?
+  fi
   PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - \
     "$CONFIG" "$VLLM_IMAGE" "$name" "$revision" "$tokenizer" "$tokrev" \
     "${DTYPE:-auto}" "$quant" "$maxlen" "$gpu_util" \
@@ -741,6 +822,96 @@ write_serving_policy() {
   local tokenizer="$5" tokrev="$6" maxlen="$7" gpu_util="$8"
   local quant="$9" trust="${10}"
   local max_num_seqs="${11:-}"
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - \
+      "$destination" "$fingerprint" "$CONFIG" "$VLLM_IMAGE" "$name" \
+      "$revision" "$tokenizer" "$tokrev" "${DTYPE:-auto}" "$quant" \
+      "$maxlen" "$gpu_util" "${PREFIX_CACHING:-0}" \
+      "${GENERATION_CONFIG:-vllm}" "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
+      "$HF_HUB_OFFLINE" "$trust" "$EFFECTIVE_POWER_BACKEND" \
+      "$CLUSTER_RUNTIME_FINGERPRINT" "$RUNTIME_SCOPE" "$RUNTIME_FACTS_JSON" \
+      "$max_num_seqs" "$FLASHINFER_AUTOTUNE" "$SOLO_EXECUTION_SHA256" \
+      "$LOCAL_HOSTNAME" standalone <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+from bench.release_contracts import serving_policy_fingerprint
+
+(
+    destination_text, fingerprint, config, image, model, revision, tokenizer,
+    tokenizer_revision, dtype, quant, max_model_len, gpu_util, prefix_caching,
+    generation_config, torchinductor_autograd_cache, hf_hub_offline,
+    trust_remote_code, power_backend, runtime_hash, runtime_scope, runtime_json,
+    max_num_seqs, flashinfer_autotune, execution_sha256, hostname,
+    serving_container,
+) = sys.argv[1:]
+runtime_facts = json.loads(runtime_json)
+computed_runtime_hash = hashlib.sha256(
+    json.dumps(runtime_facts, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+if computed_runtime_hash != runtime_hash:
+    raise SystemExit("[models] local runtime facts do not match their digest")
+policy = {
+    "cluster_runtime": runtime_hash,
+    "config": config,
+    "dtype": dtype,
+    "execution_scope": "single-node",
+    "execution_sha256": execution_sha256,
+    "flashinfer_autotune": flashinfer_autotune,
+    "generation_config": generation_config,
+    "gpu_util": gpu_util,
+    "hf_hub_offline": hf_hub_offline,
+    "hostname": hostname,
+    "image": image,
+    "max_model_len": max_model_len,
+    "max_num_seqs": max_num_seqs,
+    "model": model,
+    "prefix_caching": prefix_caching,
+    "power_backend": power_backend,
+    "quant": quant,
+    "revision": revision,
+    "runtime_facts": runtime_facts,
+    "runtime_facts_sha256": runtime_hash,
+    "runtime_scope": runtime_scope,
+    "schema": "serving-v3",
+    "serving_container": serving_container,
+    "serving_fingerprint": fingerprint,
+    "tokenizer": tokenizer,
+    "tokenizer_revision": tokenizer_revision,
+    "torchinductor_autograd_cache": torchinductor_autograd_cache,
+    "trust_remote_code": trust_remote_code,
+}
+if serving_policy_fingerprint(policy) != fingerprint:
+    raise SystemExit("[models] serving-v3 policy fields do not reproduce fingerprint")
+encoded = (json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode()
+destination = Path(destination_text).absolute()
+if not destination.parent.is_dir():
+    raise SystemExit(f"[models] serving policy parent does not exist: {destination.parent}")
+descriptor, temporary_name = tempfile.mkstemp(
+    dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp"
+)
+temporary = Path(temporary_name)
+try:
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        os.link(temporary, destination)
+    except FileExistsError:
+        if destination.is_symlink() or not destination.is_file():
+            raise SystemExit(f"[models] refusing non-regular serving policy: {destination}")
+        if destination.read_bytes() != encoded:
+            raise SystemExit(f"[models] immutable serving policy conflicts with {destination}")
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+    return $?
+  fi
   PYTHONPATH="$HERE/..${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - "$destination" "$fingerprint" "serving-v2" "$CONFIG" \
     "$VLLM_IMAGE" "$name" "$revision" "$tokenizer" "$tokrev" \
     "${DTYPE:-auto}" "$quant" "$maxlen" "$gpu_util" \
@@ -1181,7 +1352,7 @@ for entry in "${ENTRIES[@]}"; do
       FAILURES=$((FAILURES + 1))
       failure="label=$label model=$name revision=${revision:0:12} "\
 "config=$CONFIG replicate=$replicate stage=$LAST_FAILURE_STAGE rc=$status "\
-"node_scope=$RUNTIME_SCOPE head=$HEAD_IP worker=$WORKER_IP "\
+"node_scope=$RUNTIME_SCOPE head=${HEAD_IP:-$LOCAL_IP} worker=${WORKER_IP:-none} "\
 "results=$OUT_DIR server_log=${LAST_SERVER_LOG:-none}"
       FAILED_ITEMS+=("$failure")
       echo "[models] FAILURE: $failure; inspect campaign and server logs," \

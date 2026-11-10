@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-import yaml
+from campaign.plan import CampaignValidationError, select_models, validate_models_yaml
 
 CONFIG_ORDER = ("single", "tp2", "pp2")
 
@@ -76,24 +76,33 @@ def main(argv: list[str]) -> int:
     parser.add_argument("repeats", type=int)
     parser.add_argument("--labels", default="")
     parser.add_argument("--configs", default="")
+    parser.add_argument("--single-node-only", action="store_true")
     args = parser.parse_args(argv)
     if args.repeats < 1:
         print("campaign_schedule.py: repeats must be positive", file=sys.stderr)
         return 2
-    with open(args.models_yaml) as handle:
-        models = (yaml.safe_load(handle) or {}).get("models") or []
-    known = {entry.get("label") for entry in models}
-    labels = set(args.labels.split()) or None
-    if labels and labels - known:
-        print("campaign_schedule.py: unknown label(s): "
-              + " ".join(sorted(labels - known)), file=sys.stderr)
+    try:
+        models = validate_models_yaml(args.models_yaml)
+        selection = select_models(
+            models,
+            args.labels.split(),
+            args.configs.split(),
+            args.single_node_only,
+        )
+    except (CampaignValidationError, OSError) as error:
+        print(f"campaign_schedule.py: {error}", file=sys.stderr)
         return 2
-    configs = set(args.configs.split()) or None
-    if configs and configs - set(CONFIG_ORDER):
-        print("campaign_schedule.py: configs must be among single tp2 pp2",
-              file=sys.stderr)
-        return 2
-    groups = build_groups(models, args.repeats, labels, configs)
+    if selection.excluded_labels:
+        print(
+            "campaign_schedule.py: excluded dual-only labels: "
+            + " ".join(selection.excluded_labels),
+            file=sys.stderr,
+        )
+    selected_models = [
+        {"name": model.name, "label": model.label, "configs": list(model.configs)}
+        for model in selection.models
+    ]
+    groups = build_groups(selected_models, args.repeats)
     if not groups:
         print("campaign_schedule.py: the selection is empty", file=sys.stderr)
         return 2

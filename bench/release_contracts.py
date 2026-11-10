@@ -93,18 +93,137 @@ SERVING_V2_FINGERPRINT_FIELDS = (
     "max_num_seqs",
     "flashinfer_autotune",
 )
+SERVING_V3_REMOVED_FIELDS = frozenset(
+    {
+        "ray_version", "connectx_iface", "nccl_ib_disable", "head_ip",
+        "worker_ip", "topology_sha256", "head_node_id", "worker_node_id",
+        "head_cx_iface", "worker_cx_iface", "nccl_ib_hca",
+        "nccl_ib_gid_index", "nccl_net_plugin",
+    }
+)
+SERVING_V3_FINGERPRINT_FIELDS = tuple(
+    field
+    for field in SERVING_V2_FINGERPRINT_FIELDS
+    if field not in SERVING_V3_REMOVED_FIELDS
+) + ("execution_scope", "execution_sha256", "hostname", "serving_container")
 
 
 def serving_policy_fingerprint(policy: Mapping[str, object]) -> str:
-    """Hash topology-aware serving fields as canonical JSON."""
-    missing = [field for field in SERVING_V2_FINGERPRINT_FIELDS if field not in policy]
+    """Hash serving fields using the canonical schema-specific field list."""
+    schema = policy.get("schema")
+    if schema == "serving-v3":
+        fields_to_hash = SERVING_V3_FINGERPRINT_FIELDS
+    else:
+        fields_to_hash = SERVING_V2_FINGERPRINT_FIELDS
+    missing = [field for field in fields_to_hash if field not in policy]
     if missing:
         raise RuntimeError(
-            "serving-v2 fingerprint input is missing: " + ", ".join(missing)
+            f"{schema or 'serving-v2'} fingerprint input is missing: "
+            + ", ".join(missing)
         )
-    fields = {field: policy[field] for field in SERVING_V2_FINGERPRINT_FIELDS}
+    fields = {field: policy[field] for field in fields_to_hash}
     encoded = json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_solo_serving_policy(policy: Mapping[str, object]) -> None:
+    required_fields = set(SERVING_V3_FINGERPRINT_FIELDS) | {
+        "runtime_facts", "runtime_scope", "runtime_facts_sha256",
+        "serving_fingerprint", "trust_remote_code", "max_num_seqs",
+        "flashinfer_autotune",
+    }
+    missing = sorted(field for field in required_fields if field not in policy)
+    if missing:
+        raise RuntimeError("serving-v3 policy is missing: " + ", ".join(missing))
+    present_peer_fields = sorted(SERVING_V3_REMOVED_FIELDS & policy.keys())
+    if present_peer_fields:
+        raise RuntimeError(
+            "serving-v3 policy contains peer/topology fields: "
+            + ", ".join(present_peer_fields)
+        )
+    if policy["config"] != "single":
+        raise RuntimeError("serving-v3 policy config must be single")
+    if policy["execution_scope"] != "single-node":
+        raise RuntimeError("serving-v3 execution_scope must be single-node")
+    if policy["serving_container"] != "standalone":
+        raise RuntimeError("serving-v3 serving_container must be standalone")
+    if policy["runtime_scope"] != "single-host":
+        raise RuntimeError("serving-v3 runtime_scope must be single-host")
+    for field in SERVING_V3_FINGERPRINT_FIELDS:
+        if not isinstance(policy[field], str):
+            raise RuntimeError(f"serving-v3 {field} must be a string")
+    for field in ("execution_sha256", "runtime_facts_sha256", "serving_fingerprint"):
+        if re.fullmatch(r"[0-9a-f]{64}", str(policy[field])) is None:
+            raise RuntimeError(f"serving-v3 {field} is not a SHA-256 digest")
+    if re.fullmatch(r".+@sha256:[0-9a-fA-F]{64}", str(policy["image"])) is None:
+        raise RuntimeError("serving-v3 image is not pinned by digest")
+    if re.fullmatch(r"[0-9a-fA-F]{40}", str(policy["revision"])) is None:
+        raise RuntimeError("serving-v3 model revision is not immutable")
+    if policy["tokenizer_revision"] and re.fullmatch(
+        r"[0-9a-fA-F]{40}", str(policy["tokenizer_revision"])
+    ) is None:
+        raise RuntimeError("serving-v3 tokenizer revision is not immutable")
+    max_num_seqs = policy["max_num_seqs"]
+    if max_num_seqs != "" and re.fullmatch(r"[1-9][0-9]*", str(max_num_seqs)) is None:
+        raise RuntimeError("serving-v3 max_num_seqs must be a positive integer string")
+    if policy["flashinfer_autotune"] not in {"0", "1"}:
+        raise RuntimeError("serving-v3 flashinfer_autotune must be 0 or 1")
+
+    runtime_facts = policy["runtime_facts"]
+    if not isinstance(runtime_facts, dict):
+        raise RuntimeError("serving-v3 runtime_facts must be one local host object")
+    runtime_digest = hashlib.sha256(
+        json.dumps(runtime_facts, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if runtime_digest != policy["runtime_facts_sha256"]:
+        raise RuntimeError("serving-v3 runtime facts do not match their hash")
+    if policy["cluster_runtime"] != runtime_digest:
+        raise RuntimeError("serving-v3 cluster_runtime must equal local runtime hash")
+    for field in ("hostname", "execution_sha256", "serving_container"):
+        if runtime_facts.get(field) != policy[field]:
+            raise RuntimeError(f"serving-v3 runtime {field} does not match policy")
+    if runtime_facts.get("image") != policy["image"]:
+        raise RuntimeError("serving-v3 runtime image does not match policy")
+    if runtime_facts.get("loopback_address") != "127.0.0.1":
+        raise RuntimeError("serving-v3 runtime loopback address is invalid")
+    runtime_environment = runtime_facts.get("runtime_env")
+    if not isinstance(runtime_environment, dict):
+        raise RuntimeError("serving-v3 runtime environment facts are missing")
+    forbidden_network_settings = {
+        "NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "NCCL_IB_DISABLE",
+        "NCCL_IB_HCA", "NCCL_IB_GID_INDEX", "NCCL_NET_PLUGIN",
+    }
+    inherited_network_settings = sorted(
+        forbidden_network_settings & runtime_environment.keys()
+    )
+    if inherited_network_settings:
+        raise RuntimeError(
+            "serving-v3 runtime records peer network settings: "
+            + ", ".join(inherited_network_settings)
+        )
+    expected_runtime_environment = {
+        "HF_HUB_OFFLINE": policy["hf_hub_offline"],
+        "TRANSFORMERS_OFFLINE": policy["hf_hub_offline"],
+        "TORCHINDUCTOR_AUTOGRAD_CACHE": policy[
+            "torchinductor_autograd_cache"
+        ],
+    }
+    if any(
+        runtime_environment.get(name) != value
+        for name, value in expected_runtime_environment.items()
+    ):
+        raise RuntimeError("serving-v3 runtime environment does not match policy")
+    gpu_records = runtime_facts.get("gpus")
+    if not isinstance(gpu_records, list) or len(gpu_records) != 1 or not isinstance(gpu_records[0], dict):
+        raise RuntimeError("serving-v3 runtime must contain one GPU record")
+    required_gpu_fields = {"gpu_name", "gpu_uuid", "driver", "compute_capability", "max_graphics_clock_mhz"}
+    if any(not isinstance(gpu_records[0].get(field), str) or not gpu_records[0][field]
+           for field in required_gpu_fields):
+        raise RuntimeError("serving-v3 runtime is missing required GPU identity fields")
+    if runtime_facts.get("source") != "host-nvidia-smi":
+        raise RuntimeError("serving-v3 runtime GPU identity source is invalid")
+    if serving_policy_fingerprint(policy) != policy["serving_fingerprint"]:
+        raise RuntimeError("serving-v3 fields do not reproduce serving_fingerprint")
 
 
 def validate_observability(
@@ -316,6 +435,34 @@ def load_serving_policy(
         raise RuntimeError(f"invalid serving policy {source}: {exc}") from exc
     if not isinstance(policy, dict):
         raise RuntimeError(f"serving policy {source} must contain an object")
+
+    if policy.get("schema") == "serving-v3":
+        _validate_solo_serving_policy(policy)
+        expected = {
+            "config": cfg.config_label,
+            "model": cfg.model,
+            "revision": cfg.model_revision,
+            "tokenizer": cfg.tokenizer,
+            "tokenizer_revision": cfg.tokenizer_revision,
+            "serving_fingerprint": cfg.serving_fingerprint,
+        }
+        mismatches = [
+            f"{field}: {policy.get(field)!r} != {value!r}"
+            for field, value in expected.items()
+            if str(policy.get(field, "")) != str(value or "")
+        ]
+        policy_trust = str(policy.get("trust_remote_code", "")).strip().lower()
+        if (policy_trust in {"1", "true", "yes", "on"}) != bool(cfg.trust_remote_code):
+            mismatches.append(
+                f"trust_remote_code: {policy.get('trust_remote_code')!r} "
+                f"!= {cfg.trust_remote_code!r}"
+            )
+        if mismatches:
+            raise RuntimeError(
+                "serving policy does not match benchmark arguments: "
+                + "; ".join(mismatches)
+            )
+        return policy, artifact_metadata(source.name, data)
 
     legacy_fields = (
         "schema", "config", "image", "model", "revision", "tokenizer",

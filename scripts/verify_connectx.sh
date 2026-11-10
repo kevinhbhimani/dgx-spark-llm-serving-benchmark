@@ -3,6 +3,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+reject_solo_execution "ConnectX verification" || exit 2
 
 echo "[verify] local node $LOCAL_NODE_ID, configured head $HEAD_NODE_ID, topology $TOPOLOGY_SHA256"
 validate_local_topology_links
