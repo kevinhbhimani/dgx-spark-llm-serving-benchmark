@@ -1033,10 +1033,11 @@ model.
 
 An optional model-matrix `max_num_seqs` sets and fingerprints vLLM's server
 scheduler limit consistently across that checkpoint's configs. Nemotron 3
-Super NVFP4 uses `4` for the pinned image's documented Spark constraint.
-Client concurrency still ranges up to 64, so requests above the server limit
-queue. State this policy when comparing its curves with other checkpoints;
-see the [readiness runbook](docs/rdma-readiness.md).
+Super NVFP4 leaves this unset so the pinned image uses its default, matching
+the other model entries and allowing the c=64 sweep without an explicit
+four-sequence cap. This departs from NVIDIA's [NGC vLLM 26.09 Spark guidance](https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html),
+which requires four sequences for this model. Record this policy when
+interpreting its results; see the [readiness runbook](docs/rdma-readiness.md).
 
 ### Replicates and statistics
 
