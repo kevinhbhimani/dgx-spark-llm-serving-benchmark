@@ -14,6 +14,10 @@ case "$LABEL" in
     exit 1
     ;;
 esac
+if [[ "$SINGLE_NODE_ONLY" == "1" && "$LABEL" != "single" ]]; then
+  echo "[sweep] $LABEL requires dual-node execution" >&2
+  exit 2
+fi
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
 campaign_resolve_out_dir
 campaign_reject_existing_implicit_out_dir || exit 1
@@ -93,8 +97,7 @@ else
   WORKER_POWER_CONTAINER="${WORKER_POWER_CONTAINER:-}"
 fi
 
-require_local_connectx_ip "$HEAD_IP" "benchmark head role" || exit 1
-validate_local_topology_links || exit 1
+validate_execution_environment "${HEAD_IP:-}" "benchmark role" || exit 1
 acquire_campaign_lock || exit 1
 
 # Optional passthroughs, set by the multi-model orchestrator (run_models.sh) or

@@ -32,6 +32,45 @@ unless a step names a different node or directory.
   on both nodes. `scripts/start_ray.sh` checks its Ray pin against
   `RAY_VERSION` before starting a container.
 
+## Solo campaign
+
+Set `SINGLE_NODE_ONLY=1` for local readiness and campaign execution on one
+host. The solo path does not read `CLUSTER_CONFIG`, check a peer, or query Ray.
+The serving container uses the `-solo` suffix. The client connects to
+`127.0.0.1`. Local GPU readiness, cache access, canaries, power sampling,
+metrics, result checks, and local cache cleanup remain active. ConnectX,
+interconnect, Ray, all-reduce, send/receive, and worker-cache stages report
+`SKIP`.
+
+```bash
+# Validate options and print a local-only campaign plan.
+SINGLE_NODE_ONLY=1 PLAN_ONLY=1 scripts/run_job.sh
+
+# Run local preflight followed by the campaign.
+SINGLE_NODE_ONLY=1 scripts/run_preflight_then_benchmark.sh
+
+# Run selected labels. Dual-only labels are listed as excluded.
+SINGLE_NODE_ONLY=1 CAMPAIGN_LABELS='llama3.1-8b qwen3.6-27b' \
+  scripts/run_job.sh
+```
+
+Solo mode resolves selected model configurations to `single`. An explicit
+`CAMPAIGN_CONFIGS=tp2` or `CAMPAIGN_CONFIGS=pp2` fails before acquisition or
+cleanup. `CAMPAIGN_CONFIGS=single` is accepted. Selection uses the same typed
+model/config rule in scheduling and final verification. Verification requires
+every selected concurrency and repeat row.
+
+Model acquisition uses the local Hugging Face cache and online Hub access by
+default. `HF_HUB_OFFLINE=1` requires the selected pinned revisions to be cached.
+Cache purge runs locally. `PURGE_WORKER=1` fails in solo mode. The host-scoped
+resource lock and local busy-GPU checks remain active.
+
+Solo campaigns save `results/inputs/local_execution.json`, record a local
+hostname and one-GPU runtime identity, and write a schema-version-3 manifest.
+Resume the same `OUT_DIR` on the same host with matching workload, source,
+runtime, serving, and model-selection identity. A solo campaign cannot resume a
+dual campaign directory.
+
 Topology entrypoints default `CLUSTER_CONFIG` to
 `<repo-root>/configs/cluster.yaml` on both systems. Set an override only when
 using a different file. The canonical topology digests must match, and local

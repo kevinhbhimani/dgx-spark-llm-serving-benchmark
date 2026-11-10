@@ -9,6 +9,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+reject_solo_execution "all-reduce benchmarking" || exit 2
 source "$HERE/../utils/campaign_output.sh"
 campaign_resolve_out_dir
 campaign_reject_existing_implicit_out_dir || exit 1

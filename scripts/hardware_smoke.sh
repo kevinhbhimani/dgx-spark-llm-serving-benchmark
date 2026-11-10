@@ -53,48 +53,22 @@ fi
 export PYTHON PYTHONNOUSERSITE=1
 
 source scripts/connectx_env.sh
-require_local_connectx_ip "$HEAD_IP" "hardware smoke head role" || exit 1
-validate_local_topology_links || exit 1
+validate_execution_environment "${HEAD_IP:-}" "hardware smoke role" || exit 1
 CAMPAIGN_VLLM_CONTAINER="$VLLM_CONTAINER"
 SMOKE_VLLM_CONTAINER="${SMOKE_VLLM_CONTAINER:-vllm-spark-smoke}"
 if [[ "$SMOKE_VLLM_CONTAINER" == "$CAMPAIGN_VLLM_CONTAINER" ]]; then
-  echo "[smoke] SMOKE_VLLM_CONTAINER must differ from the Ray container ($CAMPAIGN_VLLM_CONTAINER)" >&2
+  echo "[smoke] SMOKE_VLLM_CONTAINER must differ from the campaign container ($CAMPAIGN_VLLM_CONTAINER)" >&2
   exit 2
 fi
 
-remove_smoke_container() {
-  local container_listing container_id container_name
-  if ! container_listing="$(docker ps --all --format '{{.ID}} {{.Names}}')"; then
-    echo "[smoke] ERROR: cannot list Docker containers for cleanup" >&2
-    return 1
-  fi
-  while read -r container_id container_name; do
-    if [[ "$container_name" == "$SMOKE_VLLM_CONTAINER" ]]; then
-      if ! docker rm --force "$container_id" >/dev/null; then
-        echo "[smoke] ERROR: could not remove temporary container $SMOKE_VLLM_CONTAINER" >&2
-        return 1
-      fi
-      echo "[smoke] removed temporary container $SMOKE_VLLM_CONTAINER"
-    fi
-  done <<<"$container_listing"
-}
-
-finish_smoke() {
-  local original_exit_status=$?
-  trap - EXIT
-  if ! remove_smoke_container; then
-    original_exit_status=1
-  fi
-  exit "$original_exit_status"
-}
-
 acquire_resource_lock || exit 1
-remove_smoke_container || exit 1
 wait_for_resources_idle auto || exit 1
 export VLLM_CONTAINER="$SMOKE_VLLM_CONTAINER"
-trap finish_smoke EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+if docker inspect -f '{{.Id}}' "$VLLM_CONTAINER" >/dev/null 2>&1; then
+  echo "[smoke] refusing pre-existing container '$VLLM_CONTAINER'" >&2
+  exit 1
+fi
+refuse_solo_ray_container_collision || exit 1
 echo "[smoke] temporary serving container: $VLLM_CONTAINER"
 
 mkdir -p "$CAMPAIGN_RESULTS_DIR"

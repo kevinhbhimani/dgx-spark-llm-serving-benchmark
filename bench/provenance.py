@@ -189,6 +189,7 @@ def source_fingerprint() -> str:
         "ray_allreduce_bench.py", "ray_interconnect_bench.py",
         "cluster_runtime_fingerprint.py", "contracts/dependency_lock.py",
         "campaign/plan.py", "campaign/manifest.py",
+        "local_execution.py",
     )]
     h = hashlib.sha256()
     for path in sorted((p for p in paths if p.exists()), key=lambda p: str(p)):

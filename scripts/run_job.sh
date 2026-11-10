@@ -86,7 +86,11 @@ export CAMPAIGN_LABELS="${CAMPAIGN_LABELS-}"
 export CAMPAIGN_CONFIGS="${CAMPAIGN_CONFIGS-}"
 export PLAN_ONLY="${PLAN_ONLY-0}"
 
-source scripts/connectx_env.sh    # VLLM_CONTAINER, HEAD_IP, WORKER_IP, .env
+source scripts/connectx_env.sh || exit 1 # mode, topology, shared environment
+if [[ "$SINGLE_NODE_ONLY" == "1" && "${PURGE_WORKER:-0}" == "1" ]]; then
+  echo "[job] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2
+  exit 2
+fi
 
 # The unattended paper campaign owns these inputs. Clear same-named values
 # inherited from .env or the caller so planning, measurement, and final
@@ -100,7 +104,12 @@ export CANARY_ONLY=0
 export MODEL_LABELS=""
 export STATUS_ONLY=0
 export ONLY_REPEAT=""
-export SINGLE_CONTAINER=ray
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  export SINGLE_CONTAINER=standalone
+  export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
+else
+  export SINGLE_CONTAINER=ray
+fi
 
 if [[ -z "${PYTHON:-}" ]]; then
   if [[ -x "$HERE/.venv/bin/python" ]]; then
@@ -170,6 +179,9 @@ fi
 for config in $CAMPAIGN_CONFIGS; do
   [[ "$config" == "single" || "$config" == "tp2" || "$config" == "pp2" ]] || \
     option_error "CAMPAIGN_CONFIGS may only contain single, tp2, pp2; got '$config'"
+  if [[ "$SINGLE_NODE_ONLY" == "1" && "$config" != "single" ]]; then
+    option_error "CAMPAIGN_CONFIGS may contain only single with SINGLE_NODE_ONLY=1"
+  fi
 done
 
 declare -A CONCURRENCY_SET=()
@@ -177,9 +189,11 @@ validate_integer_set CONCURRENCIES "$CONCURRENCIES" CONCURRENCY_SET
 
 # One line per model group: "LABELS|NEEDS_DUAL|rep:config:label;...".
 # The helper rejects unknown labels and an empty selection.
+SCHEDULER_ARGS=("$MODELS_YAML" "$REPEATS" --labels "$CAMPAIGN_LABELS" \
+  --configs "$CAMPAIGN_CONFIGS")
+[[ "$SINGLE_NODE_ONLY" == "1" ]] && SCHEDULER_ARGS+=(--single-node-only)
 if ! SCHEDULE_TEXT="$("$PYTHON" scripts/campaign_schedule.py \
-    "$MODELS_YAML" "$REPEATS" --labels "$CAMPAIGN_LABELS" \
-    --configs "$CAMPAIGN_CONFIGS")"; then
+    "${SCHEDULER_ARGS[@]}")"; then
   option_error "cannot build the campaign schedule (see the message above)"
 fi
 MODEL_GROUPS=()
@@ -187,39 +201,96 @@ if [[ -n "$SCHEDULE_TEXT" ]]; then
   mapfile -t MODEL_GROUPS <<<"$SCHEDULE_TEXT"
 fi
 
+SELECTION_ARGS=(--models "$MODELS_YAML" --experiment "$CONFIG_YAML" \
+  --concurrencies "$CONCURRENCIES" --repeats "$REPEATS")
+if [[ -n "$CAMPAIGN_LABELS" ]]; then
+  read -r -a REQUESTED_LABELS <<<"$CAMPAIGN_LABELS"
+  SELECTION_ARGS+=(--labels "${REQUESTED_LABELS[@]}")
+fi
+if [[ -n "$CAMPAIGN_CONFIGS" ]]; then
+  read -r -a REQUESTED_CONFIGS <<<"$CAMPAIGN_CONFIGS"
+  SELECTION_ARGS+=(--configs "${REQUESTED_CONFIGS[@]}")
+fi
+[[ "$SINGLE_NODE_ONLY" == "1" ]] && SELECTION_ARGS+=(--single-node-only)
+SELECTION_PLAN_JSON="$("$PYTHON" scripts/validate_campaign.py plan \
+  "${SELECTION_ARGS[@]}")" || option_error "cannot validate the selected campaign grid"
+SELECTED_LABELS="$("$PYTHON" -c 'import json,sys; print(" ".join(json.loads(sys.stdin.read())["selection"]["labels"]))' \
+  <<<"$SELECTION_PLAN_JSON")"
+SELECTED_CONFIGS="$("$PYTHON" -c 'import json,sys; selected=set(json.loads(sys.stdin.read())["selection"]["configs"]); print(" ".join(config for config in ("single", "tp2", "pp2") if config in selected))' \
+  <<<"$SELECTION_PLAN_JSON")"
+EXCLUDED_LABELS="$("$PYTHON" -c 'import json,sys; print(" ".join(json.loads(sys.stdin.read())["selection"]["excluded_labels"]))' \
+  <<<"$SELECTION_PLAN_JSON")"
+
 if [[ "$PLAN_ONLY" != "1" ]]; then
-  require_local_connectx_ip "$HEAD_IP" "paper campaign head role" || exit 1
-  validate_local_topology_links || exit 1
+  validate_execution_environment "${HEAD_IP:-}" "paper campaign role" || exit 1
 fi
 
+if [[ "$SINGLE_NODE_ONLY" == "1" && "$PLAN_ONLY" != "1" ]]; then
+  refuse_solo_ray_container_collision || exit 1
+fi
+
+IDENTITY_ARGS=(--file "$MODELS_YAML" --file "$CONFIG_YAML"
+  --value "git_commit=$(git rev-parse HEAD)"
+  --value "concurrencies=$CONCURRENCIES" --value "repeats=$REPEATS"
+  --value "gpu_util_override=${GPU_UTIL:-}"
+  --value "image=$VLLM_IMAGE"
+  --value "dtype=${DTYPE:-auto}"
+  --value "prefix_caching=${PREFIX_CACHING:-0}"
+  --value "flashinfer_autotune=${FLASHINFER_AUTOTUNE:-0}"
+  --value "generation_config=${GENERATION_CONFIG:-vllm}"
+  --value "inductor_cache=${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
+  --value "single_container=$SINGLE_CONTAINER")
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  SOLO_EXECUTION_SHA256="$(PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" -m bench.local_execution identity "$LOCAL_HOSTNAME" standalone)" || exit 1
+  IDENTITY_ARGS+=(
+    --value "single_node_only=1"
+    --value "execution_scope=single-node"
+    --value "execution_sha256=$SOLO_EXECUTION_SHA256"
+    --value "hostname=$LOCAL_HOSTNAME"
+    --value "serving_container=standalone"
+    --value "hf_hub_offline=$HF_HUB_OFFLINE"
+    --value "selected_labels=$SELECTED_LABELS"
+    --value "selected_configs=$SELECTED_CONFIGS"
+    --value "excluded_labels=$EXCLUDED_LABELS"
+    --value "max_num_seqs=${MAX_NUM_SEQS:-}"
+    --value "quant=${QUANT:-}"
+  )
+else
+  IDENTITY_ARGS+=(
+    --file "$CLUSTER_CONFIG"
+    --value "campaign_labels=$CAMPAIGN_LABELS"
+    --value "campaign_configs=$CAMPAIGN_CONFIGS"
+    --value "network_policy=$NCCL_IB_DISABLE"
+    --value "ib_hca=${NCCL_IB_HCA:-}"
+    --value "gid_index=${NCCL_IB_GID_INDEX:-}"
+    --value "net_plugin=${NCCL_NET_PLUGIN:-}"
+    --value "ray_version=$RAY_VERSION"
+    --value "head_ip=$HEAD_IP"
+    --value "worker_ip=$WORKER_IP"
+    --value "connectx_iface=$CX_IFACE"
+    --value "topology_sha256=$TOPOLOGY_SHA256"
+    --value "head_node_id=$HEAD_NODE_ID"
+    --value "worker_node_id=$WORKER_NODE_ID"
+    --value "head_cx_iface=$HEAD_CX_IFACE"
+    --value "worker_cx_iface=$WORKER_CX_IFACE"
+  )
+fi
 CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/utils/campaign_output.py" identity \
-    --file "$MODELS_YAML" --file "$CONFIG_YAML" --file "$CLUSTER_CONFIG" \
-    --value "git_commit=$(git rev-parse HEAD)" \
-    --value "concurrencies=$CONCURRENCIES" --value "repeats=$REPEATS" \
-    --value "gpu_util_override=${GPU_UTIL:-}" \
-    --value "campaign_labels=$CAMPAIGN_LABELS" \
-    --value "campaign_configs=$CAMPAIGN_CONFIGS" \
-    --value "image=$VLLM_IMAGE" --value "network_policy=$NCCL_IB_DISABLE" \
-    --value "ib_hca=${NCCL_IB_HCA:-}" \
-    --value "gid_index=${NCCL_IB_GID_INDEX:-}" \
-    --value "net_plugin=${NCCL_NET_PLUGIN:-}" \
-    --value "ray_version=$RAY_VERSION" --value "head_ip=$HEAD_IP" \
-    --value "worker_ip=$WORKER_IP" --value "connectx_iface=$CX_IFACE" \
-    --value "topology_sha256=$TOPOLOGY_SHA256" \
-    --value "head_node_id=$HEAD_NODE_ID" --value "worker_node_id=$WORKER_NODE_ID" \
-    --value "head_cx_iface=$HEAD_CX_IFACE" \
-    --value "worker_cx_iface=$WORKER_CX_IFACE" \
-    --value "dtype=${DTYPE:-auto}" \
-    --value "prefix_caching=${PREFIX_CACHING:-0}" \
-    --value "flashinfer_autotune=${FLASHINFER_AUTOTUNE:-0}" \
-    --value "generation_config=${GENERATION_CONFIG:-vllm}" \
-    --value "inductor_cache=${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
-    --value "single_container=$SINGLE_CONTAINER")" || exit 1
+  "${IDENTITY_ARGS[@]}")" || exit 1
 prepare_args=(--out-dir "$OUT_DIR" --identity-json "$CAMPAIGN_IDENTITY")
 [[ "$PLAN_ONLY" == "1" ]] && prepare_args+=(--plan-only)
 [[ "$CAMPAIGN_OUT_DIR_IMPLICIT" == "0" ]] && prepare_args+=(--allow-empty-existing)
 "$PYTHON" "$HERE/utils/campaign_output.py" prepare "${prepare_args[@]}" || exit 1
-if [[ "$PLAN_ONLY" != "1" ]]; then
+if [[ "$PLAN_ONLY" != "1" && "$SINGLE_NODE_ONLY" == "1" ]]; then
+  SAVED_EXECUTION_SHA256="$(PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" -m bench.local_execution record "$CAMPAIGN_RESULTS_DIR" \
+    "$LOCAL_HOSTNAME" standalone)" || exit 1
+  [[ "$SAVED_EXECUTION_SHA256" == "$SOLO_EXECUTION_SHA256" ]] || {
+    echo "[job] local execution record digest changed during campaign setup" >&2
+    exit 1
+  }
+elif [[ "$PLAN_ONLY" != "1" ]]; then
   "$PYTHON" - "$CLUSTER_CONFIG" "$CAMPAIGN_RESULTS_DIR/inputs" \
       "$TOPOLOGY_RAW_SHA256" "$TOPOLOGY_SHA256" <<'PY' || exit 1
 import hashlib
@@ -312,7 +383,7 @@ print(f"{float(value):g}")' "$MODELS_YAML")"
   echo "[plan] campaign options valid; no hardware operations will be performed"
   echo "[plan] PYTHON=$PYTHON PYTHONNOUSERSITE=$PYTHONNOUSERSITE OUT_DIR=$OUT_DIR"
   echo "[plan] canonical inputs: MODELS_YAML=$MODELS_YAML CONFIG_YAML=$CONFIG_YAML POWER_BACKEND=<experiment.yaml> MODEL_LABELS=<all> CANARY_ONLY=$CANARY_ONLY"
-  echo "[plan] selection: labels=${CAMPAIGN_LABELS:-<all>} configs=${CAMPAIGN_CONFIGS:-<all>}"
+  echo "[plan] selection: labels=$SELECTED_LABELS configs=$SELECTED_CONFIGS excluded=$EXCLUDED_LABELS"
   echo "[plan] GPU_UTIL target: $gpu_util_target (default 0.80; override with GPU_UTIL)"
   echo "[plan] concurrencies (${#CONCURRENCY_SET[@]}): $CONCURRENCIES"
   echo "[plan] expected concurrency order: $EXPECTED_CONCURRENCIES"
@@ -329,13 +400,30 @@ print(f"{float(value):g}")' "$MODELS_YAML")"
   echo "[plan] minimum measurement time: ~${minimum_h} h (${point_s:-?} s per window before automatic extensions)"
   echo "[plan] canary pass: CANARY_FIRST=$CANARY_FIRST STOP_AFTER_CANARY=$STOP_AFTER_CANARY ALLOW_CANARY_FAILURES=$ALLOW_CANARY_FAILURES"
   echo "[plan] weights: PURGE_WEIGHTS=$PURGE_WEIGHTS (acquire, mirror if dual-node, measure, purge per model)"
-  echo "[plan] finalization: verify, plots/tables, replicate statistics, transport audit, baseline comparison, sealed manifest"
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    echo "[plan] SINGLE_NODE_ONLY=1; local-only readiness, standalone serving, and local cache cleanup"
+    echo "[plan] finalization skips interconnect figures and NCCL transport audit"
+  else
+    echo "[plan] finalization: verify, plots/tables, replicate statistics, transport audit, baseline comparison, sealed manifest"
+  fi
   if (( REPEATS < 3 )); then
     echo "[plan] NOTE: REPEATS=$REPEATS gives no usable 95% interval; the paper design uses 3"
   fi
 }
 
 verify_saved_topology_input() {
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    local saved_execution_sha256
+    saved_execution_sha256="$(PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON" -m bench.local_execution verify "$CAMPAIGN_RESULTS_DIR" \
+      "$LOCAL_HOSTNAME" standalone)" || return 1
+    if [[ "$saved_execution_sha256" != "$SOLO_EXECUTION_SHA256" ]]; then
+      echo "[job] local execution record digest changed during the campaign" >&2
+      return 1
+    fi
+    echo "[job] local execution record matches $saved_execution_sha256"
+    return 0
+  fi
   "$PYTHON" - "$CLUSTER_CONFIG" \
       "$CAMPAIGN_RESULTS_DIR/inputs/cluster.yaml" \
       "$TOPOLOGY_RAW_SHA256" "$TOPOLOGY_SHA256" <<'PY'
@@ -369,7 +457,7 @@ PY
 
 if [[ "$PLAN_ONLY" == "1" ]]; then
   "$PYTHON" scripts/check_environment.py || exit 1
-  "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" --repeats "$REPEATS" >/dev/null || exit 1
+  "$PYTHON" scripts/validate_campaign.py plan "${SELECTION_ARGS[@]}" >/dev/null || exit 1
   print_plan
   exit 0
 fi
@@ -384,14 +472,22 @@ exec > >(tee -a "$LOG") 2>&1
 log() { echo "[job $(date '+%F %T')] $*"; }
 FAILED=()
 ACTIVE_CHILD=""
+WORKER_SCOPE="$(solo_resource_scope)"
+SOLO_RUNTIME_JSON=""
+SOLO_RUNTIME_SHA256=""
 
 capture_system_snapshot() {
   local timestamp snapshot_path status
+  local -a snapshot_args=()
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   snapshot_path="$CAMPAIGN_LOGS_DIR/system_snapshot_${timestamp}_pid$$.json"
-  if "$PYTHON" scripts/system_snapshot.py \
-      --output "$snapshot_path" --container "$VLLM_CONTAINER" \
-      --image "$VLLM_IMAGE" --cluster-config "$CLUSTER_CONFIG"; then
+  snapshot_args=(--output "$snapshot_path" --container "$VLLM_CONTAINER" --image "$VLLM_IMAGE")
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    snapshot_args+=(--local-only)
+  else
+    snapshot_args+=(--cluster-config "$CLUSTER_CONFIG")
+  fi
+  if "$PYTHON" scripts/system_snapshot.py "${snapshot_args[@]}"; then
     log "system snapshot saved: $snapshot_path"
   else
     status=$?
@@ -423,7 +519,7 @@ handle_signal() {
   fi
   # Fallback if a forcibly killed model wrapper could not run its own trap.
   docker exec "$VLLM_CONTAINER" pkill -f "vllm serve" >/dev/null 2>&1 || true
-  if ! wait_for_resources_idle required; then
+  if ! wait_for_resources_idle "$WORKER_SCOPE"; then
     log "shared resources may still be active after interruption"
   fi
   exit "$status"
@@ -446,7 +542,7 @@ leg() {
   if run_child "$@"; then log "leg OK: $name"; else
     local status=$?
     log "leg FAILED (rc=$status): $name"
-    if ! wait_for_resources_idle required; then
+    if ! wait_for_resources_idle "$WORKER_SCOPE"; then
       log "shared resources are not idle after $name; stopping the campaign"
       exit 1
     fi
@@ -467,7 +563,7 @@ ray_ok() {
 # A stale server collides with the first launch and breaks the idle-GPU
 # precondition of the interconnect microbenchmarks.
 no_stale_server() {
-  wait_for_resources_idle required
+  wait_for_resources_idle "$WORKER_SCOPE"
 }
 
 source_tree_ok() {
@@ -504,6 +600,18 @@ cluster_runtime_ok() {
   log "cluster runtime fingerprint: $CLUSTER_RUNTIME_FINGERPRINT"
 }
 
+collect_solo_runtime() {
+  SOLO_RUNTIME_JSON="$(PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" \
+    HF_HUB_OFFLINE="$HF_HUB_OFFLINE" \
+    TORCHINDUCTOR_AUTOGRAD_CACHE="${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" \
+    "$PYTHON" -m bench.local_execution runtime "$SOLO_EXECUTION_SHA256" \
+    "$LOCAL_HOSTNAME" standalone "$VLLM_IMAGE")" || return 1
+  SOLO_RUNTIME_SHA256="$(printf '%s' "$SOLO_RUNTIME_JSON" \
+    | sha256sum | awk '{print $1}')"
+  export SOLO_RUNTIME_SHA256
+  log "single-host runtime fingerprint: $SOLO_RUNTIME_SHA256"
+}
+
 # RDMA availability can change across boots while the software fingerprint
 # stays constant. Measure the live cluster on every campaign invocation.
 allreduce_preflight() {
@@ -529,6 +637,22 @@ sendrecv_once() {
 }
 
 canary_identity() {
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    {
+      sha256sum "$MODELS_YAML" "$CONFIG_YAML" \
+        "$CAMPAIGN_RESULTS_DIR/client_environment.json" \
+        "$CAMPAIGN_RESULTS_DIR/inputs/local_execution.json"
+      printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" \
+        "$SOLO_EXECUTION_SHA256" "$SOLO_RUNTIME_SHA256" "$LOCAL_HOSTNAME" \
+        "$SINGLE_CONTAINER" "$SELECTED_LABELS" "$SELECTED_CONFIGS" \
+        "$EXCLUDED_LABELS" "$CONCURRENCIES" "$REPEATS" \
+        "${DTYPE:-auto}" "${PREFIX_CACHING:-0}" \
+        "${FLASHINFER_AUTOTUNE:-0}" "${GENERATION_CONFIG:-vllm}" \
+        "${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}" "$HF_HUB_OFFLINE" \
+        "${GPU_UTIL:-}"
+    } | sha256sum | awk '{print $1}'
+    return 0
+  fi
   { sha256sum "$MODELS_YAML" "$CONFIG_YAML"
     # A successful canary is reusable only for the exact client, cluster,
     # serving policy, and network policy that passed it. The Git commit alone
@@ -590,7 +714,9 @@ canary_pass() {
   log "=== canary pass: ${#MODEL_GROUPS[@]} model group(s) ==="
   for entry in "${MODEL_GROUPS[@]}"; do
     IFS='|' read -r labels needs_dual steps <<<"$entry"
-    ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
+    if [[ "$SINGLE_NODE_ONLY" != "1" ]]; then
+      ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
+    fi
     log "--- canary: $labels ---"
     if ! run_child acquire_group "$labels" "$needs_dual"; then
       failures+=("$labels: acquire/mirror")
@@ -600,12 +726,14 @@ canary_pass() {
       for step in "${step_list[@]}"; do
         IFS=':' read -r rep config label <<<"$step"
         [[ "$rep" == "1" ]] || continue
-        ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
+        if [[ "$SINGLE_NODE_ONLY" != "1" ]]; then
+          ray_ok || { log "Ray cluster lost during the canary pass"; exit 1; }
+        fi
         if ! run_child env RUN_JOB_CACHE_READY=1 CANARY_ONLY=1 \
             SKIP_DONE=0 MODEL_LABELS="$label" \
             scripts/run_models.sh "$config"; then
           failures+=("$label/$config")
-          if ! wait_for_resources_idle required; then
+          if ! wait_for_resources_idle "$WORKER_SCOPE"; then
             log "shared resources are not idle after canary $label/$config; stopping the canary pass"
             exit 1
           fi
@@ -637,7 +765,9 @@ canary_pass() {
 measure_group() {
   local labels="$1" needs_dual="$2" steps="$3" step rep config label status
   local -a step_list=()
-  ray_ok || { log "Ray cluster lost; restart it on both nodes and rerun"; exit 1; }
+  if [[ "$SINGLE_NODE_ONLY" != "1" ]]; then
+    ray_ok || { log "Ray cluster lost; restart it on both nodes and rerun"; exit 1; }
+  fi
   log "=== model: $labels ==="
   status=0
   group_status "$steps" || status=$?
@@ -665,7 +795,9 @@ measure_group() {
   IFS=';' read -ra step_list <<<"$steps"
   for step in "${step_list[@]}"; do
     IFS=':' read -r rep config label <<<"$step"
-    ray_ok || { log "Ray cluster lost during measurements"; exit 1; }
+    if [[ "$SINGLE_NODE_ONLY" != "1" ]]; then
+      ray_ok || { log "Ray cluster lost during measurements"; exit 1; }
+    fi
     leg "$label $config replicate $rep/$REPEATS" \
       env RUN_JOB_CACHE_READY=1 REPEATS="$REPEATS" ONLY_REPEAT="$rep" \
           MODEL_LABELS="$label" \
@@ -698,14 +830,29 @@ prep "isolated locked client environment" \
   "$PYTHON" scripts/check_environment.py \
     --manifest "$CAMPAIGN_RESULTS_DIR/client_environment.json"
 prep "valid complete campaign definition" \
-  "$PYTHON" scripts/validate_campaign.py plan --models "$MODELS_YAML" \
-    --experiment "$CONFIG_YAML" --concurrencies "$CONCURRENCIES" \
-    --repeats "$REPEATS"
-prep "Ray cluster active on head+worker"      ray_ok
-prep "no stale vLLM server"                   no_stale_server
-prep "two-node runtime identity matches"      cluster_runtime_ok
-prep "current-cluster allreduce RDMA preflight" allreduce_preflight
-leg  "send/recv interconnect microbench"      sendrecv_once
+  "$PYTHON" scripts/validate_campaign.py plan "${SELECTION_ARGS[@]}"
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
+  export HF_HUB_OFFLINE
+  prep "no local vLLM server" no_stale_server
+  log "=== prep: local execution runtime identity ==="
+  if collect_solo_runtime; then
+    log "prep OK: local execution runtime identity"
+  else
+    log "PREP FAILED: local execution runtime identity -- aborting before any measurement"
+    exit 1
+  fi
+  log "SKIP: Ray health and per-node runtime checks disabled (SINGLE_NODE_ONLY=1)"
+  log "SKIP: worker cache mirroring disabled (SINGLE_NODE_ONLY=1)"
+  log "SKIP: all-reduce gate disabled (SINGLE_NODE_ONLY=1)"
+  log "SKIP: send/recv benchmark disabled (SINGLE_NODE_ONLY=1)"
+else
+  prep "Ray cluster active on head+worker"       ray_ok
+  prep "no stale vLLM server"                    no_stale_server
+  prep "two-node runtime identity matches"       cluster_runtime_ok
+  prep "current-cluster allreduce RDMA preflight" allreduce_preflight
+  leg  "send/recv interconnect microbench"       sendrecv_once
+fi
 
 case "$CANARY_FIRST" in
   1) canary_pass ;;
@@ -745,12 +892,14 @@ fi
 # edit or checkout performed while the job was running before those current
 # files can be sealed beside rows produced by a different revision.
 prep "final clean committed benchmark source tree" source_tree_ok
-prep "current topology matches saved campaign input" verify_saved_topology_input
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  prep "local execution record matches saved campaign input" verify_saved_topology_input
+else
+  prep "current topology matches saved campaign input" verify_saved_topology_input
+fi
 
-VERIFY_ARGS=(--models "$MODELS_YAML" --experiment "$CONFIG_YAML"
-             --out-dir "$OUT_DIR" --concurrencies "$CONCURRENCIES"
-             --repeats "$REPEATS")
-if [[ -n "$CAMPAIGN_LABELS$CAMPAIGN_CONFIGS" ]]; then
+VERIFY_ARGS=("${SELECTION_ARGS[@]}" --out-dir "$OUT_DIR")
+if [[ "$SINGLE_NODE_ONLY" != "1" && -n "$CAMPAIGN_LABELS$CAMPAIGN_CONFIGS" ]]; then
   VERIFY_ARGS+=(--completed-only)
 fi
 prep "complete result grid + artifact verification" \
@@ -762,8 +911,12 @@ leg "primary result figures + summary table" \
 
 # Written under figs/ so the sealed manifest covers them.
 mkdir -p "$CAMPAIGN_FIGURES_DIR/stats"
-leg "interconnect figure (all-reduce and send/recv by transport)" \
-  "$PYTHON" plotting/plot_interconnect.py "$OUT_DIR" --out "$CAMPAIGN_FIGURES_DIR/stats"
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  log "SKIP: interconnect figure disabled (SINGLE_NODE_ONLY=1)"
+else
+  leg "interconnect figure (all-reduce and send/recv by transport)" \
+    "$PYTHON" plotting/plot_interconnect.py "$OUT_DIR" --out "$CAMPAIGN_FIGURES_DIR/stats"
+fi
 leg "cross-model trend figures" \
   "$PYTHON" plotting/plot_trends.py --index "$CAMPAIGN_RESULTS_DIR/index.csv" \
     --out "$CAMPAIGN_FIGURES_DIR/trends" --format both --models "$MODELS_YAML"
@@ -771,9 +924,13 @@ leg "replicate statistics" \
   "$PYTHON" scripts/variance_report.py --index "$CAMPAIGN_RESULTS_DIR/index.csv" \
     --md "$CAMPAIGN_FIGURES_DIR/stats/replicate_stats.md" \
     --tex "$CAMPAIGN_FIGURES_DIR/stats/replicate_stats.tex"
-leg "NCCL transport audit" \
-  "$PYTHON" scripts/audit_nccl_transport.py "$OUT_DIR" \
-    --md "$CAMPAIGN_FIGURES_DIR/stats/nccl_transport_audit.md"
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  log "SKIP: NCCL transport audit disabled (SINGLE_NODE_ONLY=1)"
+else
+  leg "NCCL transport audit" \
+    "$PYTHON" scripts/audit_nccl_transport.py "$OUT_DIR" \
+      --md "$CAMPAIGN_FIGURES_DIR/stats/nccl_transport_audit.md"
+fi
 # Same-model comparisons: over TCP (PMBS26, Llama ladder + Nemotron Super) and
 # over RDMA (October pilot, the carried-over Qwen3-Next pair).
 if [[ -f baselines/pmbs26-tcp/index.csv ]]; then

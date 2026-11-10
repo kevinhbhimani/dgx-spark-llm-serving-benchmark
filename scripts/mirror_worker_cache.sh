@@ -27,6 +27,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
+reject_solo_execution "worker cache mirroring" || exit 2
 require_local_connectx_ip "$HEAD_IP" "worker cache mirror head role" || exit 1
 acquire_resource_lock || exit 1
 

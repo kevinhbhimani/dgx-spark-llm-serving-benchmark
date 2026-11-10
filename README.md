@@ -815,6 +815,38 @@ scripts/start_ray.sh stop                      # on each node when finished
 scripts/run_models.sh single --skip-done       # or SKIP_DONE=1
 ```
 
+### Solo campaign
+
+Set `SINGLE_NODE_ONLY=1` to run the serial preflight and campaign on the local
+host without loading `CLUSTER_CONFIG` or starting or querying Ray. The serving
+container uses a `-solo` name suffix and the benchmark client uses
+`127.0.0.1`. Local GPU, cache, model, power, metrics, and quality checks remain
+active. Dual-only ConnectX and interconnect stages report `SKIP`.
+
+```bash
+# Run local readiness, single-config canaries, measurements, and finalization.
+SINGLE_NODE_ONLY=1 scripts/run_preflight_then_benchmark.sh
+
+# Restrict the campaign to selected labels. Mixed selections report labels
+# that have no single-node configuration and omit those labels from the grid.
+SINGLE_NODE_ONLY=1 CAMPAIGN_LABELS='llama3.1-8b qwen3.6-27b' \
+  scripts/run_job.sh
+
+# Select single explicitly. Solo mode rejects tp2 and pp2 before acquisition.
+SINGLE_NODE_ONLY=1 CAMPAIGN_CONFIGS=single scripts/run_job.sh
+```
+
+Solo downloads use the configured local Hugging Face cache and retain online
+Hub access by default. `HF_HUB_OFFLINE=1` requires each selected revision to
+already exist in that cache. Acquisition, serving, and purge use the local
+host only. `PURGE_WORKER=1` is invalid in solo mode.
+
+Solo resume identity includes the local hostname, one-GPU runtime facts,
+standalone serving choice, workload inputs, and selected model/config grid.
+Resume the same `OUT_DIR` on the same host with matching inputs. A solo
+campaign writes `results/inputs/local_execution.json` and a schema-version-3
+manifest. Dual campaigns retain their existing cluster topology inputs.
+
 Each repeat/concurrency measurement is handled independently. If a point
 fails, `run_all.sh` records its model, revision, node scope, concurrency,
 return code, result directory, and server log. When `MODEL` is set, it checks

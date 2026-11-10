@@ -2,6 +2,19 @@
 # Load a repo-local .env file for script entrypoints.
 # Supports normal shell syntax such as `export VAR=value` and `$HOME` expansion.
 
+resolve_single_node_mode() {
+  if [[ "${SINGLE_NODE_ONLY+x}" != "x" ]]; then
+    SINGLE_NODE_ONLY=0
+  fi
+  case "$SINGLE_NODE_ONLY" in
+    0|1) export SINGLE_NODE_ONLY ;;
+    *)
+      echo "[execution] SINGLE_NODE_ONLY must be exactly 0 or 1, got '$SINGLE_NODE_ONLY'" >&2
+      return 2
+      ;;
+  esac
+}
+
 if [[ -n "${DGX_SPARK_ENV_LOADED:-}" ]]; then
   return 0 2>/dev/null || exit 0
 fi

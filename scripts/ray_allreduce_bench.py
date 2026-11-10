@@ -159,6 +159,11 @@ def _worker(
             dist.destroy_process_group()
 
 def main() -> int:
+    if os.environ.get("SINGLE_NODE_ONLY") == "1":
+        sys.stderr.write(
+            "[microbench] all-reduce benchmarking requires dual-node execution\n"
+        )
+        return 2
     if not 5 <= len(sys.argv) <= 8:
         sys.stderr.write(
             "usage: ray_allreduce_bench.py HEAD_IP WORKER_IP "
