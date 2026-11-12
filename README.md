@@ -66,9 +66,9 @@ PLAN_ONLY=1 scripts/run_job.sh
 
 Plan mode performs no hardware operations. It checks the isolated environment,
 campaign options, model/config matrix, revisions, workload bounds, and expected
-result rectangle. The shipped matrix is 19 checkpoints in 53 model/config
-curves times 6 concurrencies (1 4 8 16 32 64) times `REPEATS=3` independent
-replicates: 159 server launches and 954 measurement windows (see
+result rectangle. The shipped matrix has 17 checkpoints and 47
+model/configuration pairs. Six concurrencies (1 4 8 16 32 64) and
+`REPEATS=3` schedule 141 server launches and 846 measurement windows (see
 [Replicates and statistics](#replicates-and-statistics)).
 
 Before running a Docker-backed model command, confirm that each participating
@@ -269,11 +269,9 @@ Server-side requirements for the included scripts:
 - Permission to run `docker` as the current user.
 - The vLLM container image. The launcher defaults to the immutable NGC
   `26.09-py3` digest recorded in `scripts/connectx_env.sh`: vLLM 0.29.0, CUDA
-  13.4.1, NCCL 2.31.2, and the HPC-X NCCL RDMA plugin. It is the newest NGC
-  vLLM release; upstream vLLM is further ahead (0.31), but its images are not
-  NVIDIA's validated GB10/RDMA stack. Do not replace the digest with a mutable
-  monthly tag during a comparable sweep. The baselines used `26.04-py3` (vLLM
-  0.19.0), which is too old for several checkpoints in the current matrix.
+  13.4.1, NCCL 2.31.2, and the HPC-X NCCL RDMA plugin. Keep the image digest
+  fixed within a comparable campaign. The baselines used `26.04-py3` (vLLM
+  0.19.0), which does not support several checkpoints in the current matrix.
 - Ray `RAY_VERSION` (2.56.1, the release vLLM 0.29.0 is tested against),
   installed into both containers by `scripts/start_ray.sh`; the image does not
   bundle Ray. `scripts/ray-runtime-constraints.txt` pins its dependencies to
@@ -298,8 +296,7 @@ newgrp docker
 
 ## Configuration
 
-The main experiment configuration is `configs/experiment.yaml`. Important
-fields:
+The main experiment configuration is `configs/experiment.yaml`. Its fields:
 
 - `base_url`: vLLM server URL, for example `http://127.0.0.1:8000`.
 - `endpoint`: default `/v1/completions`.
@@ -357,9 +354,9 @@ fields:
 - `ttft_slo_s`, `itl_slo_s`, and `itl_slo_s2`: service-level objectives used for
   goodput. Both ITL tiers are scored against the same TTFT bound: `itl_slo_s` is
   the strict interactive target and `itl_slo_s2` a looser tier, giving two
-  goodput columns (`goodput_rps`, `goodput_itl2_rps`). On bandwidth-bound GB10
-  the dense 32B/70B models floor above the strict ITL even unloaded, so their
-  strict goodput is ~0; the looser tier separates them under load.
+  goodput columns (`goodput_rps`, `goodput_itl2_rps`). A model can have zero
+  strict goodput when its measured TTFT or ITL exceeds the configured bound.
+  Compare both goodput columns against the stated SLOs.
 - `power_backend`: `none`, `nvidia_smi`, `sysfs`, or `tegrastats`.
 - `power_sysfs_path`, `power_rails`, and `power_interval_ms`: backend-specific
   power sampling settings.
@@ -471,7 +468,7 @@ export BASE_URL=http://127.0.0.1:8000
 # Optional prefix for auto-generated benchmark campaign directories.
 # export CAMPAIGN_NAME=rdma-v4-paper
 # Optional. Set the complete campaign output path, such as:
-# export OUT_DIR=results/rdma-v4-paper-2026-10-22
+# export OUT_DIR=results/rdma-v4-paper-2026-11-12
 export CONFIG_YAML=configs/experiment.yaml
 export CONCURRENCIES="${CONCURRENCIES:-1 4 8 16 32 64}"
 export REPEATS="${REPEATS:-3}"
@@ -618,11 +615,11 @@ measured. In `closed` mode, `point` is the fixed concurrency. In `open` mode,
 
 ## Running Dual-Node Benchmarks
 
-The dual-node scripts assume a head node and a worker node connected through the
-ConnectX interface configured in `scripts/connectx_env.sh`.
+The dual-node scripts use the head and worker roles and per-node interface
+assignments from `CLUSTER_CONFIG`.
 
-1. Verify host resolution, routing, latency, and interface counters from the
-   head node:
+1. Verify configured addresses, routes, peer reachability, and RDMA mappings on
+   both nodes:
 
 ```bash
 scripts/verify_connectx.sh
@@ -644,8 +641,8 @@ scripts/start_ray.sh worker
 sudo. Omit it on systems where the benchmark account does not have sudo access.
 
 Direct `run_models.sh` launches acquire each selected pinned snapshot on the
-head before launch and mirror it to the worker for tp2/pp2. The full matrix is
-about 1.07 TB, so select models with `MODEL_LABELS` for manual launches.
+head before launch and mirror it to the worker for tp2/pp2. Set `MODEL_LABELS`
+to select a subset for manual launches.
 `run_job.sh` acquires once per model group, mirrors when needed, and applies
 the campaign purge policy.
 
@@ -688,11 +685,11 @@ worker at startup (on Grace unified memory, CUDA free memory tracks the host's
 cache on the head and worker after model files are staged. The preflight still
 checks every node and stops before measurement if free memory remains below
 the target. Without the preflight, the same condition surfaces minutes later
-as an opaque `EngineCore failed to start` traceback from a remote Ray worker.
-If free memory stays tens of GiB
-short with no owning process, `nvidia-smi` lists no processes, and `buff/cache`
-is small, the NVIDIA driver has leaked unified memory from a killed CUDA
-process — dropping caches will not recover it. Stop the Ray container
+as an `EngineCore failed to start` traceback from a remote Ray worker. If free
+memory stays tens of GiB below the target, no process owns the allocation,
+`nvidia-smi` lists no processes, and `buff/cache` is small, a killed CUDA
+process may have left unified memory allocated in the NVIDIA driver. Dropping
+page cache does not recover that memory. Stop the Ray container
 (`scripts/start_ray.sh stop`), reload the UVM module with
 `sudo rmmod nvidia_uvm && sudo modprobe nvidia_uvm` (or reboot the node), then
 restart Ray.
@@ -783,7 +780,7 @@ runtime identity independently inspectable.
 # Launch/probe/tear down every single-node model without starting a sweep.
 CANARY_ONLY=1 scripts/run_models.sh single
 # Or target an exact space-separated label allowlist.
-CANARY_ONLY=1 MODEL_LABELS='llama3.3-70b-fp8' scripts/run_models.sh single
+CANARY_ONLY=1 MODEL_LABELS='llama3.1-8b-fp8' scripts/run_models.sh single
 
 # Single-node models (no Ray). Launches and removes a container per model.
 CONCURRENCIES="1 4 8 16 32 64" scripts/run_models.sh single
@@ -798,8 +795,7 @@ CANARY_ONLY=1 scripts/run_models.sh tp2         # validate every distributed lau
 CANARY_ONLY=1 scripts/run_models.sh pp2
 scripts/run_models.sh tp2
 scripts/run_models.sh pp2
-# Single-node serving inside the running Ray head container, so the cluster
-# survives (the default "standalone" replaces the Ray head container).
+# Single-node serving inside the running Ray head container.
 SINGLE_CONTAINER=ray scripts/run_models.sh single
 # One replicate on a fresh launch, and a status query that launches nothing.
 REPEATS=3 ONLY_REPEAT=2 MODEL_LABELS=llama3.1-8b scripts/run_models.sh tp2 --skip-done
@@ -898,21 +894,19 @@ With the locked virtual environment active, run the hardware-free plan first:
 
 ```bash
 export PYTHONNOUSERSITE=1
-export OUT_DIR=results/rdma-v4-paper-2026-10-22
+export OUT_DIR=results/rdma-v4-paper-2026-11-12
 PLAN_ONLY=1 scripts/run_job.sh
 ```
 
-The default plan reports 19 model groups, 159 server launches (53
-model/config curves x 3 replicates), and 954 measurement windows (x 6
-concurrencies: 1 4 8 16 32 64). At the configured 750 s minimum per window
-that is ~198 sequential hours before automatic extensions; with the
-extensions seen in the baselines (~3 min mean per window at these
-concurrencies) expect ~247 h of measurement, plus ~17 h of model launches,
-~9 h for the canary pass, and ~3 h of downloads: ~279 h (about 11.6 days),
-or ~312 h (13 days) with pessimistic latencies. Of the 954 windows, 684 use
-two GB10s, so the campaign is at least ~341 GB10-hours of accelerator use;
-this is not "198 GPU-hours." Start Ray on the YAML-selected head and worker,
-then run this on the selected head inside `tmux`, using the same `OUT_DIR`.
+The default plan has 17 model groups and 47 model/configuration pairs. Six
+concurrencies and three replicates schedule 141 server launches and 846
+measurement windows. Each scheduled phase has a 750-second minimum: 120 seconds
+of warmup, 600 seconds of measurement, and 30 seconds of cooldown. The total is
+176.25 hours before automatic extensions, downloads, canaries, and model
+startup. Of the windows, 594 use dual-node configurations. The minimum
+accelerator use is 300 GB10-hours across the participating nodes. Start Ray on
+the YAML-selected head and worker, then run this on the selected head inside
+`tmux`, using the same `OUT_DIR`.
 `scripts/connectx_env.sh` loads the topology and defaults to RDMA with NCCL
 transport logging:
 
@@ -934,24 +928,22 @@ microbenchmark while the GPUs are idle. It then works through
    order between replicates (see below);
 4. **purge** the snapshot, and vLLM's compile cache, from both nodes.
 
-With the default `PURGE_WEIGHTS=1`, peak cache use is the largest single model
-(~163 GB for Qwen3-Next 80B BF16), not the whole matrix (~1.07 TB). The canary
-always purges each group; `PURGE_WEIGHTS=0` keeps weights after measurement.
-Single-node launches run inside the Ray head container
-(`SINGLE_CONTAINER=ray`), so the cluster survives them and the old
-"single last" ordering is gone.
+With the default `PURGE_WEIGHTS=1`, peak per-node cache use is the largest
+selected snapshot, about 163 GB for Qwen3-Next 80B BF16. The canary purges each
+group. `PURGE_WEIGHTS=0` retains weights after measurement. In dual-node
+campaigns, single-node launches run inside the Ray head container
+(`SINGLE_CONTAINER=ray`).
 
 Before the first measurement, a **canary pass** acquires each model group on
 the head using the same pinned-snapshot step for single- and dual-node runs,
 mirrors it to the worker when needed, launches it once under every config with
 the strict stream contract and the client tokenizer preflight, and purges it
-again. It collects every failure and stops
-the job before any measurement if one failed, so an unsupported architecture or
-an image problem shows up within hours, not on day 10. The pass costs one extra
-download of the matrix plus 53 launches, and it is skipped automatically once
-it has succeeded for the same commit, matrix, image, and network policy.
-`STOP_AFTER_CANARY=1 scripts/run_job.sh` runs only the canary pass, which is
-the right first step after changing the image or `models.yaml`.
+again. It collects every failure and stops the job before any measurement if
+one failed. The default pass launches each of the 47 model/configuration pairs
+once. It is skipped automatically after success for the same commit, matrix,
+image, and network policy. `STOP_AFTER_CANARY=1 scripts/run_job.sh` runs the
+canary pass and exits before measurements. Run it after changing the image or
+`models.yaml`.
 `ALLOW_CANARY_FAILURES=1` measures the models that passed.
 
 A paper point is published only with zero failed requests, at least 20
@@ -1026,69 +1018,53 @@ its server log gains nothing but the EngineCore's once-a-minute
 `shm_broadcast` heartbeat for that long; workers that fall silent while the
 engine keeps waiting are deadlocked, not slow.
 `PROBE_TIMEOUT` bounds the two-token streaming canary (default `600`), and
-`CACHE_PREFLIGHT=1` is the default; do not disable that local revision check for
-a full run. The wrapper also
-honors the launcher and network variables from the Configuration section, such
-as `HF_TOKEN`, `HF_CACHE`, `VLLM_IMAGE`, `VLLM_CONTAINER`, `DROP_CACHES`, and
-the ConnectX host/interface settings. The wrapper clears model-specific launch
+`CACHE_PREFLIGHT=1` is the default; keep the local revision check enabled for
+full runs. The wrapper also honors launcher and network variables from the
+Configuration section, including `HF_TOKEN`, `HF_CACHE`, `VLLM_IMAGE`,
+`VLLM_CONTAINER`, `DROP_CACHES`, `CLUSTER_CONFIG`, and the NCCL transport
+settings. The wrapper clears model-specific launch
 overrides before applying each matrix entry, so an unrelated `QUANT`,
 `TOKENIZER`, or `TRUST_REMOTE_CODE` value in `.env` cannot leak into the next
 model.
 
 An optional model-matrix `max_num_seqs` sets and fingerprints vLLM's server
-scheduler limit consistently across that checkpoint's configs. Nemotron 3
-Super NVFP4 leaves this unset so the pinned image uses its default, matching
-the other model entries and allowing the c=64 sweep without an explicit
-four-sequence cap. This departs from NVIDIA's [NGC vLLM 26.09 Spark guidance](https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html),
-which requires four sequences for this model. Record this policy when
-interpreting its results; see the [readiness runbook](docs/rdma-readiness.md).
+scheduler limit across that checkpoint's configs. No checkpoint in the current
+matrix sets this field. Record a future sequence limit in `configs/models.yaml`
+and validate it with the canary before measurement.
 
 ### Replicates and statistics
 
-The PMBS26 campaign measured each point once, in a 1500 s window, and later
-repeated five points chosen after looking at their margins. That cannot
-support a campaign-wide noise floor, and selecting points by their observed
-margins biases the answer. The v4 design replicates everything instead:
+The PMBS26 campaign measured each point once in a 1500-second window. The
+variance subset repeated five points selected after inspection of their
+margins. The `steady-exact-v4` methodology uses three independent launches for
+every model, config, and concurrency.
 
-- **Unit of replication.** A replicate is one fresh server launch plus a
-  complete ascending concurrency sweep. Back-to-back windows on one server
-  miss launch-to-launch variance (KV capacity after memory profiling,
-  allocator and compile state, cluster setup), and every single-vs-tp2-vs-pp2
-  comparison spans different launches, so its margin has to beat exactly that
-  variance.
-- **Three replicates per point**, for every model, config, and concurrency:
-  the minimum that gives a variance estimate, and the old variance study's CVs
-  (0.2-6.5%) make it sufficient for the margins the paper reports.
-- **Interleaved, counterbalanced order.** Within a model, replicate r runs
-  the configs rotated by r-1 (r1: single tp2 pp2, r2: tp2 pp2 single,
-  r3: pp2 single tp2), so each config occupies each position once and slow
-  drift cannot favour one of them. All replicates of a model run in one
-  contiguous block between its download and its purge.
-- **Shorter windows, same rigor.** Each replicate's window is a 600 s minimum
-  (the MLPerf Inference minimum duration) that keeps extending in 60 s steps
-  until at least 20 requests have started in it, capped at 3600 s. Three 600 s
-  windows measure more, and more independently, than one 1500 s window, and
-  cost only ~1.45x the single-repeat campaign rather than 3x.
-- **Pre-registered analysis.** Figures plot the replicate mean with its min-max
-  band; tables print mean ± the 95% Student-t half-width;
+- A replicate is one fresh server launch followed by an ascending concurrency
+  sweep. The launch includes memory profiling, allocator state, compilation, and
+  cluster setup.
+- The campaign runs three replicates per model/configuration/concurrency point.
+- Config order rotates between replicates: `single`, `tp2`, `pp2`; `tp2`, `pp2`,
+  `single`; then `pp2`, `single`, `tp2`.
+- Each measurement window lasts at least 600 seconds. The closed-loop window
+  extends in 60-second steps until 20 requests have started or 3600 seconds
+  have elapsed.
+- Figures plot the replicate mean with its min-max band. Tables print mean ±
+  the 95% Student-t half-width.
   `scripts/variance_report.py` writes per-point CV/CI and a Welch interval for
   every pairwise config margin at every concurrency to
   `OUT_DIR/figs/stats/`. A claim that one config beats another needs its Welch
   interval to exclude zero. These are per-comparison intervals, not
   family-wise corrected.
 
-`measure_s: 300` in `configs/experiment.yaml` brings the cost back to the
-single-repeat level, at the price of noisier p99 values at mid load.
-
 ### Raw data and the repository
 
-Raw telemetry (`*.raw.jsonl`, `*.power.jsonl`, `*.vllm_metrics.jsonl`) is
-~14 MB per measurement window, ~16 GB for a full replicated campaign, so
-`.gitignore` keeps it and plain `.log` files out of git. To preserve logs in a
-campaign commit, create one sibling ZIP per ignored log:
+Raw telemetry (`*.raw.jsonl`, `*.power.jsonl`, `*.vllm_metrics.jsonl`) volume
+depends on campaign duration and model output. `.gitignore` keeps raw telemetry
+and plain `.log` files out of git. To preserve logs in a campaign commit,
+create one sibling ZIP per ignored log:
 
 ```bash
-scripts/archive_logs.py zip results/benchmark-2026-10-26
+scripts/archive_logs.py zip 'results/<campaign-dir>'
 ```
 
 Each `name.log.zip` contains `name.log` and stays beside it. The source log
@@ -1096,7 +1072,7 @@ remains on disk and stays ignored. Add the ZIP files to the campaign commit.
 Restore plain logs from ZIPs with:
 
 ```bash
-scripts/archive_logs.py unzip results/benchmark-2026-10-26
+scripts/archive_logs.py unzip 'results/<campaign-dir>'
 ```
 
 Unzip leaves the ZIP files in place and does not overwrite an existing log.
@@ -1123,18 +1099,17 @@ October RDMA pilot; `baselines/README.md` documents each one, and the git tag
 models overlap under the same labels and revisions, and `run_job.sh` compares
 both with `scripts/compare_campaigns.py`:
 
-- the Llama 3.1 8B ladder and Nemotron 3 Super NVFP4, against the PMBS26 TCP
-  baseline (`figs/stats/compare_vs_pmbs26_tcp.md`): transport and software
-  changed together;
+- the Llama 3.1 8B ladder against the PMBS26 TCP baseline
+  (`figs/stats/compare_vs_pmbs26_tcp.md`): transport and software changed together;
 - Qwen3-Next 80B (NVFP4 and BF16), the pilot pair kept in the matrix, against
   the pilot (`figs/stats/compare_vs_rdma_pilot.md`): same transport and
   cabling, so the difference isolates the image, window, and replicate
   changes.
 
-The pilot's rows are not merged into the new index: they are single-repeat
-`steady-exact-v3` rows, so Qwen3-Next is re-measured from scratch with
-replicates. The pilot's Nemotron Super 49B and Nemotron Puzzle 75B pairs are
-not in the new matrix (see the `configs/models.yaml` comments).
+The pilot's rows are not merged into the new index. They are single-repeat
+`steady-exact-v3` rows, so Qwen3-Next is re-measured with three replicates. The
+pilot's Nemotron Super 49B and Nemotron Puzzle 75B pairs are not in the current
+matrix.
 
 ### Transport evidence and the TCP ablation
 
@@ -1158,13 +1133,14 @@ NCCL_IB_DISABLE=1 scripts/start_ray.sh head
 # Run the same worker command on the configured worker.
 # On the selected head: same harness, TCP all-reduce thresholds, subset matrix.
 NCCL_IB_DISABLE=1 ALLREDUCE_MIN_1G_BUSBW_GBPS=1.8 ALLREDUCE_MAX_8B_LATENCY_S=0.005 \
-  OUT_DIR=results/tcp-ablation-2026-10-22 \
-  CAMPAIGN_LABELS="llama3.1-8b nemotron3-super-120b-a12b-nvfp4" \
+  OUT_DIR=results/tcp-ablation-2026-11-12 \
+  CAMPAIGN_LABELS="llama3.1-8b llama3.1-8b-fp8 llama3.1-8b-nvfp4" \
   CAMPAIGN_CONFIGS="tp2 pp2" \
   scripts/run_job.sh
 ```
 
-That subset is 12 launches and 72 windows (about 1 day). Finalization runs with
+The subset contains 18 launches and 108 windows. Its minimum scheduled phase
+time is 22.5 hours before extensions and launches. Finalization runs with
 `--completed-only` for subsets.
 
 ## Workloads And Traces
@@ -1298,7 +1274,7 @@ body font matching an IEEE paper, and `--table` to also emit a paper-ready
 per-point summary as `OUT_DIR/figs/summary_table.tex` (booktabs) and
 `OUT_DIR/figs/summary_table.md`.
 
-Two figures need a word on what they do and do not show:
+The reliability and energy figures use these definitions:
 
 - The reliability figure is two panels. The left panel is the real reliability
   signal: the share of *finished* requests that returned an error (this is zero
@@ -1306,7 +1282,7 @@ Two figures need a word on what they do and do not show:
   started and completed inside the measurement window
   (`requests_started_and_completed_in_window / requests_completed`), using the
   same population of successful requests in numerator and denominator. At high
-  concurrency it falls simply because long successful requests outlive the
+  concurrency it falls because long successful requests outlive the
   window. Failed requests appear only in the left panel. The
   conventional completion count, `requests_completed_in_window`, also includes
   requests that began during warmup and is therefore not used as that numerator.
@@ -1325,10 +1301,9 @@ Mixed measurement windows within one series are called out, since windowed
 rates stay comparable but the per-point sample sizes behind the percentiles do
 not.
 
-If the same `config_label` and load (concurrency or `qps`) appear more than
-once in `index.csv` — a sweep run with `REPEATS>1`, or a rerun — the copies are
-averaged into one point per load, a `note:` line reports how many copies back
-it, and the min-max spread across copies is shaded behind the mean line for the
+Repeated loads in `index.csv` can come from `REPEATS>1` or a rerun. The plot
+averages compatible rows into one point per load, reports the number of copies,
+and shades the min-max spread across copies behind the mean line for the
 headline metrics. Failed or zero-completion copies remain in the aggregation;
 dropping them would create survivorship bias. The plotter rejects duplicate
 repeat IDs and refuses to combine rows when methodology, config/source/client
@@ -1357,9 +1332,7 @@ drain. The summary reports `configured_warmup_s`, actual `warmup_s`,
 anchor (`window_start_unix`) are stored in
 the summary so `raw.jsonl` token timestamps can be re-aggregated post hoc.
 
-Two accounting sets share the window (this split is what fixed the 60s/600s
-windowing artifacts, where completed-in-window throughput read near zero at
-high concurrency while the server was busy):
+The client records two accounting sets for each logical window:
 
 - Throughput counts tokens *received during the window* across all requests,
   including requests started in warmup and requests still streaming when the
@@ -1448,32 +1421,24 @@ optionally the Hugging Face model config):
   orchestrator captures and passes this log automatically.
 - `weight_gb`, `kv_cache_gb`: optional full-checkpoint/full-KV estimates from
   Hugging Face metadata when `collect_hf_metadata: true` or
-  `--collect-hf-metadata` is used. These are useful as model descriptors, but
-  for quantized or repartitioned serving runs the log-derived worker fields are
-  the safer deployment facts.
+  `--collect-hf-metadata` is used. These fields describe the checkpoint and
+  full-KV estimate. For quantized or repartitioned serving runs, the log-derived
+  worker fields describe the launched workers.
 
 The index-backed capacity numbers are collected into `capacity_table.tex`/`.md`
 by `plot_results.py --table`.
 
 ## Choosing The Measurement Window
 
-Throughput no longer depends on how many requests finish inside the window
-(tokens are counted as they arrive), so the window-sizing question is about two
-things instead: opening the window in steady state, and collecting enough
-started-in-window requests to back the latency percentiles.
-
-The history matters because it bit twice. With completed-in-window accounting,
-a 60 s window reported literal zero throughput at high concurrency while the
-server was healthy and busy, and a 600 s window still understated large dense
-models by 5-10x at concurrency 64-128 (client/server throughput ratios of
-0.1-0.7), because a single request's end-to-end time reached 500+ s. On top of
-that, warmup used to run as a separate loop that drained completely, so the
-window opened on an idle server hit by a thundering herd of cold prefills.
-Both are structural, not tuning, problems; token-in-window accounting and the
-continuous phase plus automatic boundary extensions fix them. The
-`server_vs_client_throughput` figure is the regression check: the client and
-server curves should now track closely at every load, with the dotted
-completed-only curve showing what the old accounting would have read.
+Closed-loop measurement starts after the configured warmup and after every
+worker completes its first request. The logical window extends in configured
+steps until `min_window_requests` is reached or `max_measure_s` is reached.
+Output-token throughput counts tokens received during the window across all
+requests. Latency percentiles use requests started in the window and tracked to
+completion. After the window, replacement load continues until measurement
+requests finish and the configured cooldown elapses. The
+[`server_vs_client_throughput` figure](#metric-semantics) compares client and
+server token rates; the completed-only series reports the earlier accounting.
 
 Guidance:
 
@@ -1647,10 +1612,12 @@ log and does not gate a result.
 - `pp2` launch stops logging during `[AutoTuner]: Tuning ...` and the server
   log then shows only `No available shared memory broadcast block found in 60
   seconds` once a minute until the readiness timeout: the two pipeline stages
-  deadlocked in FlashInfer autotuning. vLLM 0.29.0 synchronizes per-tactic
-  timings, the cache broadcast, and a barrier over the world group, so when
-  the stages tune different kernels (hybrid Mamba/attention/MoE models such as
-  Nemotron 3 Super) one stage waits on a collective the other never joins. The
+  deadlocked in FlashInfer autotuning. This failure was observed during the
+  October 2026 canary on the Nemotron 3 Super NVFP4 checkpoint, which is no
+  longer in the current matrix. vLLM 0.29.0 synchronizes per-tactic
+  timings, the cache broadcast, and a barrier over the world group. When the
+  stages tune different kernels, one stage waits on a collective the other
+  never joins. The
   signature is one stage logging `Autotuning process ends` while the other
   stops mid-tuning, and neither logging `Graph capturing finished` afterward.
   Upstream fixed this in vllm-project/vllm#57197 (first released in v0.32.0;
@@ -1736,8 +1703,8 @@ python scripts/models_for_config.py configs/models.yaml single
 python plotting/plot_results.py --index results/index.csv --out /tmp/dgx-spark-figs --format png --table
 ```
 
-`shellcheck` and `ruff` are not required by the repository, but they are good
-extra checks if installed locally.
+The repository does not require `shellcheck` or `ruff`. Install either tool to
+run its additional lint checks.
 
 ## Paper Mapping Checklist
 
@@ -1751,10 +1718,9 @@ extra checks if installed locally.
   (`allreduce_ray_*.csv`, `interconnect_extra_*.csv`) and the per-launch
   transport audit (`figs/stats/nccl_transport_audit.md`: transport, RDMA
   devices, GPUDirect RDMA channels for every dual-node launch).
-- RDMA vs TCP: report the transport ablation (same image and harness, see
-  [Transport evidence and the TCP ablation](#transport-evidence-and-the-tcp-ablation)),
-  not only the comparison with the PMBS26 campaign, which also changed
-  software.
+- RDMA vs TCP: report the transport ablation with the same image and harness
+  (see [Transport evidence and the TCP ablation](#transport-evidence-and-the-tcp-ablation)).
+  The PMBS26 comparison also changed software.
 - Precision ladders: state the KV-cache dtype per checkpoint (index column
   `kv_cache_dtype`). ModelOpt FP8/NVFP4 checkpoints serve an FP8 KV cache;
   BF16 and Qwen's FP8 checkpoints keep BF16, so a ladder step changes both.
@@ -1775,15 +1741,10 @@ extra checks if installed locally.
 - Interconnect model validation: record the fingerprinted
   `allreduce_ray_*.csv` from `scripts/ray_allreduce_bench.sh` alongside the
   serving sweep.
-- `tp2`/`pp2` apparent capacity ceiling: on a ConnectX Ethernet link (not
-  NVLink), cross-node all-reduce (`tp2`) or activation passing (`pp2`) does add
-  per-token overhead, so dual-node ITL is higher than `single` at matched load.
-  But an apparent *collapse* — completions per window falling toward zero at high
-  concurrency while KV cache occupancy stays low — is usually a measurement
-  artifact of too short a window, not the interconnect. Confirm before reporting
-  it: rerun the point with a longer `--measure-s` (see "Choosing The Measurement
-  Window"). In the reference sweep the collapse did not survive a longer window
-  (`tp2` c=64 went 0 -> 141 tok/s from 60 s to 240 s; `pp2` c=128 went 0 -> 135
-  tok/s from 60 s to 360 s), so the interconnect cost shows up as higher latency,
-  not as a throughput cliff. Record the fingerprinted Ray/NCCL all-reduce CSV
-  alongside the sweep to attribute the latency component.
+- `tp2`/`pp2` capacity interpretation: cross-node collectives and pipeline
+  activation transfers add communication. The reference campaign measured
+  higher dual-node ITL at matched load. A short measurement window can record
+  zero completions while requests remain in flight. Inspect the window length,
+  sample count, KV occupancy, and request completions before interpreting a
+  throughput change. Record the fingerprinted Ray/NCCL all-reduce CSV with the
+  sweep.

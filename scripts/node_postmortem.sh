@@ -30,7 +30,7 @@
 #     unified-memory exhaustion
 #   "NVRM: Xid" -> a GPU fault (Xid 119/120 GSP timeouts can wedge a GB10
 #     until a cold power cycle)
-#   journal simply stops mid-stream with none of the above -> abrupt power loss
+#   journal ends mid-stream with none of the above -> abrupt power loss
 #     or a firmware/EC power-off (thermal or power delivery); the OS logs nothing
 #   "BERT", "APEI", "GHES" or "Hardware Error" in the kernel lines of the boot
 #     after a stop -> the firmware recorded a hardware error for that stop

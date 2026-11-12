@@ -570,11 +570,9 @@ class VLLMMetricsScraper:
         "vllm:num_requests_waiting",
         "vllm:kv_cache_usage_perc",
     ]
-    # Counters: monotonic totals of server-side work. Summarized as the delta
-    # over the measurement window, which -- unlike the client's completed-in-
-    # window aggregates -- counts tokens the server actually processed during the
-    # window even when few requests finish inside it. This makes server-side
-    # throughput robust to a measurement window shorter than request duration.
+    # Counters: monotonic totals of server-side work, summarized as the delta
+    # over the measurement window. This includes server-processed tokens from
+    # requests that do not complete inside the window.
     COUNTER_KEYS = [
         "vllm:prompt_tokens_total",
         "vllm:generation_tokens_total",
@@ -725,9 +723,8 @@ class VLLMMetricsScraper:
     def _counter_delta(pts, t0, t1):
         """Work a monotonic counter accumulated across the [t0, t1] window.
 
-        Baselines on the last sample at or before the window start (so the full
-        window is covered, not just the gap between the first and last in-window
-        scrapes) and ends on the last sample at or before the window end.
+        Baselines on the last sample at or before the window start and ends on
+        the last sample at or before the window end.
         """
         # scrape_once() can be called concurrently with the background scrape
         # (the benchmark does this to seed a baseline), so do not depend on

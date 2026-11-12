@@ -386,7 +386,7 @@ PY
 # GiB apart). Check every Ray node up front so the failure names the offending
 # node, instead of surfacing minutes later as an EngineCore traceback from a
 # remote worker. When a node is only low because of page cache (MemAvailable
-# high, MemFree low — the false-OOM mode README troubleshooting describes),
+# high and MemFree low, the false-OOM mode described in README troubleshooting,
 # reclaim checkpoint pages directly on a pinned Ray task. If unrelated cache
 # remains, fail rather than creating memory pressure across the shared node.
 _check_cluster_memory() {

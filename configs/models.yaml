@@ -4,10 +4,8 @@
 #   download the pinned snapshot -> mirror it to the worker -> measure every
 #   listed serving config with interleaved replicates -> delete the weights
 #   from both nodes' caches.
-# Peak cache use is therefore the largest single entry (~163 GB), not the
-# whole matrix (~1.07 TB). Order is cheapest first, so a broken pipeline shows
-# up on the 8B ladder within hours, and that ladder overlaps the PMBS26 TCP
-# baseline (baselines/pmbs26-tcp) for an early transport comparison.
+# Peak per-node cache use is the largest selected snapshot, about 163 GB.
+# run_job.sh acquires and purges model groups in file order.
 #
 # Per-model fields:
 #   name          Hugging Face model id served by vLLM (required).
@@ -32,22 +30,18 @@
 #                 by checkpoints of the same weights), nvidia (NVIDIA-produced
 #                 checkpoint). It never reaches the launch policy.
 #
-# Every revision below was pinned on 2026-10-15. Weight sizes are the exact
-# download sizes of the pinned snapshot (excluding original/ and metal/
-# duplicates). "single" appears only where weights + KV fit one GB10 at the
-# configured gpu_util_default.
+# Each revision is an immutable Hugging Face commit. Weight sizes are the
+# pinned snapshot sizes, excluding original/ and metal/ duplicates. "single"
+# appears only where the checkpoint and configured workload fit one GB10 at
+# gpu_util_default.
 #
-# KV-cache precision is NOT uniform along the precision ladders, and the paper
-# must say so: NVIDIA ModelOpt checkpoints (all *-NVFP4, nvidia/*-FP8) ship an
-# FP8 KV cache (kv_cache_quant_algo=FP8) that vLLM applies automatically, while
-# BF16 checkpoints and Qwen's own FP8 checkpoints keep a BF16 KV cache. The
-# index records the served kv_cache_dtype per row.
+# KV-cache precision varies across checkpoints. NVIDIA ModelOpt NVFP4 and
+# NVIDIA FP8 checkpoints use FP8 KV cache quantization. BF16 checkpoints and
+# Qwen FP8 checkpoints use BF16 KV cache precision. The result index records
+# the served kv_cache_dtype for each row.
 #
-# vLLM version: several model cards validate on vLLM >= 0.20 (Gemma 4 26B),
-# 0.21 (Mistral Medium 3.5), nightly (Qwen3.6 NVFP4), and 0.27.1 (Nemotron 3.5
-# Lightning). The image in scripts/connectx_env.sh was therefore moved from NGC
-# 26.04 (vLLM 0.19.0) to 26.09 (vLLM 0.29.0). Run the canary pass before the
-# campaign; it launches every entry under every config it lists.
+# The pinned image in scripts/connectx_env.sh uses NGC 26.09 and vLLM 0.29.0.
+# The canary launches every matrix entry under each listed serving config.
 
 # One run-wide memory budget shared by every model and serving config.
 # At 0.80, the campaign targets 102.4 GB of a nominal 128 GB per node.
@@ -58,11 +52,6 @@
 gpu_util_default: 0.80
 
 models:
-
-
-
-
-  # Qwen here for now to test why it fails
   - name: Qwen/Qwen3.6-35B-A3B-FP8                    # 37.5 GB
     label: qwen3.6-35b-a3b-fp8
     revision: 95a723d08a9490559dae23d0cff1d9466213d989
@@ -192,9 +181,8 @@ models:
     meta: {pretty: "Qwen3-235B-A22B NVFP4", arch: moe, attention: full, quant: nvfp4, params_b: 235.0, active_b: 22.0, nvidia: true}
 
   # ---- 9. Mistral Medium 3.5 128B: dense, full attention --------------------
-  # 95.3 GB: dual-node only. Large dense is where TP2 and PP2 differ most: TP2
-  # halves the weights each node streams per token, PP2 does not at low load.
-  # That makes it the cleanest TP-vs-PP comparison under RDMA.
+  # 95.3 GB: dual-node only. This checkpoint supports a TP2 versus PP2
+  # comparison under RDMA.
   - name: nvidia/Mistral-Medium-3.5-128B-NVFP4
     label: mistral-medium-3.5-128b-nvfp4
     revision: b8c66d2098edd8c9c26bde2b2ff41b5967e111ae
@@ -219,7 +207,7 @@ models:
     trust_remote_code: true
     meta: {pretty: "Qwen3-Next-80B-A3B NVFP4", arch: moe, attention: linear-hybrid, quant: nvfp4, params_b: 80.0, active_b: 3.0, ladder_base: qwen3-next-80b, nvidia: true}
 
-  - name: Qwen/Qwen3-Next-80B-A3B-Instruct                # 162.7 GB: dual only, the largest entry
+  - name: Qwen/Qwen3-Next-80B-A3B-Instruct                # 162.7 GB: dual-node only, largest snapshot
     label: qwen3-next-80b-bf16
     revision: 9c7f2fbe84465e40164a94cc16cd30b6999b0cc7
     configs: [tp2, pp2]

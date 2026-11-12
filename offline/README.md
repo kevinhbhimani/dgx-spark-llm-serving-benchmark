@@ -102,12 +102,16 @@ The installer checks checksums, host architecture, and Python major and minor
 version. It loads the image, extracts the source to
 `$HOME/dgx-spark-llm-serving-benchmark`, creates `.venv`, installs the
 wheelhouse without an index, and runs `scripts/check_environment.py`. Set
-`SRC_DIR` to choose another source directory. Set `HF_CACHE` when installing
-a bundle with model weights; the default is `$HOME/.cache/huggingface`.
+`SRC_DIR` to choose another source directory. When installing model weights,
+the installer extracts them to `$HOME/.cache/huggingface` unless `HF_CACHE` is
+set. Set `HF_CACHE` to that path in each node's `.env` before running benchmark
+scripts so the source uses the extracted cache.
 
 The source archive omits `.env` files and Git history. Configure each node's
-repo-local `.env` with its network addresses and interface settings before
-starting Ray. Follow [cluster setup](../docs/cluster-setup.md) and
+repo-local `.env` with `CLUSTER_CONFIG` when the default topology file does not
+match the local systems. Use the same canonical topology content on both nodes
+and configure the declared addresses on the hosts before starting Ray. Follow
+[cluster setup](../docs/cluster-setup.md) and
 [RDMA readiness](../docs/rdma-readiness.md) for hardware configuration.
 
 ## Run Ray and all-reduce
@@ -145,10 +149,6 @@ Model-serving runs require complete pinned snapshots in the Hugging Face cache.
 When the bundle includes `model-cache.tar`, the installer extracts it into
 `HF_CACHE`. Otherwise copy a complete `hub/` cache to each node. For a custom
 cache location, set the same `HF_CACHE` in each node's `.env`.
-
-The current source has unresolved merge-conflict markers in
-`scripts/run_models.sh`. Bash rejects the script before a model run. Resolve
-that file before using the model benchmark commands below.
 
 Activate the installed client environment and export the image settings in each
 shell:

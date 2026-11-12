@@ -10,7 +10,7 @@ directory, compares the observed transport with the one the launch's serving
 policy requested, and summarizes device and GPUDirect RDMA use, which is the
 evidence a reviewer asking "was this really RDMA?" needs.
 
-    python3 scripts/audit_nccl_transport.py results/benchmark-2026-10-22
+    python3 scripts/audit_nccl_transport.py 'results/<campaign-dir>'
 
 Exits 1 when any launch is unverified or shows the wrong transport, or no
 dual-node logs were found. Use --allow-unverified only for historical,

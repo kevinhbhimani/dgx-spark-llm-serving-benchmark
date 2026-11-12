@@ -34,15 +34,15 @@ python scripts/check_environment.py
 python -m unittest discover -s tests -v
 python -m compileall -q bench plotting scripts
 (for script in scripts/*.sh; do bash -n "$script" || exit 1; done)
-export OUT_DIR=results/rdma-v4-paper-2026-10-22
+export OUT_DIR=results/rdma-v4-paper-2026-11-12
 PLAN_ONLY=1 scripts/run_job.sh
 ```
 
-The default plan is 19 checkpoints, 53 model/config curves, 159 independent
-server launches, and 954 measurement windows at concurrencies 1 4 8 16 32 64.
-Its minimum measurement time is about 198 sequential hours; warmup and
-sample-count extensions, canaries, downloads, and launches bring the expected
-total to about 279 hours (about 312 hours with pessimistic latencies).
+The default plan has 17 checkpoints, 47 model/configuration pairs, 141 server
+launches, and 846 measurement windows at concurrencies 1 4 8 16 32 64. Each
+scheduled phase has a 750-second minimum: 120 seconds of warmup, 600 seconds
+of measurement, and 30 seconds of cooldown. The total is 176.25 sequential
+hours before extensions, canaries, downloads, and model startup.
 Use a fresh output directory after changing
 the experiment, dependencies, harness, material serving policy, or `GPU_UTIL`
 target. The campaign GPU-memory target defaults to `0.80`. Set `GPU_UTIL` on
@@ -74,8 +74,8 @@ start the Ray head on the selected system:
 scripts/verify_connectx.sh
 scripts/hardware_smoke.sh                    # selected-head diagnostic output
 SMOKE_LABEL=nemotron3.5-lightning-30b-a3b-nvfp4 SMOKE_GPU_UTIL=0.80 \
-  SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-10-22 \
-  scripts/hardware_smoke.sh                  # top load; see the 26.09 note below
+  SMOKE_CONCURRENCIES="1 64" OUT_DIR=results/smoke-lightning-2026-11-12 \
+  scripts/hardware_smoke.sh                  # concurrency-64 smoke check
 scripts/start_ray.sh head
 ```
 
@@ -88,7 +88,7 @@ scripts/start_ray.sh worker
 Return to the selected head for the cluster checks and campaign commands:
 
 ```bash
-export OUT_DIR=results/rdma-v4-paper-2026-10-22
+export OUT_DIR=results/rdma-v4-paper-2026-11-12
 docker exec vllm-spark ray status
 CANARY_FIRST=1 STOP_AFTER_CANARY=1 scripts/run_job.sh
 scripts/run_job.sh
@@ -125,30 +125,18 @@ valid RDMA verdict does not establish that all four devices carry traffic:
 support that claim with device/channel logs and per-interface counters or
 per-device bandwidth measurements.
 
-The pinned NGC 26.09 image documents a Spark limit for Nemotron 3 Super NVFP4:
-`--max-num-seqs 4`. The model matrix leaves `max_num_seqs` unset for this
-checkpoint so vLLM uses its default, matching the other model entries and
-allowing the client sweep through c=64 without an explicit four-sequence cap.
-This deliberately departs from NVIDIA's documented setting. Run the c=64
-smoke check on the pinned image and retain startup and memory-failure logs
-before treating a full campaign as valid. The FP8 and NVFP4 checkpoints now
-share the same model-matrix scheduler setting, though their effective
-concurrent capacity can differ with model memory use. See the
-[NVIDIA 26.09 known issues](https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html).
+The pinned image's vLLM 0.29.0 deadlocked `pp2` startup during FlashInfer
+autotuning when pipeline stages tuned different kernels. The October 2026
+canary observed this behavior on a Nemotron 3 Super NVFP4 checkpoint, which is
+no longer in the current model matrix. The upstream fix is in v0.32.0.
+Launches default to `FLASHINFER_AUTOTUNE=0`
+(`--no-enable-flashinfer-autotune`) for every config. Each serving policy
+records this setting. Report the setting in the paper.
 
-The same image's vLLM 0.29.0 deadlocks `pp2` startup during FlashInfer
-autotuning when the two stages tune different kernels; the October 2026
-canary hung this way on Nemotron 3 Super NVFP4 (vllm-project/vllm#57197, fixed
-in v0.32.0). Launches therefore default to `FLASHINFER_AUTOTUNE=0`
-(`--no-enable-flashinfer-autotune`) for every config, recorded in each serving
-policy. Report that kernel autotuning was disabled in the paper.
-
-The same note names Nemotron Nano V3 NVFP4. Nemotron 3.5 Lightning 30B-A3B
-NVFP4 is the same class of checkpoint (30B-A3B Mamba hybrid), and the note does
-not say whether it applies. The canary sends one short request, so it cannot
-catch a failure that appears only under load. Run the concurrency-64 smoke
-check above before the campaign. If it fails, add `max_num_seqs: 4` to that
-entry, commit, and start from a fresh output directory.
+Nemotron 3.5 Lightning 30B-A3B NVFP4 is in the current matrix with
+`max_num_seqs` unset. Run the concurrency-64 smoke check above and retain its
+startup and memory logs. Change its scheduler limit only after a measured
+failure and a passing canary with the revised policy.
 
 ## Publication checks and interpretation
 
@@ -160,7 +148,7 @@ with:
 python scripts/validate_campaign.py verify \
   --models configs/models.yaml --experiment configs/experiment.yaml \
   --out-dir "$OUT_DIR" --concurrencies 1 4 8 16 32 64 --repeats 3 \
-  --manifest "$OUT_DIR/campaign_manifest.json"
+  --manifest "$OUT_DIR/results/campaign_manifest.json"
 ```
 
 - Use the three fresh-launch replicates for uncertainty. The plotted min/max
@@ -179,6 +167,6 @@ python scripts/validate_campaign.py verify \
   load. These populations differ intentionally.
 - `nvidia_smi` energy covers the sampled GPU devices. It does not measure
   whole-system energy. Check that dual-node rows cover both nodes.
-- RDMA causality needs an otherwise matched TCP ablation with the same image,
-  workload, revisions, and server policies. Historical campaigns with different
-  software provide context but do not isolate transport.
+- RDMA causality requires a TCP ablation with the same image, workload,
+  revisions, and server policies. Historical campaigns with different software
+  cannot isolate transport.

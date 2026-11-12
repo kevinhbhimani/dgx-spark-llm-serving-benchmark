@@ -10,18 +10,18 @@ over the whole index rather than over hand-picked points. It reports:
    replicates, for throughput, goodput, ITL, TTFT, and energy per token. The
    worst-case CV over the whole campaign is the noise floor the paper quotes.
 
-2. Per (model, concurrency, metric): a Welch 95% interval on EVERY pairwise
-   config margin, not just winner vs runner-up. A ranking claim ("PP=2 has the
-   highest goodput") needs the top config separated from *every* alternative;
-   the per-point verdict reports exactly that. These are per-comparison
+2. Per (model, concurrency, metric): a Welch 95% interval on every pairwise
+   config margin. A ranking claim ("PP=2 has the highest goodput") needs the top
+   config separated from every alternative; the per-point verdict reports that.
+   These are per-comparison
    intervals, not family-wise corrected.
 
 3. Optionally, against --baseline (a single-repeat campaign such as
    baselines/pmbs26-tcp): whether each baseline value falls inside the range
    these replicates produced.
 
-    python3 scripts/variance_report.py --index results/benchmark-2026-10-22
-    python3 scripts/variance_report.py --index results/benchmark-2026-10-22 \
+    python3 scripts/variance_report.py --index 'results/<campaign-dir>'
+    python3 scripts/variance_report.py --index 'results/<campaign-dir>' \
         --md figs/stats/replicate_stats.md --tex figs/stats/replicate_stats.tex
 """
 from __future__ import annotations
