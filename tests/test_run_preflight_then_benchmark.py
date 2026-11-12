@@ -32,12 +32,14 @@ class SerialCampaignRunnerTests(unittest.TestCase):
 
         self.runner_path = self.scripts_directory / "run_preflight_then_benchmark.sh"
         shutil.copy2(ROOT / "scripts/run_preflight_then_benchmark.sh", self.runner_path)
+        shutil.copy2(ROOT / "scripts/load_env.sh", self.scripts_directory)
         shutil.copy2(ROOT / "utils/campaign_output.py", self.utils_directory)
         self.runner_path.chmod(0o755)
 
         self.preflight_stage_log = self.root / "preflight-stages.log"
         self.preflight_out_dir_log = self.root / "preflight-out-dir.log"
         self.benchmark_log = self.root / "benchmark.log"
+        self.mode_log = self.root / "mode.log"
         self.campaign_out_dir = self.root / "campaign"
 
         self._write_executable(
@@ -45,6 +47,7 @@ class SerialCampaignRunnerTests(unittest.TestCase):
             """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$OUT_DIR" > "$PREFLIGHT_OUT_DIR_LOG"
+printf '%s\\n' "$SINGLE_NODE_ONLY" > "$MODE_LOG"
 for stage in output-writes plan connectx hardware-smoke campaign-canary purge-models; do
   printf '%s\\n' "$stage" >> "$PREFLIGHT_STAGE_LOG"
   if [[ "${FAIL_STAGE:-}" == "$stage" ]]; then
@@ -58,7 +61,7 @@ done
             """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
-  "$ALLOW_CANARY_FAILURES" > "$BENCHMARK_LOG"
+  "$ALLOW_CANARY_FAILURES" "$SINGLE_NODE_ONLY" > "$BENCHMARK_LOG"
 """,
         )
 
@@ -76,8 +79,28 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
         *,
         fail_stage: str = "",
         fail_status: int = 1,
+        single_node_only: str | None = None,
+        campaign_configs: str | None = None,
+        purge_worker: str | None = None,
+        dotenv_mode: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
+        environment.pop("SINGLE_NODE_ONLY", None)
+        environment.pop("DGX_SPARK_ENV_LOADED", None)
+        environment.pop("CAMPAIGN_CONFIGS", None)
+        environment["ENV_FILE"] = str(self.fixture_root / ".env")
+        if dotenv_mode is not None:
+            (self.fixture_root / ".env").write_text(
+                f"SINGLE_NODE_ONLY={dotenv_mode}\\n", encoding="utf-8"
+            )
+        else:
+            (self.fixture_root / ".env").unlink(missing_ok=True)
+        if single_node_only is not None:
+            environment["SINGLE_NODE_ONLY"] = single_node_only
+        if campaign_configs is not None:
+            environment["CAMPAIGN_CONFIGS"] = campaign_configs
+        if purge_worker is not None:
+            environment["PURGE_WORKER"] = purge_worker
         environment.update(
             {
                 "OUT_DIR": str(self.campaign_out_dir),
@@ -85,6 +108,7 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
                 "PREFLIGHT_STAGE_LOG": str(self.preflight_stage_log),
                 "PREFLIGHT_OUT_DIR_LOG": str(self.preflight_out_dir_log),
                 "BENCHMARK_LOG": str(self.benchmark_log),
+                "MODE_LOG": str(self.mode_log),
                 "FAIL_STAGE": fail_stage,
                 "FAIL_STATUS": str(fail_status),
             }
@@ -144,8 +168,33 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
         )
         self.assertEqual(
             self.benchmark_log.read_text(encoding="utf-8").splitlines(),
-            [str(self.campaign_out_dir), "0", "0", "0"],
+            [str(self.campaign_out_dir), "0", "0", "0", "0"],
         )
+
+    def test_solo_mode_propagates_from_environment_or_dotenv(self) -> None:
+        result = self._run_runner(single_node_only="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.mode_log.read_text(encoding="utf-8").strip(), "1")
+        self.assertEqual(
+            self.benchmark_log.read_text(encoding="utf-8").splitlines()[-1], "1"
+        )
+
+        result = self._run_runner(dotenv_mode="1", single_node_only="0")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.mode_log.read_text(encoding="utf-8").strip(), "0")
+
+    def test_invalid_mode_and_dual_config_fail_before_preflight(self) -> None:
+        for options in (
+            {"single_node_only": ""},
+            {"single_node_only": "false"},
+            {"single_node_only": "1", "campaign_configs": "tp2"},
+            {"single_node_only": "1", "purge_worker": "1"},
+        ):
+            with self.subTest(options=options):
+                self.preflight_stage_log.unlink(missing_ok=True)
+                result = self._run_runner(**options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.preflight_stage_log.exists())
 
 
 if __name__ == "__main__":

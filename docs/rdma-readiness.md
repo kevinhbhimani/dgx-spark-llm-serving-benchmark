@@ -125,13 +125,15 @@ valid RDMA verdict does not establish that all four devices carry traffic:
 support that claim with device/channel logs and per-interface counters or
 per-device bandwidth measurements.
 
-The pinned NGC 26.09 image has a documented Spark constraint for Nemotron 3
-Super NVFP4: `--max-num-seqs 4`. The model matrix records `max_num_seqs: 4` for
-that checkpoint and fingerprints this policy across serving configurations.
-The client still sweeps up to 64 outstanding requests; above four, server
-queueing is part of the measured latency. Report this server sequence limit in
-the paper. The FP8 checkpoint is not covered by the note and runs uncapped, so
-its comparison with NVFP4 is matched only at concurrency 4 or below. See the
+The pinned NGC 26.09 image documents a Spark limit for Nemotron 3 Super NVFP4:
+`--max-num-seqs 4`. The model matrix leaves `max_num_seqs` unset for this
+checkpoint so vLLM uses its default, matching the other model entries and
+allowing the client sweep through c=64 without an explicit four-sequence cap.
+This deliberately departs from NVIDIA's documented setting. Run the c=64
+smoke check on the pinned image and retain startup and memory-failure logs
+before treating a full campaign as valid. The FP8 and NVFP4 checkpoints now
+share the same model-matrix scheduler setting, though their effective
+concurrent capacity can differ with model memory use. See the
 [NVIDIA 26.09 known issues](https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html).
 
 The same image's vLLM 0.29.0 deadlocks `pp2` startup during FlashInfer

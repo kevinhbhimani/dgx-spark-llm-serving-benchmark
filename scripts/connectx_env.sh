@@ -5,12 +5,32 @@
 CONNECTX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECTX_REPO_ROOT="$(cd "$CONNECTX_SCRIPT_DIR/.." && pwd)"
 source "$CONNECTX_SCRIPT_DIR/load_env.sh"
+resolve_single_node_mode || return $? 2>/dev/null || exit $?
 
-CLUSTER_CONFIG="${CLUSTER_CONFIG:-$CONNECTX_REPO_ROOT/configs/cluster.yaml}"
-if [[ "$CLUSTER_CONFIG" != /* ]]; then
-  CLUSTER_CONFIG="$CONNECTX_REPO_ROOT/$CLUSTER_CONFIG"
-fi
-export CLUSTER_CONFIG
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  LOCAL_HOSTNAME="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' | sed 's/\\.$//')"
+  if [[ ! "$LOCAL_HOSTNAME" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    echo "[execution] cannot determine a valid local hostname" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+  SOLO_LOOPBACK_ADDRESS=127.0.0.1
+  LOCAL_IP="$SOLO_LOOPBACK_ADDRESS"
+  export LOCAL_HOSTNAME SOLO_LOOPBACK_ADDRESS LOCAL_IP
+  unset CLUSTER_CONFIG CONNECTX_DERIVED_CONFIG CONNECTX_DERIVED_VALUES_SHA256
+  unset SCHEMA_VERSION TOPOLOGY_SHA256 TOPOLOGY_RAW_SHA256
+  unset HEAD_NODE_ID WORKER_NODE_ID LOCAL_NODE_ID HEAD_HOST WORKER_HOST
+  unset HEAD_IP WORKER_IP RAY_PORT LOCAL_SSH_TARGET WORKER_SSH_TARGET
+  unset TOPOLOGY_RAIL_COUNT TOPOLOGY_RAILS TOPOLOGY_LOCAL_INTERFACES
+  unset TOPOLOGY_LOCAL_CIDRS TOPOLOGY_PEER_INTERFACES TOPOLOGY_PEER_CIDRS
+  unset HEAD_CX_IFACE WORKER_CX_IFACE CX_IFACE VLLM_HOST_IP
+  unset NCCL_SOCKET_IFNAME GLOO_SOCKET_IFNAME NCCL_IB_DISABLE NCCL_IB_HCA
+  unset NCCL_IB_GID_INDEX NCCL_NET_PLUGIN NCCL_DEBUG NCCL_DEBUG_SUBSYS
+else
+  CLUSTER_CONFIG="${CLUSTER_CONFIG:-$CONNECTX_REPO_ROOT/configs/cluster.yaml}"
+  if [[ "$CLUSTER_CONFIG" != /* ]]; then
+    CLUSTER_CONFIG="$CONNECTX_REPO_ROOT/$CLUSTER_CONFIG"
+  fi
+  export CLUSTER_CONFIG
 
 connectx_topology_values_signature() {
   printf '%s\0' \
@@ -226,6 +246,7 @@ export NCCL_IB_HCA="${NCCL_IB_HCA:-}"
 export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-}"
 # RoCEv2 GID index used by the built-in IB transport. Empty defers to NCCL.
 export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
+fi
 
 # Container settings. A mutable monthly tag alone is not sufficient provenance
 # for a paper rerun, so the image is pinned by digest. This is NGC 26.09-py3
@@ -234,6 +255,13 @@ export NCCL_IB_GID_INDEX="${NCCL_IB_GID_INDEX:-}"
 # (vLLM 0.19.0): nvcr.io/nvidia/vllm@sha256:98494fdaea68ad892c107180b0be41c99caa3c77683175becc4e202b2cb75b27
 export VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2}"
 export VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-spark}"
+if [[ "$SINGLE_NODE_ONLY" == "1" && "${CONNECTX_SOLO_CONTAINER_INITIALIZED:-0}" != "1" ]]; then
+  if [[ "$VLLM_CONTAINER" != *-solo ]]; then
+    VLLM_CONTAINER="${VLLM_CONTAINER}-solo"
+  fi
+  export VLLM_CONTAINER
+  export CONNECTX_SOLO_CONTAINER_INITIALIZED=1
+fi
 export HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface-$UID}"
 # HF_CACHE is the host Hugging Face home. Every host and container process uses
 # its repository cache below that root.
@@ -292,6 +320,52 @@ require_local_connectx_ip() {
     echo "[cluster] local node $LOCAL_NODE_ID has $LOCAL_IP, expected $expected for $role" >&2
     return 1
   fi
+}
+
+validate_execution_environment() {
+  local expected_head="${1:-}" role="${2:-requested role}"
+  local validate_links="${3:-1}"
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    [[ -n "$LOCAL_HOSTNAME" ]] || {
+      echo "[execution] local hostname is unavailable for $role" >&2
+      return 1
+    }
+    echo "[execution] solo mode on $LOCAL_HOSTNAME; dual-node checks disabled"
+    return 0
+  fi
+  require_local_connectx_ip "$expected_head" "$role" || return 1
+  if [[ "$validate_links" == "1" ]]; then
+    validate_local_topology_links || return 1
+  fi
+}
+
+reject_solo_execution() {
+  local operation="${1:-this operation}"
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    echo "[execution] $operation requires dual-node execution and cannot run with SINGLE_NODE_ONLY=1" >&2
+    return 1
+  fi
+}
+
+solo_resource_scope() {
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    printf '%s\n' none
+  else
+    printf '%s\n' required
+  fi
+}
+
+refuse_solo_ray_container_collision() {
+  [[ "$SINGLE_NODE_ONLY" == "1" ]] || return 0
+  if docker inspect -f '{{.Id}}' "$VLLM_CONTAINER" >/dev/null 2>&1; then
+    if docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q '^Active:'; then
+      echo "[execution] refusing solo container '$VLLM_CONTAINER': it already runs a Ray runtime" >&2
+      return 1
+    fi
+    echo "[execution] refusing solo container '$VLLM_CONTAINER': a pre-existing container is not owned by this command" >&2
+    return 1
+  fi
+  return 0
 }
 
 validate_local_topology_links() {
@@ -610,6 +684,15 @@ resource_check_once() {
 
   case "$worker_scope" in auto|required|none) ;; *)
     echo "[resources] invalid worker scope '$worker_scope'" >&2; return 2 ;; esac
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    case "$worker_scope" in
+      required)
+        echo "[resources] worker scope required is invalid with SINGLE_NODE_ONLY=1" >&2
+        return 2
+        ;;
+      auto) worker_scope=none ;;
+    esac
+  fi
   case "$mode" in all|serving) ;; *)
     echo "[resources] invalid resource-check mode '$mode'" >&2; return 2 ;; esac
 
@@ -623,9 +706,11 @@ resource_check_once() {
     return 2
   fi
 
-  if docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null \
-      | grep -q '^true$'; then
-    container_running=1
+  if [[ "$worker_scope" != "none" ]]; then
+    if docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null \
+        | grep -q '^true$'; then
+      container_running=1
+    fi
   fi
   if [[ "$worker_scope" == "required" ]]; then
     check_worker=1

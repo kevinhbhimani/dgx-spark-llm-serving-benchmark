@@ -19,6 +19,7 @@ import math
 import os
 from pathlib import Path
 import re
+import socket
 import sys
 from types import SimpleNamespace
 from typing import Iterable, Mapping, Sequence
@@ -30,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from utils.campaign_output import (
+    IDENTITY_FILENAME,
     resolve_campaign_dir,
     resolve_campaign_logs_dir,
     resolve_campaign_results_dir,
@@ -42,6 +44,7 @@ from scripts.campaign.plan import (
     CampaignValidationError,
     ExpectedPoint,
     ModelSpec,
+    select_models,
     finite_float,
     nonnegative_float,
     nonnegative_integer,
@@ -847,6 +850,9 @@ def verify_campaign(
     manifest_path: str | os.PathLike[str] | None = None,
     completed_only: bool = False,
     allow_source_match_commits: bool = False,
+    labels: Sequence[str] | None = None,
+    configs: Sequence[str] | None = None,
+    single_node_only: bool = False,
 ) -> dict[str, object]:
     """Verify an exact finished campaign and optionally write its manifest.
 
@@ -864,9 +870,16 @@ def verify_campaign(
     without changing the fingerprinted harness source.
     """
     campaign = load_campaign(models_path, experiment_path)
+    selection = select_models(
+        campaign.models, labels, configs, single_node_only
+    )
+    if single_node_only and completed_only:
+        raise CampaignValidationError(
+            "SINGLE_NODE_ONLY verification requires the exact selected grid"
+        )
     loads = parse_concurrencies(concurrencies)
     repeat_count = positive_integer(repeats, "repeats")
-    grid = build_expected_grid(campaign.models, loads, repeat_count)
+    grid = build_expected_grid(selection.models, loads, repeat_count)
     expected = {point.key: point for point in grid}
     campaign_root = Path(out_dir).expanduser().resolve()
     output = resolve_campaign_results_dir(campaign_root)
@@ -907,7 +920,7 @@ def verify_campaign(
             )
         planned_combos = {
             (model.label, config)
-            for model in campaign.models
+            for model in selection.models
             for config in model.configs
         }
         skipped_combos = sorted(
@@ -954,7 +967,7 @@ def verify_campaign(
     )
     _validate_client_environment_manifest(environment_path)
 
-    model_by_label = {model.label: model for model in campaign.models}
+    model_by_label = {model.label: model for model in selection.models}
     consistent_global: dict[str, str] = {}
     consistent_pair: dict[tuple[str, str, str], str] = {}
     consistent_experiment: dict[tuple[str, str, int], str] = {}
@@ -1138,6 +1151,28 @@ def verify_campaign(
             "power_backend",
         )
         policy_schema = str(serving_policy.get("schema") or "")
+        if single_node_only and policy_schema != "serving-v3":
+            raise CampaignValidationError(
+                f"{context} solo rows require serving-v3 policies"
+            )
+        if not single_node_only and policy_schema == "serving-v3":
+            raise CampaignValidationError(
+                f"{context} serving-v3 policy requires SINGLE_NODE_ONLY=1"
+            )
+        if policy_schema == "serving-v3":
+            global_policy_fields = (
+                "image", "dtype", "prefix_caching", "generation_config",
+                "torchinductor_autograd_cache", "hf_hub_offline", "power_backend",
+                "execution_scope", "execution_sha256", "hostname",
+                "serving_container",
+            )
+        else:
+            global_policy_fields = (
+                "image", "dtype", "prefix_caching", "generation_config",
+                "torchinductor_autograd_cache", "hf_hub_offline", "ray_version",
+                "connectx_iface", "nccl_ib_disable", "head_ip", "worker_ip",
+                "power_backend",
+            )
         previous_schema = consistent_policy.setdefault("schema", policy_schema)
         if previous_schema != policy_schema:
             raise CampaignValidationError(
@@ -1248,7 +1283,156 @@ def verify_campaign(
         if vllm_sample_path is not None:
             vllm_sample_paths.append(vllm_sample_path)
 
-    if consistent_policy.get("schema") == "serving-v2":
+    local_execution_path: Path | None = None
+    local_execution_manifest: dict[str, object] | None = None
+    if consistent_policy.get("schema") == "serving-v3":
+        local_execution_path = output / "inputs" / "local_execution.json"
+        if local_execution_path.is_symlink() or not local_execution_path.is_file():
+            raise CampaignValidationError(
+                "solo campaign local_execution.json is missing or is not a regular file"
+            )
+        try:
+            execution_record = _load_json_object_strict(
+                local_execution_path, "local execution record"
+            )
+        except CampaignValidationError:
+            raise
+        expected_hostname = socket.gethostname().split(".", 1)[0].rstrip(".").casefold()
+        expected_execution_fields: dict[str, object] = {
+            "schema_version": 1,
+            "execution_scope": "single-node",
+            "hostname": expected_hostname,
+            "loopback_address": "127.0.0.1",
+            "serving_container": "standalone",
+        }
+        if execution_record != expected_execution_fields:
+            raise CampaignValidationError(
+                "local execution record does not match the current solo execution"
+            )
+        canonical_execution = json.dumps(
+            expected_execution_fields,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        try:
+            saved_execution = local_execution_path.read_bytes()
+        except OSError as exc:
+            raise CampaignValidationError(
+                f"cannot read local execution record: {exc}"
+            ) from exc
+        if saved_execution != canonical_execution:
+            raise CampaignValidationError(
+                "local execution record is not encoded as canonical JSON"
+            )
+        execution_sha256 = hashlib.sha256(canonical_execution).hexdigest()
+        if consistent_policy.get("execution_sha256") != json.dumps(
+            execution_sha256, separators=(",", ":")
+        ):
+            raise CampaignValidationError(
+                "serving policy execution_sha256 does not match local_execution.json"
+            )
+        if consistent_policy.get("hostname") != json.dumps(
+            expected_hostname, separators=(",", ":")
+        ):
+            raise CampaignValidationError(
+                "serving policy hostname does not match the current local hostname"
+            )
+        identity_path = output / IDENTITY_FILENAME
+        try:
+            campaign_marker = _load_json_object_strict(
+                identity_path, "campaign identity marker"
+            )
+        except CampaignValidationError:
+            raise
+        if campaign_marker.get("resolved_out_dir") != str(campaign_root):
+            raise CampaignValidationError(
+                "campaign identity marker names a different output directory"
+            )
+        campaign_identity = campaign_marker.get("identity")
+        if not isinstance(campaign_identity, dict):
+            raise CampaignValidationError("campaign identity marker has no identity object")
+        identity_files = campaign_identity.get("files")
+        identity_values = campaign_identity.get("values")
+        identity_sha256 = campaign_identity.get("sha256")
+        if not isinstance(identity_files, dict) or not isinstance(identity_values, dict):
+            raise CampaignValidationError("campaign identity marker has invalid identity fields")
+        identity_payload = {"files": identity_files, "values": identity_values}
+        calculated_identity_sha256 = hashlib.sha256(
+            json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if identity_sha256 != calculated_identity_sha256:
+            raise CampaignValidationError("campaign identity marker digest is invalid")
+        if "cluster.yaml" in identity_files:
+            raise CampaignValidationError(
+                "solo campaign identity must not include cluster.yaml"
+            )
+        for input_path in (campaign.models_path, campaign.experiment_path):
+            if identity_files.get(input_path.name) != sha256_file(input_path):
+                raise CampaignValidationError(
+                    f"campaign identity does not match {input_path.name}"
+                )
+        peer_identity_fields = {
+            "head_ip", "worker_ip", "topology_sha256", "head_node_id",
+            "worker_node_id", "head_cx_iface", "worker_cx_iface",
+            "connectx_iface", "ray_version", "ib_hca", "gid_index",
+            "net_plugin", "network_policy",
+        }
+        present_peer_fields = sorted(peer_identity_fields & identity_values.keys())
+        if present_peer_fields:
+            raise CampaignValidationError(
+                "solo campaign identity contains peer/topology fields: "
+                + ", ".join(present_peer_fields)
+            )
+        selected_labels = " ".join(model.label for model in selection.models)
+        selected_configs = " ".join(
+            sorted({config for model in selection.models for config in model.configs})
+        )
+        excluded_labels = " ".join(selection.excluded_labels)
+        policy_offline = consistent_policy.get("hf_hub_offline")
+        try:
+            expected_offline = json.loads(policy_offline or "null")
+            expected_policy_values = {
+                identity_field: json.loads(
+                    consistent_policy[policy_field] or "null"
+                )
+                for identity_field, policy_field in (
+                    ("image", "image"),
+                    ("dtype", "dtype"),
+                    ("prefix_caching", "prefix_caching"),
+                    ("generation_config", "generation_config"),
+                    ("inductor_cache", "torchinductor_autograd_cache"),
+                )
+            }
+        except json.JSONDecodeError as exc:
+            raise CampaignValidationError(
+                "solo serving policy has invalid campaign identity fields"
+            ) from exc
+        expected_identity_values = {
+            **expected_policy_values,
+            "single_node_only": "1",
+            "execution_scope": "single-node",
+            "execution_sha256": execution_sha256,
+            "hostname": expected_hostname,
+            "serving_container": "standalone",
+            "single_container": "standalone",
+            "hf_hub_offline": str(expected_offline),
+            "selected_labels": selected_labels,
+            "selected_configs": selected_configs,
+            "excluded_labels": excluded_labels,
+            "flashinfer_autotune": consistent_policy.get(
+                "flashinfer_autotune", ""
+            ),
+        }
+        for field, expected_value in expected_identity_values.items():
+            if identity_values.get(field) != expected_value:
+                raise CampaignValidationError(
+                    f"campaign identity {field} does not match the verified solo execution"
+                )
+        local_execution_manifest = {
+            **execution_record,
+            "execution_sha256": execution_sha256,
+        }
+    elif consistent_policy.get("schema") == "serving-v2":
         topology_path = output / "inputs" / "cluster.yaml"
         topology_metadata_path = output / "inputs" / "cluster_topology.json"
         try:
@@ -1416,6 +1600,8 @@ def verify_campaign(
         "topology_input": topology_artifact_paths,
         "figure": figure_paths,
     }
+    if local_execution_path is not None:
+        artifacts["execution_input"] = [local_execution_path]
     manifest_written: str | None = None
     if manifest_path is not None:
         destination = Path(manifest_path)
@@ -1438,6 +1624,14 @@ def verify_campaign(
             allow_source_match_commits=allow_source_match_commits,
             harness_git_commits=sorted(commit_values),
             topology=topology_manifest,
+            execution=local_execution_manifest,
+            selection={
+                "labels": [model.label for model in selection.models],
+                "configs": sorted(
+                    {config for model in selection.models for config in model.configs}
+                ),
+                "excluded_labels": list(selection.excluded_labels),
+            } if single_node_only else None,
         )
         write_json_atomic(destination, manifest)
         manifest_written = str(destination)
@@ -1446,7 +1640,14 @@ def verify_campaign(
         "status": "ok",
         "verified_count": len(rows),
         "expected_count": len(expected),
-        "model_config_count": sum(len(model.configs) for model in campaign.models),
+        "model_config_count": sum(len(model.configs) for model in selection.models),
+        "selection": {
+            "labels": [model.label for model in selection.models],
+            "configs": sorted(
+                {config for model in selection.models for config in model.configs}
+            ),
+            "excluded_labels": list(selection.excluded_labels),
+        },
         "concurrencies": list(loads),
         "repeats": repeat_count,
         "completed_only": completed_only,
@@ -1482,6 +1683,9 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--repeats", required=True, help="positive repeat count"
     )
+    parser.add_argument("--labels", nargs="+", default=None)
+    parser.add_argument("--configs", nargs="+", default=None)
+    parser.add_argument("--single-node-only", action="store_true")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1538,6 +1742,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.experiment_path,
                 args.concurrencies,
                 args.repeats,
+                args.labels,
+                args.configs,
+                args.single_node_only,
             )
         else:
             if args.out_dir is None:
@@ -1560,6 +1767,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.manifest,
                 args.completed_only,
                 args.allow_source_match_commits,
+                args.labels,
+                args.configs,
+                args.single_node_only,
             )
     except (CampaignValidationError, OSError, RuntimeError) as exc:
         print(f"validate_campaign.py: {exc}", file=sys.stderr)

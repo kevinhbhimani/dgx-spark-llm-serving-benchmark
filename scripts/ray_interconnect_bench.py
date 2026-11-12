@@ -46,6 +46,7 @@ Usage (inside the container):
 """
 from __future__ import annotations
 import math
+import os
 import subprocess
 import sys
 import time
@@ -290,6 +291,11 @@ def _run(
 
 
 def main() -> int:
+    if os.environ.get("SINGLE_NODE_ONLY") == "1":
+        sys.stderr.write(
+            "[microbench] interconnect benchmarking requires dual-node execution\n"
+        )
+        return 2
     if not 5 <= len(sys.argv) <= 6:
         sys.stderr.write(
             "usage: ray_interconnect_bench.py HEAD_IP WORKER_IP "
