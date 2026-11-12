@@ -1,6 +1,0 @@
-$ bash -c journalctl -k -b -1 --no-pager -o short-iso-precise | grep -iE 'oom|out of memory|NV_ERR_NO_MEMORY|NVRM|Xid|thermal|critical|hw_protection|panic|Oops|hung_task|soft lockup|rcu.*stall|watchdog|Power key|power button|mlx5.*power' | tail -200
-Hint: You are currently not seeing messages from other users and the system.
-      Users in groups 'adm', 'systemd-journal' can see all messages.
-      Pass -q to turn off this notice.
-
-[exit 0]

@@ -1,9 +1,0 @@
-% Requires \usepackage{booktabs}.
-\begin{tabular}{l r r r r r r r r r r r r r r }
-\toprule
-Config & HF weight (GiB) & HF KV (GiB) & Worker weight (GiB) & Worker KV (GiB) & KV tokens & GPU blocks & Block & KV dtype & GPU mem util & max\_model\_len & max conc. & Hybrid cache & KV token source & vLLM \\
-\midrule
-Single Spark & -- & -- & 5.7 & 88.1 & 1,444,152 & 90,260 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 165.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
-\bottomrule
-\end{tabular}
-% HF weight/KV columns are optional full-model estimates. Worker columns come from the vLLM startup log and are per serving worker.

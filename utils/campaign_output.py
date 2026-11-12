@@ -41,6 +41,13 @@ def _is_bare_campaign_name(raw_target: str) -> bool:
     )
 
 
+def _solo_campaign_name(name: str) -> str:
+    """Prefix a campaign name with solo unless it already has the prefix."""
+    if name == "solo" or name.startswith("solo-"):
+        return name
+    return f"solo-{name}"
+
+
 def _has_valid_campaign_date_suffix(name: str) -> bool:
     """Return whether a name ends in a valid campaign date and optional counter."""
     match: re.Match[str] | None = DATE_SUFFIX.search(name)
@@ -484,17 +491,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "resolve":
             default_name: str = args.default_name
             campaign_name: str | None = os.environ.get("CAMPAIGN_NAME")
+            is_solo: bool = os.environ.get("SINGLE_NODE_ONLY") == "1"
             if (
                 not args.out_dir
                 and default_name == DEFAULT_CAMPAIGN_NAME
                 and campaign_name
             ):
                 default_name = f"{campaign_name}-{default_name}"
+            output_target: str | None = args.out_dir
+            if is_solo:
+                if output_target and _is_bare_campaign_name(output_target):
+                    output_target = _solo_campaign_name(output_target)
+                elif not output_target:
+                    default_name = _solo_campaign_name(default_name)
             if args.next_available and not args.out_dir:
                 output_dir = next_available_campaign_dir(default_name=default_name)
             else:
                 output_dir = resolve_new_campaign_dir(
-                    args.out_dir, default_name=default_name
+                    output_target, default_name=default_name
                 )
             print(output_dir)
         elif args.command == "results-dir":

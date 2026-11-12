@@ -1,7 +1,0 @@
-$ bash -c docker ps -a; docker exec vllm-spark ray status 2>&1 | head -40
-CONTAINER ID   IMAGE          COMMAND                  CREATED        STATUS                       PORTS     NAMES
-44b5c1080f13   557747337846   "/bin/bash -lc 'pip …"   17 hours ago   Exited (255) 8 minutes ago             vllm-spark
-4ed13a6f6bc7   hello-world    "/hello"                 3 weeks ago    Exited (0) 3 weeks ago                 nostalgic_banzai
-Error response from daemon: container 44b5c1080f13fcc5d7edc1e9c4ec40967584e4f02c4bcf2ce5dd7a9a1aef7c9d is not running
-
-[exit 0]

@@ -869,7 +869,9 @@ such as `OUT_DIR=rdma-v4-paper` selects the next unused path matching
 `results/benchmark-<UTC-date>-NNN` path. `CAMPAIGN_NAME=rdma-v4-paper` adds the
 same prefix when `OUT_DIR` is unset. A bare name already ending in a valid
 campaign date, with an optional sequence number, identifies that directory
-under `results/`.
+under `results/` in dual-node mode. With `SINGLE_NODE_ONLY=1`, `solo-` prefixes
+implicit campaign names and bare `OUT_DIR` names, including dated names.
+Complete `OUT_DIR` paths remain unchanged.
 A relative path with a directory component or an absolute path is used as
 given, including paths used to resume existing campaigns. `PLAN_ONLY=1` prints
 the selected path without creating it.
