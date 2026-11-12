@@ -1,0 +1,38 @@
+{
+  "campaign_date": null,
+  "campaign_directory": "campaign",
+  "campaign_name": "campaign",
+  "created_at_utc": "2026-11-10T22:30:25.578240+00:00",
+  "identity": {
+    "files": {
+      "experiment.yaml": "00c3b6867f22f5992b197ec673874712c6a7386369c40c7d0632eb2583faef8d",
+      "models.yaml": "735ed410c2405073f15adcd5e1cba43e0c5c3cc1706c16f5a66b495177c55e83"
+    },
+    "sha256": "233d78b4b37450def353913473f319a0b95b2afa78c729334eba0e278b6d347c",
+    "values": {
+      "concurrencies": "1 4 8 16 32 64",
+      "dtype": "auto",
+      "excluded_labels": "nemotron3-super-120b-a12b-fp8 qwen3-235b-a22b-nvfp4 mistral-medium-3.5-128b-nvfp4 qwen3-next-80b-bf16",
+      "execution_scope": "single-node",
+      "execution_sha256": "03435afc0616c2454b9cafba16049807115da6f743f03d4015fb82de8a374355",
+      "flashinfer_autotune": "0",
+      "generation_config": "vllm",
+      "git_commit": "290873e856386d1a857f8e04b94ac17f78eeb177",
+      "gpu_util_override": "0.90",
+      "hf_hub_offline": "0",
+      "hostname": "hoedus",
+      "image": "nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2",
+      "inductor_cache": "0",
+      "max_num_seqs": "",
+      "prefix_caching": "0",
+      "quant": "",
+      "repeats": "3",
+      "selected_configs": "single",
+      "selected_labels": "qwen3.6-35b-a3b-fp8 llama3.1-8b llama3.1-8b-fp8 llama3.1-8b-nvfp4 qwen3.6-27b qwen3.6-27b-fp8 qwen3.6-27b-nvfp4 qwen3.6-35b-a3b qwen3.6-35b-a3b-nvfp4 gemma4-31b-it-nvfp4 gemma4-26b-a4b-nvfp4 nemotron3.5-lightning-30b-a3b-nvfp4 gpt-oss-120b nemotron3-super-120b-a12b-nvfp4 qwen3-next-80b-nvfp4",
+      "serving_container": "standalone",
+      "single_container": "standalone",
+      "single_node_only": "1"
+    }
+  },
+  "resolved_out_dir": "/home/dmihovch/dgx-spark-llm-serving-benchmark/results/benchmark-2026-11-10-001/preflight/20261110-223018-62540/campaign"
+}
