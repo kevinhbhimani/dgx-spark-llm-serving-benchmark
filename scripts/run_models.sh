@@ -1209,11 +1209,7 @@ run_one() {
     return 1
   fi
   LAST_SERVER_LOG="$log"
-  LAST_FAILURE_STAGE="memory-preparation"
-  if ! "$HERE/flush_page_cache.sh" "$CONFIG" 2>&1 | tee -a "$log"; then
-    echo "[models] page-cache preparation failed for $label/$CONFIG" >&2
-    return 1
-  fi
+  echo "[memory] policy: no host-wide cache flush; launch preflights reclaim clean HF file pages when needed" >>"$log"
   thermal_log="$CAMPAIGN_LOGS_DIR/thermal_${label}_${CONFIG}_${fingerprint_prefix}_${launch_timestamp}_pid$$.log"
   start_thermal_capture "$thermal_log"
 

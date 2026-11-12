@@ -18,8 +18,7 @@
 #      SMOKE_GPU_UTIL
 #      (default 0.80), SMOKE_CONCURRENCIES (default "1 4"), PORT (default
 #      8100), SMOKE_VLLM_CONTAINER (default vllm-spark-smoke), PYTHON,
-#      DROP_CACHES
-#      (passed to the launcher), KEEP_WEIGHTS=1 (skip the final purge).
+#      KEEP_WEIGHTS=1 (skip the final purge).
 #
 # The canary sends one short request, so it cannot catch a model that fails
 # only under load. Stress a suspect checkpoint at the campaign's top load:

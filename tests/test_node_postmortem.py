@@ -14,7 +14,6 @@ FULL_BOOT = "f" * 32
 FIRST_ATTEMPT_BOOT = "a" * 32
 LAST_ATTEMPT_BOOT = "b" * 32
 CURRENT_BOOT = "c" * 32
-SUDO_CALLER_ID = "1234"
 
 # Hoedus on 2026-10-27: a boot that ran for hours, then power-on attempts whose
 # journals stop seconds after the flush. FAKE_PREVIOUS_BOOT_SPAN sets how many
@@ -66,7 +65,7 @@ class NodePostmortemTests(unittest.TestCase):
         self.bin.mkdir()
         self.chown_log = self.root / "chown.log"
         self._command("id", '[[ "${1:-}" == "-u" ]] && { echo "$FAKE_UID"; exit 0; }\n'
-                            'exec /usr/bin/id "$@"\n')
+                            'echo "uid=$FAKE_UID (fixture account)"\n')
         self._command("hostname", "echo fakehost\n")
         self._command("journalctl", FAKE_JOURNALCTL)
         self._command("chown", 'printf "%s\\n" "$*" >> "$CHOWN_LOG"\n')
@@ -86,8 +85,6 @@ class NodePostmortemTests(unittest.TestCase):
             "PATH": f"{self.bin}:{environment['PATH']}",
             "FAKE_UID": user_id,
             "FAKE_PREVIOUS_BOOT_SPAN": str(previous_boot_span_seconds),
-            "SUDO_UID": SUDO_CALLER_ID,
-            "SUDO_GID": SUDO_CALLER_ID,
             "CHOWN_LOG": str(self.chown_log),
         })
         # Run outside the repository: the output location must not follow cwd.
@@ -103,12 +100,28 @@ class NodePostmortemTests(unittest.TestCase):
         self.assertEqual(len(directories), 1, directories)
         return directories[0]
 
-    def test_refuses_to_run_without_root(self) -> None:
+    def test_collects_available_evidence_without_root(self) -> None:
         result = self._postmortem(user_id="1000", previous_boot_span_seconds=3)
 
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("sudo", result.stderr)
-        self.assertFalse((self.repository / "results").exists())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        evidence = self._evidence_directory()
+        self.assertIn("uid=1000", (evidence / "access.txt").read_text())
+        self.assertIn("Restricted or missing evidence is unknown",
+                      (evidence / "access.txt").read_text())
+        self.assertTrue((evidence / "boots.txt").exists())
+        self.assertFalse(self.chown_log.exists())
+
+    def test_restricted_journal_is_recorded_without_aborting(self) -> None:
+        self._command("journalctl", 'echo "Permission denied" >&2\nexit 1\n')
+        result = self._postmortem(user_id="1000", previous_boot_span_seconds=3)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        evidence = self._evidence_directory()
+        for name in ("boots.txt", "prev_boot_tail.txt", "prev_boot_kernel.txt"):
+            contents = (evidence / name).read_text()
+            self.assertIn("Permission denied", contents)
+            self.assertIn("[exit 1]", contents)
+        self.assertTrue((evidence / "memory.txt").exists())
 
     def test_captures_the_last_full_boot_behind_failed_power_on_attempts(self) -> None:
         result = self._postmortem(user_id="0", previous_boot_span_seconds=6)
@@ -123,8 +136,7 @@ class NodePostmortemTests(unittest.TestCase):
         self.assertIn(f"boot={FIRST_ATTEMPT_BOOT}",
                       (evidence / "after_full_boot_kernel.txt").read_text())
         self.assertIn(FULL_BOOT, (evidence / "SUMMARY.txt").read_text())
-        self.assertIn(f"{SUDO_CALLER_ID}:{SUDO_CALLER_ID} {evidence}",
-                      self.chown_log.read_text())
+        self.assertFalse(self.chown_log.exists())
 
     def test_full_previous_boot_needs_no_extra_capture(self) -> None:
         result = self._postmortem(user_id="0", previous_boot_span_seconds=7200)

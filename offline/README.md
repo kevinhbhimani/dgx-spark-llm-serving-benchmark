@@ -45,6 +45,7 @@ For an x86_64 build host targeting DGX Spark, register arm64 emulation for the
 Docker Buildx image build:
 
 ```bash
+# Administrator machine setup on a cross-architecture build host:
 docker run --privileged --rm tonistiigi/binfmt --install arm64
 docker run --rm --platform linux/arm64 alpine uname -m
 ```

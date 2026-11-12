@@ -40,6 +40,32 @@ starting Ray. Keep the interfaces up and route each declared peer address
 through its paired interface. `ssh_target` must be reachable from the selected
 head for the read-only worker snapshot. SSH uses strict host-key checking.
 
+## Administrator prerequisites
+
+The sysadmin provisions each host before the benchmark account uses this
+repository:
+
+- Install the GPU driver, Docker Engine, and NVIDIA Container Toolkit. Configure
+  GPU access through Docker for the benchmark account.
+- Grant that account access to the host Docker daemon, including container
+  creation with host networking, host IPC, `IPC_LOCK`, unlimited memlock, and
+  `/dev/infiniband` devices for RDMA. Group-based Docker access grants control
+  of a privileged daemon. Sudo access for the account is not required.
+- Configure firmware, RDMA, interfaces, routes, hostnames, and SSH service.
+- Install Python 3.12 with venv support, Git, and the host tools used by the
+  fabric checks (`ip`, `ping`, `rdma`, and `ibdev2netdev`).
+- Provide user-writable checkout, cache, temporary, and output directories on
+  each node. Existing files owned by another account require an administrator
+  to correct permissions or a new user-owned location.
+- For postmortem diagnostics, grant system journal read access if site policy
+  permits it. Restricted journals and pstore require administrator evidence
+  collection; the script records available evidence as the invoking account.
+
+Log in again after group changes. Run `docker info` as the benchmark account
+to check daemon access. The repository does not invoke sudo or reconfigure the
+host during experimental runs. Driver recovery, kernel module reloads, and
+reboots remain administrator tasks. Rootless Docker support is unverified.
+
 ## Host and software requirements
 
 Apply firmware and system updates using the DGX Dashboard and NVIDIA's

@@ -153,7 +153,8 @@ under `OUT_DIR/logs/`, and preflight artifacts under
 Firmware, Netplan, and `/etc/hosts` changes require an administrator. Researchers
 using preconfigured nodes can run the client setup, cache checks, unit suite,
 and benchmark commands as their own account. The account must have access to
-the Docker daemon. `DROP_CACHES=1` is optional and requires sudo.
+the Docker daemon, provisioned by the sysadmin before repository setup.
+`DROP_CACHES=1` is unsupported; remove it from the environment and `.env`.
 
 Keep the image digest, Ray version, constraints file, model matrix, and
 experiment configuration identical across the two checkouts. Commit changes
@@ -201,8 +202,10 @@ verified with the source revision that produced their rows.
 The host and pinned image probe cache create/read/delete access before use. A
 failure reports the effective UID:GID and, when available, the cache directory
 owner and mode. The scripts do not change ownership. Cache setup and regular
-benchmark commands do not require sudo. `DROP_CACHES=1` invokes sudo and is
-optional.
+benchmark commands do not require sudo. Launch preflights attempt clean HF
+file-page reclamation without elevated access. Host-wide cache flushing is
+disabled. Use a fresh campaign directory after migrating from a revision that
+flushed host cache; retain source revisions and logs for comparisons.
 
 Downloads and single-node serving use the invoking UID/GID. Ray mirror
 extraction uses the worker's invoking UID/GID. Single-node serving uses online

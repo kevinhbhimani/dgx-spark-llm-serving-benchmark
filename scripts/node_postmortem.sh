@@ -2,13 +2,14 @@
 # Collect read-only evidence after a node went down, froze, or rebooted during
 # a campaign. Run on each configured node; nothing is changed on the host.
 #
-#   sudo scripts/node_postmortem.sh [CAMPAIGN_DIR]
+#   scripts/node_postmortem.sh [CAMPAIGN_DIR]
 #
-# Requires root. Without it, journalctl reads only the caller's own journal,
-# which lists different boots, and /sys/fs/pstore is unreadable.
+# Collects evidence permitted by the invoking account. System journal and
+# pstore access may be restricted. Missing evidence does not establish that
+# a fault did not occur. access.txt records identity and collection scope.
 #
 # Writes everything to results/node-postmortem-<host>-<UTC timestamp>/ under the
-# repository root, owned by the sudo caller, and prints the directory.
+# repository root, owned by the invoking account, and prints the directory.
 # CAMPAIGN_DIR (optional) is a campaign OUT_DIR whose run_job and server logs
 # should be summarized as well.
 #
@@ -36,11 +37,6 @@
 #     after a stop -> the firmware recorded a hardware error for that stop
 set -uo pipefail
 
-if [[ "$(id -u)" != "0" ]]; then
-  echo "[postmortem] run with sudo: the system journal and /sys/fs/pstore need root" >&2
-  exit 1
-fi
-
 MIN_FULL_BOOT_SECONDS=60
 CAMPAIGN_DIR="${1:-}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -63,7 +59,7 @@ SHUTDOWN_PATTERN='shutdown|reboot|poweroff|power-off|unattended-upgrade|dgx-dash
 
 # Kernel lines matching KERNEL_PATTERN for one boot (an offset or a boot ID).
 collect_kernel() {
-  collect "$1" bash -c "journalctl -k -b '$2' --no-pager -o short-iso-precise | grep -iE '$KERNEL_PATTERN' | tail -200"
+  collect "$1" bash -o pipefail -c "journalctl -k -b '$2' --no-pager -o short-iso-precise | grep -iE '$KERNEL_PATTERN' | tail -200"
 }
 
 # Journal tail, kernel matches, and shutdown actors of one boot.
@@ -71,7 +67,7 @@ collect_boot() {
   local prefix="$1" boot="$2"
   collect "${prefix}_tail.txt" journalctl -b "$boot" -n 300 --no-pager -o short-iso-precise
   collect_kernel "${prefix}_kernel.txt" "$boot"
-  collect "${prefix}_shutdown_actors.txt" bash -c "journalctl -b '$boot' --no-pager -o short-iso-precise | grep -iE '$SHUTDOWN_PATTERN' | tail -80"
+  collect "${prefix}_shutdown_actors.txt" bash -o pipefail -c "journalctl -b '$boot' --no-pager -o short-iso-precise | grep -iE '$SHUTDOWN_PATTERN' | tail -80"
 }
 
 # Whole seconds between the first and last journal entries of a boot ID.
@@ -82,6 +78,13 @@ boot_span_seconds() {
   [[ "$first" =~ ^[0-9]+(\.[0-9]+)?$ && "$last" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
   echo $(( ${last%.*} - ${first%.*} ))
 }
+
+{
+  id
+  echo 'Scope: evidence readable by the invoking account.'
+  echo 'Journal boot lists may be incomplete. Restricted or missing evidence is unknown.'
+  echo 'Ask the administrator for system journal or pstore evidence if access is denied.'
+} >"$OUT/access.txt" 2>&1
 
 collect identity.txt bash -c 'hostname; date -u; uname -a; echo "booted at: $(uptime -s)"; cat /proc/uptime'
 collect boots.txt journalctl --list-boots --no-pager
@@ -119,6 +122,7 @@ fi
 
 {
   echo "Evidence directory: $OUT"
+  echo "Scope: invoking account access only; see access.txt for evidence limitations."
   echo
   echo "Boots (latest last):"
   tail -n 6 "$OUT/boots.txt"
@@ -132,9 +136,3 @@ fi
     grep -v '^\$ ' "$OUT/last_full_boot_tail.txt" | grep -v '^\[exit' | tail -n 15
   fi
 } | tee "$OUT/SUMMARY.txt"
-
-# sudo writes root-owned files into the caller's checkout; return them so the
-# caller can commit or remove them without root.
-if [[ -n "${SUDO_UID:-}" ]]; then
-  chown -R "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$OUT"
-fi

@@ -83,19 +83,13 @@ mode when access fails. Scripts do not change cache ownership.
 If the default cache belongs to another account or has insufficient space, set
 `HF_CACHE` in the repo-local `.env` on each node. Use a directory owned by the
 account running the benchmark. Use a writable local scratch path when the home
-filesystem lacks 200 GB. The head and worker use separate caches. The model
-launcher flushes host page cache before each server start. This requires
-noninteractive sudo permission for `/usr/bin/tee /proc/sys/vm/drop_caches` on
-each participating node. Dual-node launches require batch SSH access from the
-head to the worker through `ssh_target`. Add a restricted sudoers rule for the
-benchmark account on each node, then validate it with `visudo`:
-
-```text
-dmihovch ALL=(root) NOPASSWD: /usr/bin/tee /proc/sys/vm/drop_caches
-```
-
-Replace `dmihovch` with the account that runs the benchmark. Direct
-`launch_server.sh` calls can use `DROP_CACHES=1` to flush the local host cache.
+filesystem lacks 200 GB. The head and worker use separate caches.
+Launch preflights reclaim clean Hugging Face file pages without elevated
+access when memory is low and sufficient reclaimable memory is available.
+Host-wide cache flushing is disabled. Remove `DROP_CACHES=1` from existing
+shell environments and `.env` files; entrypoints reject this obsolete option.
+Dual-node runs require batch SSH access from the head to the worker through
+`ssh_target`.
 Docker commands require permission to access the Docker daemon. Put `HF_TOKEN`
 in `.env` on the head node for gated models and run `chmod 600 .env` after
 adding the token.
@@ -286,13 +280,13 @@ Server-side requirements for the included scripts:
   `NCCL_IB_DISABLE=1` for the TCP-socket fallback. The full setup and
   pre-flight sequence is in [docs/cluster-setup.md](docs/cluster-setup.md).
 
-If Docker reports a socket permission error, add the user to the `docker` group
-and start a new shell:
-
-```bash
-sudo usermod -aG docker "$USER"
-newgrp docker
-```
+The sysadmin must provision Docker daemon access for the benchmark account
+on each node before repository setup. For a group-controlled Docker socket,
+the sysadmin adds the account to the `docker` group. Log in again after the
+group change. Verify access as the benchmark account with `docker info`.
+The launchers use the host Docker daemon with GPU devices, host networking,
+host IPC, and RDMA devices. Rootless Docker compatibility is unverified.
+See [administrator prerequisites](docs/cluster-setup.md#administrator-prerequisites).
 
 ## Configuration
 
@@ -538,20 +532,17 @@ generated tokens. The default full workload needs at least `8704` because its
 largest request is `8192` input tokens and `512` output tokens. The launcher
 defaults to `8704`; if you lower it, also lower the largest workload bucket.
 
-On Grace unified memory, clean page cache can make `MemFree` look too small even
-when `MemAvailable` is sufficient. `run_models.sh` flushes host page cache after
-model files are staged and before each server starts. It records `MemFree` and
-`MemAvailable` before and after the flush. The server memory preflight then
-checks the same `GPU_UTIL x MemTotal` threshold that vLLM uses. A remaining
-shortage stops the launch before measurement. Direct `launch_server.sh` calls
-can use `DROP_CACHES=1` for a local proactive flush:
+On Grace unified memory, clean page cache can make `MemFree` smaller than
+`MemAvailable`. The server memory preflight attempts to reclaim clean Hugging
+Face file pages with `posix_fadvise` when `MemAvailable` covers the target plus
+its 2 GiB reserve. It checks the `GPU_UTIL x MemTotal` threshold and stops the
+launch if memory remains insufficient. It does not flush unrelated host cache.
+Reclamation is advisory and does not guarantee enough free memory.
 
-```bash
-DROP_CACHES=1 \
-MODEL=Qwen/Qwen3-8B \
-REVISION=b968826d9c46dd6066d109eabc6255188de91218 \
-scripts/launch_server.sh single
-```
+This procedure differs from revisions that flushed host-wide page cache
+before each model launch. Use a fresh campaign output directory after this
+change. Preserve the source revision and server logs when comparing runs
+across these procedures.
 
 Run one manual diagnostic point. The smoke config deliberately does not claim
 paper provenance:
@@ -637,8 +628,7 @@ scripts/start_ray.sh head
 scripts/start_ray.sh worker
 ```
 
-`DROP_CACHES=1` is an optional page-cache flush on the local node. It requires
-sudo. Omit it on systems where the benchmark account does not have sudo access.
+`DROP_CACHES=1` is unsupported. Ray startup performs no host-wide cache flush.
 
 Direct `run_models.sh` launches acquire each selected pinned snapshot on the
 head before launch and mirror it to the worker for tp2/pp2. Set `MODEL_LABELS`
@@ -681,8 +671,8 @@ For `tp2` and `pp2` the launcher runs a preflight over the Ray cluster before
 starting `vllm serve`: it reads free memory on every node and fails fast if any
 node is below `GPU_UTIL x total`, which is the same bound vLLM enforces per
 worker at startup (on Grace unified memory, CUDA free memory tracks the host's
-`MemFree`). Before a distributed server starts, `run_models.sh` flushes page
-cache on the head and worker after model files are staged. The preflight still
+`MemFree`). The preflight attempts clean Hugging Face file-page reclamation
+on each node when reclaimable memory covers the target plus its reserve. It
 checks every node and stops before measurement if free memory remains below
 the target. Without the preflight, the same condition surfaces minutes later
 as an `EngineCore failed to start` traceback from a remote Ray worker. If free
@@ -690,9 +680,8 @@ memory stays tens of GiB below the target, no process owns the allocation,
 `nvidia-smi` lists no processes, and `buff/cache` is small, a killed CUDA
 process may have left unified memory allocated in the NVIDIA driver. Dropping
 page cache does not recover that memory. Stop the Ray container
-(`scripts/start_ray.sh stop`), reload the UVM module with
-`sudo rmmod nvidia_uvm && sudo modprobe nvidia_uvm` (or reboot the node), then
-restart Ray.
+(`scripts/start_ray.sh stop`) and ask the sysadmin to inspect the node and
+perform any required UVM module reload or reboot before restarting Ray.
 
 Before any dual model is loaded, `run_models.sh` pins one inspection task to
 each Ray node with a 90-second deadline. It requires identical declared image
@@ -1021,7 +1010,7 @@ engine keeps waiting are deadlocked, not slow.
 `CACHE_PREFLIGHT=1` is the default; keep the local revision check enabled for
 full runs. The wrapper also honors launcher and network variables from the
 Configuration section, including `HF_TOKEN`, `HF_CACHE`, `VLLM_IMAGE`,
-`VLLM_CONTAINER`, `DROP_CACHES`, `CLUSTER_CONFIG`, and the NCCL transport
+`VLLM_CONTAINER`, `CLUSTER_CONFIG`, and the NCCL transport
 settings. The wrapper clears model-specific launch
 overrides before applying each matrix entry, so an unrelated `QUANT`,
 `TOKENIZER`, or `TRUST_REMOTE_CODE` value in `.env` cannot leak into the next
@@ -1639,15 +1628,14 @@ log and does not gate a result.
 - `PREFLIGHT FAILED` for local memory, or `low free memory` before a tp2/pp2
   launch: both preflights already drop clean file pages from the Hugging Face
   cache without applying anonymous-memory pressure. A remaining
-  shortage may be unrelated clean cache (retry with `DROP_CACHES=1`), another
+  shortage may be unrelated clean cache, another
   process on that node (check `ps aux --sort=-rss`), or a `gpu_util` too high
   for its baseline usage (`util x MemTotal` must fit in `MemFree`).
 - `tp2`/`pp2` launch fails with `ray.exceptions.OutOfMemoryError: Task was
   killed due to the node running low on memory` naming one node's IP: Ray's
-  node memory monitor killed a worker, almost always stale page cache on
-  Grace unified memory rather than a real leak (the reported "top memory
-  users" list won't account for most of the usage). Restart Ray on both nodes
-  with `DROP_CACHES=1` (see step 2 above) before relaunching.
+  node memory monitor killed a worker. Inspect `MemFree`, `MemAvailable`, and
+  process memory on that node. Release memory from your own processes or ask
+  the sysadmin to inspect host memory use before restarting Ray.
 - Same `ray.exceptions.OutOfMemoryError`, but it happens later, right after
   `Available KV cache memory: ...` logs during model load rather than at Ray
   startup: the model exceeds available unified memory. The campaign defaults to

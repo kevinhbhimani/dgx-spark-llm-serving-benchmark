@@ -8,12 +8,6 @@
 # scripts/ray-runtime-constraints.txt. The constraints file pins its dependencies
 # on both nodes.
 #
-# Optional env vars:
-#   DROP_CACHES=1   flush this node's page cache before starting Ray (requires
-#                   sudo); recommended on Grace unified memory to avoid Ray's
-#                   node memory monitor false-OOM-killing a worker. Run on each
-#                   node separately (head and worker), since this only flushes
-#                   the local machine's cache.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
@@ -43,15 +37,6 @@ if [[ "$ROLE" == "stop" ]]; then
 else
   wait_for_resources_idle auto || exit 1
 fi
-
-maybe_drop_caches() {
-  if [[ "${DROP_CACHES:-0}" == "1" ]]; then
-    echo "[ray] flushing page cache (DROP_CACHES=1)"
-    sync
-    echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-    echo "[ray] page cache flushed"
-  fi
-}
 
 # Some nvcr.io/nvidia/vllm tags do not bundle Ray. Install the same locked
 # runtime on both nodes. A Ray version change requires a matching constraints
@@ -134,7 +119,6 @@ case "$ROLE" in
     check_hf_cache_access
     check_hf_cache_access_in_image
     echo "[ray] head node $LOCAL_NODE_ID on $LOCAL_IP:$RAY_PORT over $CX_IFACE"
-    maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$LOCAL_IP" "$VLLM_IMAGE" \
       -lc "$RAY_SETUP && umask 0002 && ray start --head --node-ip-address=$LOCAL_IP --port=$RAY_PORT --block"
@@ -148,7 +132,6 @@ case "$ROLE" in
     check_hf_cache_access
     check_hf_cache_access_in_image
     echo "[ray] worker node $LOCAL_NODE_ID on $LOCAL_IP joining $HEAD_IP:$RAY_PORT over $CX_IFACE"
-    maybe_drop_caches
     docker rm -f "$VLLM_CONTAINER" >/dev/null 2>&1 || true
     docker run -d "${docker_common[@]}" -e VLLM_HOST_IP="$LOCAL_IP" "$VLLM_IMAGE" \
       -lc "$RAY_SETUP && umask 0002 && ray start --address=$HEAD_IP:$RAY_PORT --node-ip-address=$LOCAL_IP --block"

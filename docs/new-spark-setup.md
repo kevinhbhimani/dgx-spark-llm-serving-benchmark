@@ -6,6 +6,9 @@ examples and require replacement before use.
 
 ## Configure the host
 
+The sysadmin completes the [administrator prerequisites](cluster-setup.md#administrator-prerequisites).
+Repository environment setup and experimental runs use the benchmark account.
+
 1. Complete firmware, operating system, cabling, and fabric setup using the
    NVIDIA [Connect Two Sparks playbook](https://github.com/NVIDIA/dgx-spark-playbooks/tree/main/nvidia/connect-two-sparks).
 2. Assign each fabric interface the IPv4 address and prefix listed for that

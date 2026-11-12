@@ -5,8 +5,6 @@
 # brings up the shared container; this script then execs the server into it.
 #
 # Optional env vars:
-#   DROP_CACHES=1   flush the page cache before launch (requires sudo); recommended
-#                   before large model loads on Grace unified memory to avoid false OOM.
 #   TOKENIZER       override vLLM --tokenizer (defaults to the model tokenizer).
 #   REVISION        pinned Hugging Face commit for model files.
 #   TOKENIZER_REVISION pinned commit for tokenizer files (defaults to REVISION).
@@ -207,15 +205,6 @@ run_server_command() {
   return 1
 }
 
-# Optionally flush stale page cache before large model loads.
-# Stale cache causes false OOM on Grace unified memory; requires sudo.
-if [[ "${DROP_CACHES:-0}" == "1" ]]; then
-  echo "[launch] flushing page cache (DROP_CACHES=1)"
-  sync
-  echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-  echo "[launch] page cache flushed"
-fi
-
 # A TP=1 server inside the Ray head container needs only that container and
 # its Ray head; it does not need the worker node.
 _require_ray_head() {
@@ -333,9 +322,8 @@ for ip in (os.environ["EXPECTED_HEAD"], os.environ["EXPECTED_WORKER"]):
 PY
 }
 
-# Grace exposes one unified CPU/GPU memory pool. run_models.sh flushes host
-# page cache after staging model files and before each server start. This guard
-# also drops clean Hugging Face file pages for direct launcher calls.
+# Grace exposes one unified CPU/GPU memory pool. Reclaim clean Hugging Face
+# file pages without host-wide cache eviction or anonymous-memory pressure.
 _check_local_memory() {
   echo "[launch] preflight: local free memory vs GPU_UTIL=$GPU_UTIL"
   GPU_UTIL="$GPU_UTIL" HF_CACHE="$HF_CACHE" python3 - <<'PY'
@@ -376,8 +364,8 @@ print(f"[launch]   free {free / 2**30:.1f} (available "
       f"need {need / 2**30:.1f} GiB: {'ok' if ok else 'LOW'}")
 if not ok:
     raise SystemExit(
-        "[launch] PREFLIGHT FAILED: local memory remains low; rerun with "
-        "DROP_CACHES=1 or free the owning process")
+        "[launch] PREFLIGHT FAILED: local memory remains low; release memory "
+        "from your own processes or ask the administrator to inspect the node")
 PY
 }
 
@@ -451,16 +439,12 @@ if low:
 PY
   then
     cat >&2 <<'MSG'
-[launch] Clean HF checkpoint pages were dropped automatically, but memory is
-[launch] still LOW. run_models.sh flushes host page cache before server launch.
-[launch] For direct launches, restart the low node with DROP_CACHES=1 before retrying.
-[launch] Find any live memory owner:
-[launch]   free -g; ps aux --sort=-rss | head
-[launch] If free stays low with no owning process and nvidia-smi shows no
-[launch] processes, the driver leaked unified memory from a killed CUDA
-[launch] process. Stop Ray there (scripts/start_ray.sh stop), then
-[launch]   sudo rmmod nvidia_uvm && sudo modprobe nvidia_uvm
-[launch] (or reboot the node), and restart Ray: scripts/start_ray.sh worker
+[launch] Memory preflight failed. Clean HF file-page reclamation is attempted
+[launch] when MemAvailable covers the target plus the preflight reserve.
+[launch] Inspect memory use: free -g; ps aux --sort=-rss | head
+[launch] Release memory from your own processes before retrying. If memory
+[launch] remains unavailable without a visible owner, ask the administrator
+[launch] to inspect driver allocations and perform any required host recovery.
 MSG
     exit 1
   fi
