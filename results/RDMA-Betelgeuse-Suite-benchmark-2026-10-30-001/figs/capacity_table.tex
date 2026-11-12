@@ -1,0 +1,59 @@
+% Requires \usepackage{booktabs}.
+\begin{tabular}{l r r r r r r r r r r r r r r r }
+\toprule
+Model & Config & HF weight (GiB) & HF KV (GiB) & Worker weight (GiB) & Worker KV (GiB) & KV tokens & GPU blocks & Block & KV dtype & GPU mem util & max\_model\_len & max conc. & Hybrid cache & KV token source & vLLM \\
+\midrule
+qwen3.6-35b-a3b-fp8 & Single Spark & -- & -- & 33.6 & 59.1 & 2,129,095 & 2,935 & 1056 & auto & 0.80 & 8,704 & 244.6 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b-fp8 & Dual Spark, TP=2 & -- & -- & 17.0 & 75.2 & 5,410,019 & 7,459 & 1056 & auto & 0.80 & 8,704 & 621.6 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b-fp8 & Dual Spark, PP=2 & -- & -- & 16.9 & 76.0 & 5,458,616 & 7,526 & 1056 & auto & 0.80 & 8,704 & 627.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b & Single Spark & -- & -- & 15.0 & 77.5 & 634,533 & 39,658 & 16 & auto & 0.80 & 8,704 & 72.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b & Dual Spark, TP=2 & -- & -- & 7.5 & 87.2 & 1,424,005 & 89,000 & 16 & auto & 0.80 & 8,704 & 163.6 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b & Dual Spark, PP=2 & -- & -- & 7.5 & 86.3 & 1,408,587 & 88,037 & 16 & auto & 0.80 & 8,704 & 161.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b-fp8 & Single Spark & -- & -- & 8.5 & 83.9 & 1,375,371 & 85,961 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 158.0 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b-fp8 & Dual Spark, TP=2 & -- & -- & 4.3 & 89.9 & 2,937,056 & 183,566 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 337.4 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b-fp8 & Dual Spark, PP=2 & -- & -- & 4.3 & 89.6 & 2,935,536 & 183,471 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 337.3 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b-nvfp4 & Single Spark & -- & -- & 5.7 & 87.6 & 1,434,421 & 89,651 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 164.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b-nvfp4 & Dual Spark, TP=2 & -- & -- & 2.9 & 91.3 & 2,992,523 & 187,033 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 343.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+llama3.1-8b-nvfp4 & Dual Spark, PP=2 & -- & -- & 2.9 & 92.0 & 2,998,949 & 187,434 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 344.6 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b & Single Spark & -- & -- & 50.2 & 40.3 & 488,004 & 841 & 784 & auto & 0.80 & 8,704 & 56.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b & Dual Spark, TP=2 & -- & -- & 25.2 & 67.5 & 1,632,870 & 2,814 & 784 & auto & 0.80 & 8,704 & 187.6 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b & Dual Spark, PP=2 & -- & -- & 25.2 & 65.9 & 1,583,741 & 2,729 & 784 & auto & 0.80 & 8,704 & 182.0 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b-fp8 & Single Spark & -- & -- & 27.6 & 61.6 & 746,803 & 1,287 & 784 & auto & 0.80 & 8,704 & 85.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b-fp8 & Dual Spark, TP=2 & -- & -- & 14.1 & 78.3 & 1,898,826 & 3,272 & 784 & auto & 0.80 & 8,704 & 218.2 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b-fp8 & Dual Spark, PP=2 & -- & -- & 13.9 & 76.3 & 1,851,244 & 3,190 & 784 & auto & 0.80 & 8,704 & 212.7 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b-nvfp4 & Single Spark & -- & -- & 19.1 & 69.4 & 1,402,633 & 1,450 & 1568 & fp8\_e4m3 & 0.80 & 8,704 & 161.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b-nvfp4 & Dual Spark, TP=2 & -- & -- & 9.8 & 82.1 & 3,317,191 & 3,430 & 1568 & fp8\_e4m3 & 0.80 & 8,704 & 381.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-27b-nvfp4 & Dual Spark, PP=2 & -- & -- & 10.5 & 81.3 & 3,209,519 & 3,319 & 1568 & fp8\_e4m3 & 0.80 & 8,704 & 368.7 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b & Single Spark & -- & -- & 64.7 & 29.1 & 1,049,315 & 1,447 & 1056 & auto & 0.80 & 8,704 & 120.6 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b & Dual Spark, TP=2 & -- & -- & 32.4 & 60.0 & 4,289,379 & 5,914 & 1056 & auto & 0.80 & 8,704 & 492.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b & Dual Spark, PP=2 & -- & -- & 32.4 & 59.8 & 4,307,754 & 5,939 & 1056 & auto & 0.80 & 8,704 & 494.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b-nvfp4 & Single Spark & -- & -- & 19.6 & 72.9 & 2,626,432 & 3,621 & 1056 & auto & 0.80 & 8,704 & 301.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b-nvfp4 & Dual Spark, TP=2 & -- & -- & 9.9 & 82.7 & 5,946,524 & 8,198 & 1056 & auto & 0.80 & 8,704 & 683.2 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3.6-35b-a3b-nvfp4 & Dual Spark, PP=2 & -- & -- & 10.2 & 83.1 & 5,969,977 & 8,231 & 1056 & auto & 0.80 & 8,704 & 685.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gemma4-31b-it-nvfp4 & Single Spark & -- & -- & 30.1 & 58.4 & 221,847 & 47,841 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 25.5 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gemma4-31b-it-nvfp4 & Dual Spark, TP=2 & -- & -- & 15.3 & 77.2 & 586,117 & 126,395 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 67.3 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gemma4-31b-it-nvfp4 & Dual Spark, PP=2 & -- & -- & 16.6 & 76.4 & 418,490 & 121,018 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 48.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gemma4-26b-a4b-nvfp4 & Single Spark & -- & -- & 17.1 & 74.3 & 1,129,515 & 243,578 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 129.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gemma4-26b-a4b-nvfp4 & Dual Spark, PP=2 & -- & -- & 9.4 & 83.9 & 1,565,604 & 452,737 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 179.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+nemotron3.5-lightning-30b-a3b-nvfp4 & Single Spark & -- & -- & 17.9 & 75.3 & 7,831,527 & 6,298 & 4176 & fp8\_e4m3 & 0.80 & 8,704 & 899.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+nemotron3.5-lightning-30b-a3b-nvfp4 & Dual Spark, TP=2 & -- & -- & 9.2 & 83.8 & 17,444,059 & 14,029 & 4176 & fp8\_e4m3 & 0.80 & 8,704 & 2004.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+nemotron3.5-lightning-30b-a3b-nvfp4 & Dual Spark, PP=2 & -- & -- & 9.1 & 83.7 & 17,426,237 & 14,015 & 4176 & fp8\_e4m3 & 0.80 & 8,704 & 2002.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gpt-oss-120b & Single Spark & -- & -- & 66.1 & 26.3 & 514,224 & 47,795 & 16 & auto & 0.80 & 8,704 & 59.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gpt-oss-120b & Dual Spark, TP=2 & -- & -- & 34.4 & 57.6 & 2,253,895 & 209,490 & 16 & auto & 0.80 & 8,704 & 258.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+gpt-oss-120b & Dual Spark, PP=2 & -- & -- & 34.2 & 58.3 & 1,959,118 & 210,902 & 16 & auto & 0.80 & 8,704 & 225.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+nemotron3-super-120b-a12b-fp8 & Dual Spark, TP=2 & -- & -- & 60.2 & 31.8 & 2,392,771 & 1,924 & 8320 & fp8\_e4m3 & 0.80 & 8,704 & 274.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+nemotron3-super-120b-a12b-nvfp4 & Single Spark & -- & -- & 69.6 & 24.1 & 943,762 & 759 & 8320 & fp8\_e4m3 & 0.80 & 8,704 & 108.4 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+nemotron3-super-120b-a12b-nvfp4 & Dual Spark, TP=2 & -- & -- & 36.7 & 57.1 & 4,474,270 & 3,598 & 8320 & fp8\_e4m3 & 0.80 & 8,704 & 514.1 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+nemotron3-super-120b-a12b-nvfp4 & Dual Spark, PP=2 & -- & -- & 36.0 & 56.8 & 4,421,217 & 3,556 & 8320 & fp8\_e4m3 & 0.80 & 8,704 & 507.9 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3-235b-a22b-nvfp4 & Dual Spark, TP=2 & -- & -- & 65.0 & 26.1 & 560,080 & 35,005 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 64.3 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3-235b-a22b-nvfp4 & Dual Spark, PP=2 & -- & -- & 66.1 & 27.1 & 599,269 & 37,454 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 68.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+mistral-medium-3.5-128b-nvfp4 & Dual Spark, TP=2 & -- & -- & 42.0 & 48.9 & 581,669 & 36,354 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 66.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+mistral-medium-3.5-128b-nvfp4 & Dual Spark, PP=2 & -- & -- & 41.8 & 51.2 & 555,211 & 34,701 & 16 & fp8\_e4m3 & 0.80 & 8,704 & 63.8 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3-next-80b-nvfp4 & Single Spark & -- & -- & 44.2 & 47.2 & 2,789,873 & 3,846 & 1072 & fp8\_e4m3 & 0.80 & 8,704 & 320.5 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3-next-80b-nvfp4 & Dual Spark, TP=2 & -- & -- & 22.2 & 69.7 & 8,219,235 & 11,332 & 1072 & fp8\_e4m3 & 0.80 & 8,704 & 944.3 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3-next-80b-nvfp4 & Dual Spark, PP=2 & -- & -- & 22.7 & 70.1 & 8,279,680 & 11,415 & 1072 & fp8\_e4m3 & 0.80 & 8,704 & 951.2 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3-next-80b-bf16 & Dual Spark, TP=2 & -- & -- & 74.3 & 22.3 & 1,552,671 & 3,389 & 544 & auto & 0.80 & 8,704 & 178.4 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+qwen3-next-80b-bf16 & Dual Spark, PP=2 & -- & -- & 74.8 & 20.0 & 1,474,029 & 3,218 & 544 & auto & 0.80 & 8,704 & 169.3 & no & vllm\_startup\_log & 0.29.0+5013de39.dev \\
+\bottomrule
+\end{tabular}
+% HF weight/KV columns are optional full-model estimates. Worker columns come from the vLLM startup log and are per serving worker.

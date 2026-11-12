@@ -972,6 +972,7 @@ def verify_campaign(
     consistent_pair: dict[tuple[str, str, str], str] = {}
     consistent_experiment: dict[tuple[str, str, int], str] = {}
     consistent_policy: dict[str, str] = {}
+    consistent_hf_hub_offline_by_config: dict[str, str] = {}
     commit_values: set[str] = set()
     runtime_fingerprints: dict[str, str] = {}
     runtime_policies: dict[str, Mapping[str, object]] = {}
@@ -1136,6 +1137,19 @@ def verify_campaign(
                 f"{context} serving policy power_backend does not match "
                 "experiment.yaml"
             )
+        global_policy_fields = (
+            "image",
+            "dtype",
+            "prefix_caching",
+            "generation_config",
+            "torchinductor_autograd_cache",
+            "ray_version",
+            "connectx_iface",
+            "nccl_ib_disable",
+            "head_ip",
+            "worker_ip",
+            "power_backend",
+        )
         policy_schema = str(serving_policy.get("schema") or "")
         if single_node_only and policy_schema != "serving-v3":
             raise CampaignValidationError(
@@ -1178,6 +1192,22 @@ def verify_campaign(
                 raise CampaignValidationError(
                     f"campaign mixes multiple serving-policy {field} values"
                 )
+        hf_hub_offline = serving_policy.get("hf_hub_offline")
+        if hf_hub_offline in (None, ""):
+            raise CampaignValidationError(
+                f"{context} serving policy has no hf_hub_offline"
+            )
+        canonical_hf_hub_offline = json.dumps(
+            hf_hub_offline, sort_keys=True, separators=(",", ":")
+        )
+        previous_hf_hub_offline = consistent_hf_hub_offline_by_config.setdefault(
+            point.config_label, canonical_hf_hub_offline
+        )
+        if previous_hf_hub_offline != canonical_hf_hub_offline:
+            raise CampaignValidationError(
+                "campaign mixes multiple serving-policy hf_hub_offline values "
+                f"for config {point.config_label}"
+            )
         if policy_schema == "serving-v2":
             topology_policy_fields = (
                 "topology_sha256",
