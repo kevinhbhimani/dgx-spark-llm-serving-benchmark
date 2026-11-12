@@ -94,7 +94,7 @@ INDEX_FIELDS: list[str] = [
     "requests_running_max",
     "requests_waiting_mean",
     "requests_waiting_max",
-    # server-side counters over the window (robust to a short measurement window)
+    # Server-side counters cover the measurement window, including short windows.
     "server_prompt_tokens",
     "server_generation_tokens",
     "server_prompt_tokens_cached",

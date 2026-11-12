@@ -7,14 +7,13 @@ for the IEEE two column format and saved as PDF for direct \\includegraphics.
 The script handles one configuration or several, sorts each series by load,
 coerces empty cells to missing, and skips any figure whose columns are absent.
 
-It also writes a paper-ready summary table (LaTeX booktabs + Markdown) with
-``--table`` and prints a data-quality report that flags the two artifacts that
-bite this workload hardest: measurement windows too short to collect a trustable
-number of completions, and head-node-only power on dual-node runs.
+It also writes a summary table in LaTeX booktabs and Markdown with ``--table``.
+Its data-quality report identifies short measurement windows and dual-node
+rows whose power data covers only the head node.
 
 Usage:
-    python plot_results.py --index results/benchmark-2026-10-22
-    python plot_results.py --index results/benchmark-2026-10-22/results/index.csv
+    python plot_results.py --index 'results/<campaign-dir>'
+    python plot_results.py --index 'results/<campaign-dir>/results/index.csv'
     python plot_results.py                       # uses the UTC-dated default
     python plot_results.py --format png          # png only, for quick viewing
     python plot_results.py --serif               # Times-like body font for IEEE
@@ -1177,7 +1176,7 @@ def fig_reliability(df, out, fmts):
     requests that errored (HTTP or stream failures). The right panel is the
     share of requests started in the window that also *completed* inside it --
     which is a backlog/window indicator, not an error rate. At high concurrency
-    with a short window this drops toward zero simply because long requests do
+    with a short window this drops toward zero because long requests do
     not finish before the window closes; separating the two panels keeps that
     windowing effect from being read as the server dropping requests.
     """
@@ -1539,7 +1538,7 @@ def write_summary_table(df, out) -> None:
     print(f"  wrote {md_path}")
 
     # ---- LaTeX (booktabs) ----
-    # Plain right-aligned numeric columns (no siunitx): robust to the "--"
+    # Plain right-aligned numeric columns avoid the "--" formatting dependency.
     # missing-value cells and the trailing \rlap daggers, which strict siunitx S
     # columns reject. \rlap keeps the number right-aligned with the marker hung
     # into the gutter. Only \usepackage{booktabs} is required.

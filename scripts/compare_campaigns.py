@@ -7,11 +7,10 @@ decode latency (median ITL at the lowest shared concurrency), peak throughput,
 and peak strict goodput, with the new campaign's replicate 95% CI where it has
 replicates. A provenance table lists what differs between the campaigns
 (image, vLLM version, methodology, NCCL transport and interfaces read from the
-serving policies), because a ratio between campaigns measures *all* of those
-differences at once, not only the transport.
+serving policies). A ratio between campaigns reflects each listed difference.
 
     python3 scripts/compare_campaigns.py \
-        --new results/benchmark-2026-10-22 \
+        --new 'results/<new-campaign-dir>' \
         --baseline baselines/pmbs26-tcp/index.csv
 """
 from __future__ import annotations
@@ -173,8 +172,8 @@ def main(argv: list[str]) -> int:
     for field in prov_new:
         lines.append(f"| {field} | {prov_new[field]} | {prov_base[field]} |")
     lines += ["", "Ratios are new / baseline. ± is the new campaign's 95% "
-              "Student-t half-width across replicates. A ratio reflects every "
-              "provenance difference above, not only the transport.", ""]
+              "Student-t half-width across replicates. Each ratio reflects "
+              "the provenance differences above, including transport.", ""]
     if not rows:
         lines.append("The campaigns share no (model, config, concurrency) point.")
     else:

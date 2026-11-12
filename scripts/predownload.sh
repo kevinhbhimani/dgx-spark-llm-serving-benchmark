@@ -4,11 +4,9 @@
 # pulling weights. The campaign uses this same step for single- and dual-node
 # model groups, then mirrors the snapshot to the worker when needed.
 #
-# Why: scripts/run_models.sh gives each server READY_TIMEOUT seconds (default
-# 1800) to come up, then tears it down. On a cold cache the largest checkpoints
-# spend most of that window just downloading (llama3.3-70b-fp8 took 803s and
-# nemotron3-super-120b-a12b-nvfp4 took 1103s to download alone), so they were
-# killed mid-load before ever serving. Warming the cache first removes that race.
+# scripts/run_models.sh gives each server READY_TIMEOUT seconds (default 1800)
+# to become ready. Snapshot acquisition before launch keeps downloads outside
+# that readiness interval.
 #
 #   scripts/predownload.sh single      # every model whose configs include single (default)
 #   scripts/predownload.sh tp2
@@ -17,12 +15,12 @@
 #
 # Downloads run inside the same VLLM_IMAGE and into the same HF_CACHE mount that
 # launch_server.sh uses, so the serving path sees the same local files. Each
-# unique repo is fetched once (a model shared across configs, or reused by an
-# on-the-fly-quant entry like llama3.3-70b-fp8, is not downloaded twice). Gated
-# repos (meta-llama) use HF_TOKEN from .env. Redundant PyTorch/Metal/GGUF copies
-# (meta-llama's original/*.pth, gpt-oss's original/ and metal/) are skipped;
-# vLLM loads the safetensors. The disk check sizes exactly those files with
-# scripts/hf_snapshot_size.py, net of blobs already in the cache.
+# unique repo is fetched once when a model is shared across configs. Gated
+# repositories such as meta-llama use HF_TOKEN from .env. Redundant
+# PyTorch/Metal/GGUF copies (meta-llama's original/*.pth, gpt-oss's original/
+# and metal/) are skipped; vLLM loads the safetensors. The disk check sizes
+# those files with scripts/hf_snapshot_size.py, net of blobs already in the
+# cache.
 #
 # scripts/run_job.sh calls this once per model group; direct run_models.sh calls
 # it for the selected model before launch. The campaign always purges canary

@@ -28,8 +28,8 @@ collapsing, and rectangle/identity guards are imported from plot_results so
 both scripts read an index identically.
 
 Usage:
-    python plot_trends.py --index results/benchmark-2026-10-22
-    python plot_trends.py --index results/benchmark-2026-10-22/results/index.csv
+    python plot_trends.py --index 'results/<campaign-dir>'
+    python plot_trends.py --index 'results/<campaign-dir>/results/index.csv'
     python plot_trends.py --allow-incomplete   # mid-campaign diagnostics
 
 Model metadata (dense/MoE, precision, NVIDIA-optimized, parameter counts) comes
@@ -1067,9 +1067,8 @@ def fig_prefill_scaling(df, out, fmts, results_dir):
     axa.set_xlabel("Prompt length (tokens)", fontsize=7.5)
     axa.set_ylabel("Median TTFT (ms), unloaded", fontsize=7.5)
     axa.set_title(f"(a) {short_name(rep)}", fontsize=8, pad=3)
-    # Quote the weakest fit over every curve in the campaign, not just the
-    # three drawn here: panel (b) reads a prefill rate off all of them, so the
-    # linearity claim has to hold campaign-wide to license that.
+    # Quote the weakest fit over every curve in the campaign. Panel (b) reads a
+    # prefill rate from every fit, so the linearity check covers the full set.
     r2_all = [f[2] for f in fits.values() if np.isfinite(f[2])]
     if r2_all:
         axa.annotate(f"linear fit, all {len(r2_all)} curves:\n"

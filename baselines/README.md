@@ -43,11 +43,11 @@ Two-node Ray/NCCL microbenchmarks recorded beside the sweeps:
   replicates every point instead (see the README section on repeats).
 - `rdma-pilot-2026-10/` attempted 16 curves and completed 14. The two gaps
   are `nemotron-super-49b-bf16` single and pp2: a launch was made for each (a
-  serving policy exists), but neither produced a row, and the server logs were
-  not kept. The likely cause is the 20-request release floor at c=1: tp2,
-  which halves each node's weight reads, reached only 25 requests in 1500 s,
-  and single/pp2 read all 99.8 GB per token, so they would see ~15. Single may
-  also have run out of memory at load. The new matrix drops this model.
+  serving policy exists), but neither produced a row. The server logs were not
+  retained, so the cause is unknown. The `tp2` c=1 point recorded 25 requests
+  in 1500 seconds. The available records do not establish whether the missing
+  single and pp2 rows failed the request floor, ran out of memory, or failed
+  for another reason. The new matrix drops this model.
 - The `qwen3-next-80b-nvfp4` single-Spark row at concurrency 128 is excluded from `index.csv` and regenerated figures. `figs/plot_exclusions.csv` records the excluded row and source file hashes. The raw JSONL file is absent from this local baseline directory.
 - Server logs were never committed, so `scripts/validate_campaign.py verify`
   cannot be rerun on a fresh clone.
@@ -55,10 +55,10 @@ Two-node Ray/NCCL microbenchmarks recorded beside the sweeps:
 ## Comparing against the new campaign
 
 Models present in both `pmbs26-tcp/` and the new matrix, under the same labels
-and pinned revisions: `llama3.1-8b`, `llama3.1-8b-fp8`, `llama3.1-8b-nvfp4`,
-`nemotron3-super-120b-a12b-nvfp4`. From `rdma-pilot-2026-10/`, the new matrix
-keeps `qwen3-next-80b-nvfp4` and `qwen3-next-80b-bf16`. `scripts/run_job.sh`
-writes both comparisons under `results/figs/stats/`; by hand:
+and pinned revisions: `llama3.1-8b`, `llama3.1-8b-fp8`, and
+`llama3.1-8b-nvfp4`. From `rdma-pilot-2026-10/`, the new matrix keeps
+`qwen3-next-80b-nvfp4` and `qwen3-next-80b-bf16`. `scripts/run_job.sh` writes
+both comparisons under `results/figs/stats/`; by hand:
 
 ```bash
 python scripts/compare_campaigns.py \

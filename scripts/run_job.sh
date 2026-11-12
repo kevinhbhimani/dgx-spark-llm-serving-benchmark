@@ -18,8 +18,7 @@
 #   mirror   that snapshot to the worker cache (only if it runs tp2/pp2)
 #   measure  REPEATS replicates of every config it lists
 #   purge    the snapshot from both caches (PURGE_WEIGHTS=1, the default)
-# so peak cache use is the largest single model (~139 GB), not the whole
-# matrix (~885 GB).
+# so peak per-node cache use is the largest single snapshot (~163 GB).
 #
 # Replicates. A replicate is one fresh server launch plus a complete ascending
 # concurrency sweep, so the spread across replicates includes launch-to-launch
@@ -397,7 +396,7 @@ print(f"{float(value):g}")' "$MODELS_YAML")"
     printf '[plan]   %-40s configs: %-16s launches: %s\n' "$labels" "$first" \
       "$(tr ';' '\n' <<<"$steps" | grep -c .)"
   done
-  echo "[plan] minimum measurement time: ~${minimum_h} h (${point_s:-?} s per window before automatic extensions)"
+  echo "[plan] minimum scheduled phase time: ~${minimum_h} h (${point_s:-?} s per window before automatic extensions)"
   echo "[plan] canary pass: CANARY_FIRST=$CANARY_FIRST STOP_AFTER_CANARY=$STOP_AFTER_CANARY ALLOW_CANARY_FAILURES=$ALLOW_CANARY_FAILURES"
   echo "[plan] weights: PURGE_WEIGHTS=$PURGE_WEIGHTS (acquire, mirror if dual-node, measure, purge per model)"
   if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
@@ -931,8 +930,8 @@ else
     "$PYTHON" scripts/audit_nccl_transport.py "$OUT_DIR" \
       --md "$CAMPAIGN_FIGURES_DIR/stats/nccl_transport_audit.md"
 fi
-# Same-model comparisons: over TCP (PMBS26, Llama ladder + Nemotron Super) and
-# over RDMA (October pilot, the carried-over Qwen3-Next pair).
+# Same-model comparisons use the active Llama 3.1 8B ladder against the PMBS26
+# TCP baseline and the Qwen3-Next 80B pair against the October RDMA pilot.
 if [[ -f baselines/pmbs26-tcp/index.csv ]]; then
   leg "comparison with the PMBS26 TCP baseline" \
     "$PYTHON" scripts/compare_campaigns.py --new "$CAMPAIGN_RESULTS_DIR/index.csv" \

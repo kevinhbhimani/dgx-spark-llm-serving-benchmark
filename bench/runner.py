@@ -173,10 +173,9 @@ async def _open_loop(cfg, workload, session, phase_start, records):
         nonlocal measurement_pending, consecutive_failures, fatal_error
         is_measurement = window_start <= arrival < window_end
         spec = workload.sample()
-        # Bound *all* outstanding HTTP requests, not just the subset that has
-        # acquired a semaphore. When the client-side limit is full, record the
-        # offered arrival as a failed attempt instead of building an unbounded
-        # task queue or blocking the arrival clock (coordinated omission).
+        # Bound all outstanding HTTP requests. When the client-side limit is
+        # full, record the offered arrival as a failed attempt instead of
+        # building an unbounded task queue or blocking the arrival clock.
         if len(inflight) >= cfg.max_inflight:
             now = time.perf_counter()
             rec = RequestRecord(cfg.config_label, spec.input_len,

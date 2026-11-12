@@ -7,8 +7,8 @@ avg_s, ...). Each row's transport is what NCCL actually used, read from its own
 INFO log, not what the environment requested. Pass several result directories
 to overlay transports, for example the RDMA campaign and the TCP ablation:
 
-    python plotting/plot_interconnect.py results/rdma-v4-paper-2026-10-22 \
-        results/tcp-ablation-2026-10-22
+    python plotting/plot_interconnect.py 'results/<rdma-campaign-dir>' \
+        'results/<tcp-campaign-dir>'
 
 Hue is the transport and linestyle/marker the primitive (all-reduce is TP's
 per-layer collective, send/recv is PP's stage hand-off), so neither dimension

@@ -127,7 +127,7 @@ Set `OUT_DIR` to a bare campaign name or a complete output path. For
 Other entrypoints use their command-specific default campaign name. A relative
 path with a directory component or an absolute path selects its exact location.
 Use a complete path such as
-`results/rdma-v4-paper-benchmark-2026-10-22-001` when resuming an existing
+`results/rdma-v4-paper-benchmark-2026-11-12-001` when resuming an existing
 campaign. Campaign manifests record the campaign name, date when present in
 the directory name, and absolute path. New campaigns put result artifacts
 under `OUT_DIR/results/`, figures and reports under `OUT_DIR/figs/`, logs
@@ -277,7 +277,7 @@ PLAN_ONLY=1 scripts/run_job.sh
 `PLAN_ONLY=1` performs no hardware operations. It checks the locked client
 environment, campaign options, model and experiment YAML, revision pins,
 request bounds, and expected result matrix. The plan prints launch count,
-measurement-window count, and minimum measurement time.
+measurement-window count, and minimum scheduled phase time.
 
 The unit suite uses local fixtures and mocked external commands. It does not
 start benchmark containers or require a GPU or sudo. Hardware benchmark
@@ -402,7 +402,7 @@ stage also requires an available single-node model and GPU.
 Use a new output directory for this campaign:
 
 ```bash
-OUT_DIR=results/rdma-v4-paper-2026-10-22 CANARY_FIRST=1 STOP_AFTER_CANARY=1 \
+OUT_DIR=results/rdma-v4-paper-2026-11-12 CANARY_FIRST=1 STOP_AFTER_CANARY=1 \
   scripts/run_job.sh
 ```
 
@@ -424,7 +424,7 @@ the streaming response and tokenizer, and purges each model afterward. It logs
 pair failures and continues through later groups. By default, the canary exits
 with an error after those checks and stops before measurements if any pair
 fails. The command writes
-`results/rdma-v4-paper-2026-10-22/.canary_passed`
+`results/rdma-v4-paper-2026-11-12/.canary_passed`
 only when the canary passes.
 
 The marker identifies the commit, model matrix, experiment configuration,
@@ -434,11 +434,12 @@ inputs match. The `CANARY_FIRST=1` setting forces another complete canary.
 
 ## Start and resume the full suite
 
-The default matrix requires about 198 hours of measurement before model
-downloads, launches, and extensions; expect about 279 hours (11.6 days) in
-total, and up to about 312 hours (13 days). Run it in `tmux` on the selected head so it
-continues if the SSH connection closes. A host reboot stops the session and
-campaign process.
+The default matrix has a 176.25-hour minimum scheduled phase time before
+window extensions, downloads, canaries, and model startup. Each 750-second
+phase includes 120 seconds of warmup, 600 seconds of measurement, and 30
+seconds of cooldown. Run it in `tmux` on the selected head so it continues if
+the SSH connection closes. A host reboot stops the session and campaign
+process.
 
 Start the campaign session on the selected head:
 
@@ -449,13 +450,13 @@ tmux new-session -s rdma-v4
 Run the campaign inside that session:
 
 ```bash
-OUT_DIR=results/rdma-v4-paper-2026-10-22 scripts/run_job.sh
+OUT_DIR=results/rdma-v4-paper-2026-11-12 scripts/run_job.sh
 ```
 
-The default matrix contains 19 checkpoints, 53 model/configuration curves,
-159 server launches, and 954 measurement windows (concurrencies 1 4 8 16 32
-64). The minimum measurement time is about 198 sequential hours before
-extensions, downloads, and model loads.
+The default matrix contains 17 checkpoints, 47 model/configuration pairs,
+141 server launches, and 846 measurement windows (concurrencies 1 4 8 16 32
+64). Each scheduled phase has a 750-second minimum, for 176.25 sequential
+hours before extensions, downloads, and model startup.
 
 `run_job.sh` acquires and measures one model group at a time. Every group uses
 the same head-side snapshot acquisition; groups that include `tp2` or `pp2`
@@ -471,7 +472,7 @@ head with `tmux attach -t rdma-v4`. Follow the campaign log from another head
 shell:
 
 ```bash
-tail -f results/rdma-v4-paper-2026-10-22/logs/run_job_*.log
+tail -f results/rdma-v4-paper-2026-11-12/logs/run_job_*.log
 ```
 
 If the process stops or the connection closes, start Ray again if needed and
@@ -491,8 +492,8 @@ reports a nonzero status and can be resumed with the same `OUT_DIR`.
 
 After completion, `scripts/run_job.sh` verifies the result grid, generates
 figures and statistics, and writes the campaign manifest. Check
-`results/rdma-v4-paper-2026-10-22/results/campaign_manifest.json` and
-`results/rdma-v4-paper-2026-10-22/results/index.csv`. Stop Ray on each node
+`results/rdma-v4-paper-2026-11-12/results/campaign_manifest.json` and
+`results/rdma-v4-paper-2026-11-12/results/index.csv`. Stop Ray on each node
 after the campaign:
 
 ```bash
