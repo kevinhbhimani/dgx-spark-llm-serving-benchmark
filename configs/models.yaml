@@ -182,31 +182,7 @@ models:
     max_model_len: 8704
     meta: {pretty: "gpt-oss-120b", arch: moe, attention: sliding-window, quant: mxfp4, params_b: 117.0, active_b: 5.1, nvidia: false}
 
-  # ---- 8. Nemotron 3 Super 120B-A12B: LatentMoE, Mamba-2 hybrid ---------------
-  # FP8 (128.4 GB) needs two nodes; NVFP4 (80.4 GB) fits one. Both revisions
-  # predate the 2026-08-24 MTPv2 update; the NVFP4 pin is the one the PMBS26
-  # baseline used. Custom modeling code ships in the repo.
-  - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
-    label: nemotron3-super-120b-a12b-fp8
-    revision: 7d7e5797b8a3c7abbab54033b6004e93e8b6bc91
-    configs: [tp2, pp2]
-    max_model_len: 8704
-    trust_remote_code: true
-    meta: {pretty: "Nemotron3-Super-120B-A12B FP8", arch: moe, attention: mamba-hybrid, quant: fp8, params_b: 120.0, active_b: 12.0, ladder_base: nemotron3-super-120b-a12b, nvidia: true}
-
-  - name: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
-    label: nemotron3-super-120b-a12b-nvfp4
-    revision: 4f0cf9daaeb7a4d5e23f80a00e7ed15f0e03caf6
-    configs: [single, tp2, pp2]
-    max_model_len: 8704
-    # NVIDIA vLLM 26.09 requires four sequences on Spark for Nemotron Super V3
-    # NVFP4. The note also names Nemotron Nano V3 NVFP4:
-    # https://docs.nvidia.com/deeplearning/frameworks/vllm-release-notes/rel-26-09.html#known-issues
-    max_num_seqs: 4
-    trust_remote_code: true
-    meta: {pretty: "Nemotron3-Super-120B-A12B NVFP4", arch: moe, attention: mamba-hybrid, quant: nvfp4, params_b: 120.0, active_b: 12.0, ladder_base: nemotron3-super-120b-a12b, nvidia: true}
-
-  # ---- 9. Qwen3 235B-A22B Instruct-2507: MoE, full attention ------------------
+  # ---- 8. Qwen3 235B-A22B Instruct-2507: MoE, full attention ------------------
   # 139.2 GB: dual-node only. NVIDIA ModelOpt NVFP4 (FP8 KV).
   - name: nvidia/Qwen3-235B-A22B-Instruct-2507-NVFP4
     label: qwen3-235b-a22b-nvfp4
@@ -215,7 +191,7 @@ models:
     max_model_len: 8704
     meta: {pretty: "Qwen3-235B-A22B NVFP4", arch: moe, attention: full, quant: nvfp4, params_b: 235.0, active_b: 22.0, nvidia: true}
 
-  # ---- 10. Mistral Medium 3.5 128B: dense, full attention --------------------
+  # ---- 9. Mistral Medium 3.5 128B: dense, full attention --------------------
   # 95.3 GB: dual-node only. Large dense is where TP2 and PP2 differ most: TP2
   # halves the weights each node streams per token, PP2 does not at low load.
   # That makes it the cleanest TP-vs-PP comparison under RDMA.
@@ -226,15 +202,15 @@ models:
     max_model_len: 8704
     meta: {pretty: "Mistral-Medium-3.5-128B NVFP4", arch: dense, attention: full, quant: nvfp4, params_b: 128.0, active_b: 128.0, nvidia: true}
 
-  # ---- 11. Qwen3-Next 80B-A3B: MoE (3B active), Gated DeltaNet hybrid --------
+  # ---- 10. Qwen3-Next 80B-A3B: MoE (3B active), Gated DeltaNet hybrid --------
   # Carried over from the October RDMA pilot (same revisions; re-measured with
   # replicates). Same architecture family and the same 3B active parameters as
   # entry 3 at 2.3x the total size, which separates total from active
   # parameters in MoE serving. The BF16 checkpoint needs two nodes while NVFP4
-  # fits one, the second precision-decides-node-count pair beside entry 8.
+  # fits one.
   # The pilot's other two pairs (Nemotron Super 49B, Nemotron Puzzle 75B) are
-  # dropped: the dense axis is covered by entries 1, 2, 4, and 10, and the
-  # NemotronH Mamba-MoE family by entries 6 and 8.
+  # dropped: the dense axis is covered by entries 1, 2, 4, and 9, and the
+  # NemotronH Mamba-MoE family by entry 6.
   - name: nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4        # 50.8 GB
     label: qwen3-next-80b-nvfp4
     revision: 8fb2682f136cf94d932a498f18cb1e428832a912
