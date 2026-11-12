@@ -6,8 +6,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 REQUESTED_OUT_DIR="${OUT_DIR:-}"
 source "$HERE/scripts/connectx_env.sh" || exit 1
-require_local_connectx_ip "$HEAD_IP" "preflight head role" || exit 1
-validate_local_topology_links || exit 1
+if [[ "$SINGLE_NODE_ONLY" == "1" && "${PURGE_WORKER:-0}" == "1" ]]; then
+  echo "[preflight] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2
+  exit 2
+fi
+validate_execution_environment "${HEAD_IP:-}" "preflight role" || exit 1
 acquire_resource_lock || exit 1
 
 if [[ -z "${PYTHON:-}" ]]; then
@@ -104,10 +107,14 @@ run_step() {
 
 capture_preflight_system_snapshot() {
   local snapshot_path="$PREFLIGHT_LOG_DIR/system_snapshot.json"
+  local -a snapshot_args=(--output "$snapshot_path" --container "$VLLM_CONTAINER" --image "$VLLM_IMAGE")
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    snapshot_args+=(--local-only)
+  else
+    snapshot_args+=(--cluster-config "$CLUSTER_CONFIG")
+  fi
   echo "[preflight] === Capture read-only system snapshot ==="
-  if "$PYTHON" "$HERE/scripts/system_snapshot.py" \
-      --output "$snapshot_path" --container "$VLLM_CONTAINER" \
-      --image "$VLLM_IMAGE" --cluster-config "$CLUSTER_CONFIG" 2>&1 \
+  if "$PYTHON" "$HERE/scripts/system_snapshot.py" "${snapshot_args[@]}" 2>&1 \
       | tee "$PREFLIGHT_LOG_DIR/system-snapshot.log"; then
     echo "[preflight] system snapshot collection completed"
   else
@@ -149,6 +156,11 @@ verify_campaign_output_writes() {
 
 purge_all_campaign_models() {
   local both_nodes_status=0
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    MODEL_LABELS="$ALL_CONFIGURED_MODEL_LABELS" PURGE_WORKER=0 \
+      PURGE_CACHE_GARBAGE=1 scripts/purge_model_cache.sh
+    return $?
+  fi
   if MODEL_LABELS="$ALL_CONFIGURED_MODEL_LABELS" PURGE_WORKER=1 \
       PURGE_CACHE_GARBAGE=1 scripts/purge_model_cache.sh; then
     return 0
@@ -171,7 +183,9 @@ finish_preflight() {
   local original_status="$?"
   trap - EXIT INT TERM
 
-  run_step "Purge all configured model snapshots on head and worker" \
+  local purge_label="Purge all configured model snapshots on head and worker"
+  [[ "$SINGLE_NODE_ONLY" == "1" ]] && purge_label="Purge all configured model snapshots on local host"
+  run_step "$purge_label" \
     "purge-models" purge_all_campaign_models
   if (( LAST_STEP_STATUS != 0 )); then
     PREFLIGHT_FAILED=1
@@ -181,7 +195,11 @@ finish_preflight() {
   echo "[preflight] === Summary ==="
   printf '  %s\n' "${PREFLIGHT_RESULTS[@]}"
   if (( PREFLIGHT_FAILED == 0 && original_status == 0 )); then
-    echo "[preflight] ALL CHECKS PASSED; configured model weights were purged from both nodes"
+    if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+      echo "[preflight] ALL LOCAL CHECKS PASSED; configured model weights were purged from the local cache"
+    else
+      echo "[preflight] ALL CHECKS PASSED; configured model weights were purged from both nodes"
+    fi
     exit 0
   fi
   echo "[preflight] FAILED; review the failed stage logs above"
@@ -202,8 +220,17 @@ run_step "Validate campaign plan and client environment" "plan" \
   CAMPAIGN_LABELS= CAMPAIGN_CONFIGS= \
   "$HERE/scripts/run_job.sh"
 
-run_step "Verify ConnectX routes, links, and RDMA ports" "connectx" \
-  "$HERE/scripts/verify_connectx.sh"
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  echo "[preflight] SKIP: ConnectX routes, links, and RDMA checks disabled (SINGLE_NODE_ONLY=1)"
+  PREFLIGHT_RESULTS+=("SKIP: ConnectX routes, links, and RDMA checks disabled (SINGLE_NODE_ONLY=1)")
+  PREFLIGHT_RESULTS+=("SKIP: Ray health and per-node runtime checks disabled (SINGLE_NODE_ONLY=1)")
+  PREFLIGHT_RESULTS+=("SKIP: all-reduce gate disabled (SINGLE_NODE_ONLY=1)")
+  PREFLIGHT_RESULTS+=("SKIP: send/recv benchmark disabled (SINGLE_NODE_ONLY=1)")
+  PREFLIGHT_RESULTS+=("SKIP: worker cache mirroring disabled (SINGLE_NODE_ONLY=1)")
+else
+  run_step "Verify ConnectX routes, links, and RDMA ports" "connectx" \
+    "$HERE/scripts/verify_connectx.sh"
+fi
 
 run_step "Run single-node serving and measurement smoke" "hardware-smoke" \
   env OUT_DIR="$SMOKE_OUT_DIR" SMOKE_GPU_UTIL="${GPU_UTIL:-0.80}" \

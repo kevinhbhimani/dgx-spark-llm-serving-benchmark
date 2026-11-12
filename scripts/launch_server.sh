@@ -49,6 +49,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
 
 CONFIG="${1:-single}"          # single, tp2, pp2
+if [[ "$SINGLE_NODE_ONLY" == "1" && "$CONFIG" != "single" ]]; then
+  echo "[launch] $CONFIG requires dual-node execution" >&2
+  exit 2
+fi
 MODEL="${MODEL:-Qwen/Qwen3-8B}"
 REVISION="${REVISION:-}"
 PORT="${PORT:-8000}"
@@ -97,6 +101,7 @@ case "$FLASHINFER_AUTOTUNE" in 0|1) ;; *)
   exit 2 ;;
 esac
 SINGLE_CONTAINER="${SINGLE_CONTAINER:-standalone}"
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then SINGLE_CONTAINER=standalone; fi
 case "$SINGLE_CONTAINER" in standalone|ray) ;; *)
   echo "[launch] SINGLE_CONTAINER must be standalone or ray, got '$SINGLE_CONTAINER'" >&2
   exit 1 ;;
@@ -139,15 +144,15 @@ if [[ -n "$TOKENIZER_REVISION" ]]; then
 fi
 if [[ -n "$TRUST_REMOTE_CODE" ]]; then common+=( --trust-remote-code ); fi
 
-require_local_connectx_ip "$HEAD_IP" "serving head role" || exit 1
-validate_local_topology_links || exit 1
+validate_execution_environment "${HEAD_IP:-}" "serving role" || exit 1
+refuse_solo_ray_container_collision || exit 1
 acquire_resource_lock || exit 1
 if [[ "$CONFIG" == "single" ]]; then
   wait_for_resources_idle auto || exit 1
 else
   wait_for_resources_idle required || exit 1
 fi
-echo "[launch] $CONFIG  model=$MODEL  image=$VLLM_IMAGE  iface=$CX_IFACE  head=$HEAD_IP"
+echo "[launch] $CONFIG  model=$MODEL  image=$VLLM_IMAGE  iface=${CX_IFACE:-none}  head=${HEAD_IP:-$SOLO_LOOPBACK_ADDRESS}"
 
 # A direct launcher holds the shared lock through startup, then releases it
 # once the API is ready so a separate benchmark client can use the server. A
@@ -484,11 +489,13 @@ case "$CONFIG" in
     fi
     echo "[launch] single node TP=1 PP=1, standalone container"
     _check_local_memory
-    run_env=( -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
-              -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
-              -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
-              -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX"
-              -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" )
+    run_env=( -e TORCHINDUCTOR_AUTOGRAD_CACHE="$TORCHINDUCTOR_AUTOGRAD_CACHE" )
+    if [[ "$SINGLE_NODE_ONLY" != "1" ]]; then
+      run_env+=( -e NCCL_SOCKET_IFNAME="$CX_IFACE" -e GLOO_SOCKET_IFNAME="$CX_IFACE"
+        -e NCCL_IB_DISABLE="$NCCL_IB_DISABLE" -e NCCL_DEBUG="$NCCL_DEBUG"
+        -e NCCL_IB_HCA="$NCCL_IB_HCA" -e NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN"
+        -e NCCL_IB_GID_INDEX="$NCCL_IB_GID_INDEX" )
+    fi
     # Production serving is offline against a pinned, preflighted snapshot, so
     # keep registry credentials out of that container.  Preserve the documented
     # exploratory online mode, forwarding the variable by name (never its value

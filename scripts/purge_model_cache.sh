@@ -26,8 +26,6 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/connectx_env.sh"
-require_local_connectx_ip "$HEAD_IP" "model cache cleanup head role" || exit 1
-acquire_resource_lock || exit 1
 
 MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 PYTHON="${PYTHON:-python3}"
@@ -40,6 +38,16 @@ for flag_name in DRY_RUN PURGE_COMPILE_CACHE PURGE_CACHE_GARBAGE; do
   [[ "${!flag_name}" == "0" || "${!flag_name}" == "1" ]] || {
     echo "[purge] $flag_name must be 0 or 1" >&2; exit 2; }
 done
+if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+  if [[ "${PURGE_WORKER:-0}" == "1" ]]; then
+    echo "[purge] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2
+    exit 2
+  fi
+  PURGE_WORKER=0
+else
+  validate_execution_environment "$HEAD_IP" "model cache cleanup role" 0 || exit 1
+fi
+acquire_resource_lock || exit 1
 if [[ -z "${MODEL_LABELS// /}" && "$PURGE_CACHE_GARBAGE" != "1" ]]; then
   echo "[purge] set MODEL_LABELS when PURGE_CACHE_GARBAGE=0" >&2
   exit 2
@@ -81,8 +89,10 @@ REPOS=()
 if [[ -n "$repo_text" ]]; then mapfile -t REPOS <<<"$repo_text"; fi
 
 ray_up=0
-if docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
-  ray_up=1
+if [[ "$SINGLE_NODE_ONLY" != "1" ]]; then
+  if docker exec "$VLLM_CONTAINER" ray status 2>/dev/null | grep -q "Active"; then
+    ray_up=1
+  fi
 fi
 PURGE_WORKER="${PURGE_WORKER:-$ray_up}"
 args=()
@@ -97,16 +107,18 @@ if [[ "$PURGE_WORKER" == "1" ]]; then
   args+=(--worker "$WORKER_IP")
 fi
 
+worker_scope=auto
+[[ "$SINGLE_NODE_ONLY" == "1" ]] && worker_scope=none
 if [[ "$PURGE_WORKER" == "1" ]]; then
   wait_for_resources_idle required || exit 1
 else
-  wait_for_resources_idle auto || exit 1
+  wait_for_resources_idle "$worker_scope" || exit 1
 fi
 
 echo "[purge] ${#REPOS[@]} repo(s) for '${MODEL_LABELS:-none}'" \
      "(worker: $([[ "$PURGE_WORKER" == "1" ]] && echo "$WORKER_IP" || echo no))"
 if [[ "$ray_up" == "1" ]]; then
-  validate_local_topology_links || exit 1
+  validate_execution_environment "$HEAD_IP" "model cache cleanup role" || exit 1
   if [[ "$PURGE_WORKER" == "1" ]]; then
     validate_cluster_runtime || exit 1
   fi
@@ -118,7 +130,7 @@ if [[ "$ray_up" == "1" ]]; then
     "$VLLM_CONTAINER" \
     python3 -u /tmp/purge_model_cache_container.py "${args[@]}" "${REPOS[@]}"
 else
-  validate_local_topology_links || exit 1
+  validate_execution_environment "${HEAD_IP:-}" "model cache cleanup role" || exit 1
   docker run --rm -i -e HF_HOME=/hf-cache -e HF_HUB_CACHE=/hf-cache/hub \
     -e HF_MODULES_CACHE=/hf-cache/modules \
     -e HF_HUB_DISABLE_SHARED_BLOBS="$HF_HUB_DISABLE_SHARED_BLOBS" \

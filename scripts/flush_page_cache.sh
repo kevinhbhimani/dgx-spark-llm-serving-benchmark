@@ -15,14 +15,20 @@ show_memory() {
 }
 
 flush_local_page_cache() {
-  echo "[memory] page cache before flush on $LOCAL_NODE_ID"
+  local node_name
+  if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    node_name="$LOCAL_HOSTNAME"
+  else
+    node_name="$LOCAL_NODE_ID"
+  fi
+  echo "[memory] page cache before flush on $node_name"
   show_memory
   sync
   if ! printf '3\n' | sudo -n /usr/bin/tee /proc/sys/vm/drop_caches >/dev/null; then
-    echo "[memory] cache flush needs noninteractive sudo for /usr/bin/tee /proc/sys/vm/drop_caches on $LOCAL_NODE_ID" >&2
+    echo "[memory] cache flush needs noninteractive sudo for /usr/bin/tee /proc/sys/vm/drop_caches on $node_name" >&2
     return 1
   fi
-  echo "[memory] page cache after flush on $LOCAL_NODE_ID"
+  echo "[memory] page cache after flush on $node_name"
   show_memory
 }
 

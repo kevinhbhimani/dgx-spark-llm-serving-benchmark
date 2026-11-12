@@ -47,6 +47,8 @@ class RunJobContractTests(unittest.TestCase):
             marker = output / "results" / "campaign_run.json"
             marker_before = marker.read_bytes()
             environment = os.environ.copy()
+            environment.pop("SINGLE_NODE_ONLY", None)
+            environment.pop("DGX_SPARK_ENV_LOADED", None)
             environment.update({
                 "PYTHON": sys.executable,
                 "TOPOLOGY_PYTHON": sys.executable,
@@ -73,11 +75,13 @@ class RunJobContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             topology = write_test_topology(Path(temporary))
             environment = os.environ.copy()
+            environment.pop("SINGLE_NODE_ONLY", None)
+            environment.pop("DGX_SPARK_ENV_LOADED", None)
             environment.update({
-                "PYTHON": "/bin/true",
+                "PYTHON": sys.executable,
                 "TOPOLOGY_PYTHON": sys.executable,
                 "PLAN_ONLY": "1",
-                "OUT_DIR": temporary,
+                "OUT_DIR": str(Path(temporary) / "campaign"),
                 "CLUSTER_CONFIG": str(topology),
                 "CONCURRENCIES": "1 2",
                 "EXPECTED_CONCURRENCIES": "2 1",
@@ -112,13 +116,15 @@ class RunJobContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             topology = write_test_topology(Path(temporary))
             environment = os.environ.copy()
+            environment.pop("SINGLE_NODE_ONLY", None)
+            environment.pop("DGX_SPARK_ENV_LOADED", None)
             for name in ("FULL_REPEATS", "REPEAT_CONCS", "REPEAT_TOTAL",
                          "CAMPAIGN_CONFIGS", "CAMPAIGN_LABELS", "REPEATS"):
                 environment.pop(name, None)
-            environment.update({"PYTHON": "/bin/true",
+            environment.update({"PYTHON": sys.executable,
                                 "TOPOLOGY_PYTHON": sys.executable,
                                 "PLAN_ONLY": "1",
-                                "OUT_DIR": temporary,
+                                "OUT_DIR": str(Path(temporary) / "campaign"),
                                 "CLUSTER_CONFIG": str(topology), **overrides})
             return subprocess.run(
                 ["bash", "scripts/run_job.sh"], cwd=ROOT, env=environment,
@@ -147,6 +153,25 @@ class RunJobContractTests(unittest.TestCase):
         result = self._plan(REPEATS="0")
         self.assertNotEqual(result.returncode, 0)
 
+    def test_solo_plan_does_not_read_cluster_yaml(self):
+        result = self._plan(
+            SINGLE_NODE_ONLY="1",
+            CLUSTER_CONFIG="/does/not/exist/cluster.yaml",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("configs=single", result.stdout)
+        self.assertIn("SINGLE_NODE_ONLY=1", result.stdout)
+
+    def test_solo_rejects_dual_configs_before_campaign_planning(self):
+        result = self._plan(SINGLE_NODE_ONLY="1", CAMPAIGN_CONFIGS="tp2")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CAMPAIGN_CONFIGS", result.stderr)
+
+    def test_solo_rejects_worker_purge_before_campaign_planning(self):
+        result = self._plan(SINGLE_NODE_ONLY="1", PURGE_WORKER="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PURGE_WORKER=1", result.stderr)
+
     def _run_with_dead_worker(self, function_name: str, call: str) -> subprocess.CompletedProcess[str]:
         """Run one run_job.sh function while acquire/mirror and purge both
         fail, as they do after the worker node stops."""
@@ -162,6 +187,7 @@ class RunJobContractTests(unittest.TestCase):
             "purge_group() { return 1; }\n"
             "group_status() { return 3; }\n"
             "PURGE_WEIGHTS=1\n"
+            "SINGLE_NODE_ONLY=0\n"
             "FAILED=()\n"
             "MODEL_GROUPS=('model-a|1|1:tp2:model-a')\n"
             + source[start:end]

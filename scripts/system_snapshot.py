@@ -477,6 +477,7 @@ def parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--image", default="")
     parser.add_argument("--cluster-config", type=Path)
     parser.add_argument("--node", action="store_true")
+    parser.add_argument("--local-only", action="store_true")
     return parser.parse_args(arguments)
 
 
@@ -513,6 +514,40 @@ def main() -> int:
         return 0
     if arguments.output is None:
         raise SystemExit("--output is required")
+    if arguments.local_only:
+        validate_container(arguments.container)
+        validate_image(arguments.image)
+        local_state = node_snapshot(arguments.container, arguments.image)
+        host_state = local_state.get("host")
+        local_hostname_value = (
+            host_state.get("hostname")
+            if isinstance(host_state, dict)
+            else socket.gethostname()
+        )
+        snapshot: JsonObject = {
+            "schema_version": 3,
+            "captured_at_utc": utc_now(),
+            "execution_scope": "single-node",
+            "configuration": {
+                "container": arguments.container,
+                "declared_image": arguments.image,
+                "loopback_address": "127.0.0.1",
+            },
+            "peer_collection": {
+                "status": "skipped",
+                "reason": "disabled by SINGLE_NODE_ONLY=1",
+            },
+            "nodes": [
+                {
+                    "role": "local",
+                    "hostname": local_hostname_value,
+                    "observed_state": local_state,
+                }
+            ],
+        }
+        write_snapshot(arguments.output, snapshot)
+        print(f"[snapshot] saved local read-only system snapshot: {arguments.output}")
+        return 0
     if arguments.cluster_config is None:
         raise SystemExit("--cluster-config is required")
     validate_container(arguments.container)
