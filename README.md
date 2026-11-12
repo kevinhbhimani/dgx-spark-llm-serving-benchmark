@@ -17,6 +17,8 @@ For the setup, preflight, and full-suite command sequence, follow the
 [campaign runbook](docs/campaign-runbook.md). It links to the detailed
 [cluster setup](docs/cluster-setup.md) and
 [RDMA readiness checks](docs/rdma-readiness.md).
+For per-model launch requirements, see the
+[model run special cases](docs/model-run-special-cases.md).
 For disconnected installation and model runs, see the
 [offline bundle guide](offline/README.md).
 
