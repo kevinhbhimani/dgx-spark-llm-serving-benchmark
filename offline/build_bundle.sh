@@ -121,6 +121,26 @@ if [[ -e "$OUTPUT_DIR" ]]; then
   exit 1
 fi
 OUTPUT_PARENT="$(dirname "$OUTPUT_DIR")"
+
+SOURCE_COMMIT=unknown
+SOURCE_BRANCH=unknown
+SOURCE_WORKTREE_STATE=unknown
+if command -v git >/dev/null 2>&1 \
+    && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  SOURCE_COMMIT="$(git -C "$REPO_ROOT" rev-parse --verify HEAD 2>/dev/null || printf 'unknown')"
+  SOURCE_BRANCH="$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [[ -z "$SOURCE_BRANCH" ]]; then
+    SOURCE_BRANCH="detached HEAD"
+  fi
+  if SOURCE_GIT_STATUS="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all 2>/dev/null)"; then
+    if [[ -z "$SOURCE_GIT_STATUS" ]]; then
+      SOURCE_WORKTREE_STATE=clean
+    else
+      SOURCE_WORKTREE_STATE=modified
+    fi
+  fi
+fi
+
 mkdir -p "$OUTPUT_PARENT"
 STAGING_DIR="$(mktemp -d "$OUTPUT_PARENT/.offline-bundle.XXXXXX")"
 trap 'if [[ -n "${STAGING_DIR:-}" && -d "$STAGING_DIR" ]]; then rm -rf -- "$STAGING_DIR"; fi' EXIT
@@ -188,12 +208,23 @@ PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip download \
 
 echo "[offline] archiving source"
 SOURCE_ARCHIVE=dgx-spark-benchmark-src.tar.gz
+SOURCE_BUNDLED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+cat > "$STAGING_DIR/commit.md" <<EOF
+# Bundle source metadata
+
+- Commit: $SOURCE_COMMIT
+- Branch: $SOURCE_BRANCH
+- Source bundled at (UTC): $SOURCE_BUNDLED_UTC
+- Git working tree: $SOURCE_WORKTREE_STATE
+EOF
+
 SOURCE_TAR_EXCLUDES=(
   --exclude-vcs
   --exclude='./.venv' --exclude='./venv' --exclude='./env'
   --exclude='./.aws' --exclude='./.ssh' --exclude='./.gnupg' --exclude='./.codex'
   --exclude='./.cache' --exclude='./__pycache__' --exclude='*.pyc'
   --exclude='./.env*' --exclude='*/.env*' --exclude='./.netrc' --exclude='./.pypirc'
+  --exclude='./commit.md'
   --exclude='./offline-bundle' --exclude='./offline-bundle-*'
   --exclude='./offline/offline-bundle-*' --exclude='./offline/.offline-bundle.*'
   --exclude='results*' --exclude='figs' --exclude='__pycache__'
@@ -204,7 +235,8 @@ case "$STAGING_DIR/" in
     SOURCE_TAR_EXCLUDES+=(--exclude="./$STAGING_RELATIVE")
     ;;
 esac
-tar -C "$REPO_ROOT" "${SOURCE_TAR_EXCLUDES[@]}" -czf "$STAGING_DIR/$SOURCE_ARCHIVE" .
+tar -C "$REPO_ROOT" "${SOURCE_TAR_EXCLUDES[@]}" -czf "$STAGING_DIR/$SOURCE_ARCHIVE" . \
+  -C "$STAGING_DIR" commit.md
 cp "$HERE/install_offline.sh" "$STAGING_DIR/install_offline.sh"
 chmod +x "$STAGING_DIR/install_offline.sh"
 

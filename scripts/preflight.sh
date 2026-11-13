@@ -6,6 +6,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 REQUESTED_OUT_DIR="${OUT_DIR:-}"
 source "$HERE/scripts/connectx_env.sh" || exit 1
+export MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 if [[ "$SINGLE_NODE_ONLY" == "1" && "${PURGE_WORKER:-0}" == "1" ]]; then
   echo "[preflight] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2
   exit 2
@@ -35,7 +36,7 @@ CAMPAIGN_LOGS_DIR="$("$PYTHON" "$HERE/utils/campaign_output.py" \
   logs-dir --out-dir "$OUT_DIR")" || exit 1
 export CAMPAIGN_RESULTS_DIR CAMPAIGN_LOGS_DIR
 
-if ! ALL_CONFIGURED_MODEL_LABELS="$("$PYTHON" - "$HERE/configs/models.yaml" <<'PY'
+if ! ALL_CONFIGURED_MODEL_LABELS="$("$PYTHON" - "$MODELS_YAML" <<'PY'
 import re
 import sys
 
@@ -44,19 +45,19 @@ import yaml
 with open(sys.argv[1], encoding="utf-8") as handle:
     document = yaml.safe_load(handle) or {}
 if not isinstance(document, dict):
-    raise SystemExit("[preflight] configs/models.yaml must contain a mapping")
+    raise SystemExit(f"[preflight] {sys.argv[1]} must contain a mapping")
 models = document.get("models")
 if not isinstance(models, list) or not models \
         or any(not isinstance(model, dict) for model in models):
-    raise SystemExit("[preflight] configs/models.yaml must list model mappings")
+    raise SystemExit(f"[preflight] {sys.argv[1]} must list model mappings")
 labels = [model.get("label") for model in models]
 if not labels or any(not isinstance(label, str) for label in labels):
-    raise SystemExit("[preflight] configs/models.yaml has missing model labels")
+    raise SystemExit(f"[preflight] {sys.argv[1]} has missing model labels")
 if len(labels) != len(set(labels)):
-    raise SystemExit("[preflight] configs/models.yaml has duplicate model labels")
+    raise SystemExit(f"[preflight] {sys.argv[1]} has duplicate model labels")
 if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", label) is None
        for label in labels):
-    raise SystemExit("[preflight] configs/models.yaml has an unsafe model label")
+    raise SystemExit(f"[preflight] {sys.argv[1]} has an unsafe model label")
 print(" ".join(labels))
 PY
 )"; then

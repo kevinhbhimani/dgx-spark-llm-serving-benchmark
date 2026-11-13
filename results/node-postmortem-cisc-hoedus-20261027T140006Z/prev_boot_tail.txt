@@ -1,0 +1,303 @@
+$ journalctl -b -1 -n 300 --no-pager -o short-iso-precise
+2026-10-27T09:51:45.753493-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (**) NVIDIA(0): Option "AllowEmptyInitialConfiguration" "True"
+2026-10-27T09:51:45.753555-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (**) NVIDIA(0): Enabling 2D acceleration
+2026-10-27T09:51:45.753573-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) Loading sub module "glxserver_nvidia"
+2026-10-27T09:51:45.753573-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) LoadModule: "glxserver_nvidia"
+2026-10-27T09:51:45.753600-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) Loading /usr/lib/aarch64-linux-gnu/nvidia/xorg/libglxserver_nvidia.so
+2026-10-27T09:51:45.753794-04:00 cisc-hoedus systemd[1]: Started nvidia-persistenced.service - NVIDIA Persistence Daemon.
+2026-10-27T09:51:45.762352-04:00 cisc-hoedus wireplumber[2427]: SPA handle 'api.libcamera.enum.manager' could not be loaded; is it installed?
+2026-10-27T09:51:45.762366-04:00 cisc-hoedus wireplumber[2427]: PipeWire's libcamera SPA missing or broken. libcamera not supported.
+2026-10-27T09:51:45.782249-04:00 cisc-hoedus wireplumber[2427]: Failed to get percentage from UPower: org.freedesktop.DBus.Error.NameHasNoOwner
+2026-10-27T09:51:45.793604-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/nvidia0 as /dev/nvidia0"
+2026-10-27T09:51:45.793604-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/dri/card1 as /dev/dri/card1"
+2026-10-27T09:51:45.793604-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/dri/renderD128 as /dev/dri/renderD128"
+2026-10-27T09:51:45.793604-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/nvidia0 as /dev/nvidia0"
+2026-10-27T09:51:45.793604-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/dri/card1 as /dev/dri/card1"
+2026-10-27T09:51:45.793604-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/dri/renderD128 as /dev/dri/renderD128"
+2026-10-27T09:51:45.812083-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Using driver version 580.178.04"
+2026-10-27T09:51:45.814015-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/nvidia-modeset as /dev/nvidia-modeset"
+2026-10-27T09:51:45.814015-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/nvidia-uvm-tools as /dev/nvidia-uvm-tools"
+2026-10-27T09:51:45.814015-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/nvidia-uvm as /dev/nvidia-uvm"
+2026-10-27T09:51:45.814015-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /dev/nvidiactl as /dev/nvidiactl"
+2026-10-27T09:51:45.815471-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-egl-gbm.so.1.1.3 as /usr/lib/aarch64-linux-gnu/libnvidia-egl-gbm.so.1.1.3"
+2026-10-27T09:51:45.816943-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-egl-wayland.so.1.1.23 as /usr/lib/aarch64-linux-gnu/libnvidia-egl-wayland.so.1.1.23"
+2026-10-27T09:51:45.818559-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate libnvidia-egl-wayland2.so.*.*: libnvidia-egl-wayland2.so.*.*: not found\nlibnvidia-egl-wayland2.so.*.*: not found"
+2026-10-27T09:51:45.819952-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-egl-xcb.so.1.0.5 as /usr/lib/aarch64-linux-gnu/libnvidia-egl-xcb.so.1.0.5"
+2026-10-27T09:51:45.821311-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-egl-xlib.so.1.0.5 as /usr/lib/aarch64-linux-gnu/libnvidia-egl-xlib.so.1.0.5"
+2026-10-27T09:51:45.821311-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-allocator.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-allocator.so.580.178.04"
+2026-10-27T09:51:45.821574-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate libnvidia-vulkan-producer.so.580.178.04: libnvidia-vulkan-producer.so.580.178.04: not found\nlibnvidia-vulkan-producer.so.580.178.04: not found"
+2026-10-27T09:51:45.821574-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/nvidia/xorg/nvidia_drv.so as /usr/lib/aarch64-linux-gnu/nvidia/xorg/nvidia_drv.so"
+2026-10-27T09:51:45.821574-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/nvidia/xorg/libglxserver_nvidia.so.580.178.04 as /usr/lib/aarch64-linux-gnu/nvidia/xorg/libglxserver_nvidia.so.580.178.04"
+2026-10-27T09:51:45.821574-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/bin/nvidia-xconfig as /usr/bin/nvidia-xconfig"
+2026-10-27T09:51:45.821946-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/glvnd/egl_vendor.d/10_nvidia.json as /usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+2026-10-27T09:51:45.822193-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/egl/egl_external_platform.d/15_nvidia_gbm.json as /usr/share/egl/egl_external_platform.d/15_nvidia_gbm.json"
+2026-10-27T09:51:45.822268-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/egl/egl_external_platform.d/10_nvidia_wayland.json as /usr/share/egl/egl_external_platform.d/10_nvidia_wayland.json"
+2026-10-27T09:51:45.822268-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate egl/egl_external_platform.d/09_nvidia_wayland2.json: egl/egl_external_platform.d/09_nvidia_wayland2.json: not found"
+2026-10-27T09:51:45.822268-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/egl/egl_external_platform.d/20_nvidia_xcb.json as /usr/share/egl/egl_external_platform.d/20_nvidia_xcb.json"
+2026-10-27T09:51:45.822268-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/egl/egl_external_platform.d/20_nvidia_xlib.json as /usr/share/egl/egl_external_platform.d/20_nvidia_xlib.json"
+2026-10-27T09:51:45.822268-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/nvidia/nvoptix.bin as /usr/share/nvidia/nvoptix.bin"
+2026-10-27T09:51:45.822268-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/X11/xorg.conf.d/10-nvidia.conf as /usr/share/X11/xorg.conf.d/10-nvidia.conf"
+2026-10-27T09:51:45.822361-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate X11/xorg.conf.d/nvidia-drm-outputclass.conf: X11/xorg.conf.d/nvidia-drm-outputclass.conf: not found"
+2026-10-27T09:51:45.822591-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /etc/OpenCL/vendors/nvidia.icd as /etc/OpenCL/vendors/nvidia.icd"
+2026-10-27T09:51:45.822908-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/vulkan/icd.d/nvidia_icd.json as /etc/vulkan/icd.d/nvidia_icd.json"
+2026-10-27T09:51:45.822908-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate vulkan/icd.d/nvidia_layers.json: vulkan/icd.d/nvidia_layers.json: not found\nvulkan/icd.d/nvidia_layers.json: not found"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/share/vulkan/implicit_layer.d/nvidia_layers.json as /etc/vulkan/implicit_layer.d/nvidia_layers.json"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate vulkan/icd.d/nvidia_icd.aarch64.json: vulkan/icd.d/nvidia_icd.aarch64.json: not found\nvulkan/icd.d/nvidia_icd.aarch64.json: not found"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libEGL_nvidia.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libEGL_nvidia.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libGLESv1_CM_nvidia.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libGLESv1_CM_nvidia.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libGLESv2_nvidia.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libGLESv2_nvidia.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libGLX_nvidia.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libGLX_nvidia.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libcuda.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libcuda.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libcudadebugger.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libcudadebugger.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvcuvid.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvcuvid.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-allocator.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-allocator.so.580.178.04"
+2026-10-27T09:51:45.823005-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-cfg.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-cfg.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-eglcore.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-eglcore.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-encode.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-encode.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-fbc.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-fbc.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-glcore.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-glcore.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-glsi.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-glsi.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-glvkspirv.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-glvkspirv.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-gpucomp.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-gpucomp.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-ml.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-ml.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-ngx.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-ngx.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-nvvm.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-nvvm.so.580.178.04"
+2026-10-27T09:51:45.823163-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-opencl.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-opencl.so.580.178.04"
+2026-10-27T09:51:45.823307-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-opticalflow.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-opticalflow.so.580.178.04"
+2026-10-27T09:51:45.823307-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-ptxjitcompiler.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-ptxjitcompiler.so.580.178.04"
+2026-10-27T09:51:45.823307-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-rtcore.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-rtcore.so.580.178.04"
+2026-10-27T09:51:45.823307-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-tls.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvidia-tls.so.580.178.04"
+2026-10-27T09:51:45.823307-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvoptix.so.580.178.04 as /usr/lib/aarch64-linux-gnu/libnvoptix.so.580.178.04"
+2026-10-27T09:51:45.823307-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/vdpau/libvdpau_nvidia.so.580.178.04 as /usr/lib/aarch64-linux-gnu/vdpau/libvdpau_nvidia.so.580.178.04"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/lib/aarch64-linux-gnu/libnvidia-nvvm70.so.4 as /usr/lib/aarch64-linux-gnu/libnvidia-nvvm70.so.4"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /run/nvidia-persistenced/socket as /run/nvidia-persistenced/socket"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate /nvidia-fabricmanager/socket: /nvidia-fabricmanager/socket: not found"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate /tmp/nvidia-mps: /tmp/nvidia-mps: not found"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /lib/firmware/nvidia/580.178.04/gsp_ga10x.bin as /lib/firmware/nvidia/580.178.04/gsp_ga10x.bin"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /lib/firmware/nvidia/580.178.04/gsp_tu10x.bin as /lib/firmware/nvidia/580.178.04/gsp_tu10x.bin"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate nvidia/580.178.04/ucodes*.bin: nvidia/580.178.04/ucodes*.bin: not found"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/bin/nvidia-smi as /usr/bin/nvidia-smi"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/bin/nvidia-debugdump as /usr/bin/nvidia-debugdump"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/bin/nvidia-persistenced as /usr/bin/nvidia-persistenced"
+2026-10-27T09:51:45.823859-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/bin/nvidia-cuda-mps-control as /usr/bin/nvidia-cuda-mps-control"
+2026-10-27T09:51:45.824072-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Selecting /usr/bin/nvidia-cuda-mps-server as /usr/bin/nvidia-cuda-mps-server"
+2026-10-27T09:51:45.824072-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate nvidia-imex: nvidia-imex: not found"
+2026-10-27T09:51:45.824072-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=warning msg="Could not locate nvidia-imex-ctl: nvidia-imex-ctl: not found"
+2026-10-27T09:51:45.824636-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) Module glxserver_nvidia: vendor="NVIDIA Corporation"
+2026-10-27T09:51:45.824636-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]:         compiled for 1.6.99.901, module version = 1.0.0
+2026-10-27T09:51:45.824636-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]:         Module class: X.Org Server Extension
+2026-10-27T09:51:45.825029-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA GLX Module  580.178.04  Tue Jul  7 13:25:39 UTC 2026
+2026-10-27T09:51:45.825749-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA: The X server supports PRIME Render Offload.
+2026-10-27T09:51:45.831056-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0): Valid display device(s) on GPU-0 at PCI:1@15:0:0
+2026-10-27T09:51:45.831056-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0):     DFP-0
+2026-10-27T09:51:45.831056-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0):     DFP-1
+2026-10-27T09:51:45.831056-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0):     DFP-2 (boot)
+2026-10-27T09:51:45.831056-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0):     DFP-3
+2026-10-27T09:51:45.831056-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0):     DFP-4
+2026-10-27T09:51:45.834599-04:00 cisc-hoedus nvidia-ctk[2409]: time="2026-10-27T09:51:45-04:00" level=info msg="Generated CDI spec with version 0.7.0"
+2026-10-27T09:51:45.836575-04:00 cisc-hoedus systemd[1]: nvidia-cdi-refresh.service: Deactivated successfully.
+2026-10-27T09:51:45.836751-04:00 cisc-hoedus systemd[1]: Finished nvidia-cdi-refresh.service - Refresh NVIDIA CDI specification file.
+2026-10-27T09:51:45.846697-04:00 cisc-hoedus systemd[1]: Starting containerd.service - containerd container runtime...
+2026-10-27T09:51:45.850586-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0): NVIDIA GPU NVIDIA GB10 (GB20B) at PCI:1@15:0:0 (GPU-0)
+2026-10-27T09:51:45.850586-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0): Memory: 0 kBytes
+2026-10-27T09:51:45.850586-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0): VideoBIOS: 9a.0b.2d.00.00
+2026-10-27T09:51:45.850586-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0): Detected PCI Express Link width: 16X
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-0: disconnected
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-0: Internal TMDS
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-0: 165.0 MHz maximum pixel clock
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0):
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-1: disconnected
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-1: Internal DisplayPort
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-1: 2670.0 MHz maximum pixel clock
+2026-10-27T09:51:45.851339-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0):
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DELL P3426WEB (DFP-2): connected
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DELL P3426WEB (DFP-2): Internal DisplayPort
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DELL P3426WEB (DFP-2): 2670.0 MHz maximum pixel clock
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0):
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-3: disconnected
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-3: Internal DisplayPort
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-3: 2670.0 MHz maximum pixel clock
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0):
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-4: disconnected
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-4: Internal DisplayPort
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0): DFP-4: 2670.0 MHz maximum pixel clock
+2026-10-27T09:51:45.854544-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(GPU-0):
+2026-10-27T09:51:45.904377-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (==) NVIDIA(0):
+2026-10-27T09:51:45.904377-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (==) NVIDIA(0): No modes were requested; the default mode "nvidia-auto-select"
+2026-10-27T09:51:45.904377-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (==) NVIDIA(0):     will be used as the requested mode.
+2026-10-27T09:51:45.904377-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (==) NVIDIA(0):
+2026-10-27T09:51:45.921576-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0): Validated MetaModes:
+2026-10-27T09:51:45.921576-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     "DFP-2:nvidia-auto-select"
+2026-10-27T09:51:45.921576-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0): Virtual screen size determined to be 3440 x 1440
+2026-10-27T09:51:45.934889-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.934725008-04:00" level=info msg="starting containerd" revision=e53c7c1516c3b2bff98eb76f1f4117477e6f4e66 version=v2.2.5
+2026-10-27T09:51:45.943015-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.942903728-04:00" level=info msg="loading plugin" id=io.containerd.content.v1.content type=io.containerd.content.v1
+2026-10-27T09:51:45.943378-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.943357936-04:00" level=info msg="loading plugin" id=io.containerd.image-verifier.v1.bindir type=io.containerd.image-verifier.v1
+2026-10-27T09:51:45.943398-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.943390064-04:00" level=info msg="loading plugin" id=io.containerd.internal.v1.opt type=io.containerd.internal.v1
+2026-10-27T09:51:45.943673-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.943652320-04:00" level=info msg="loading plugin" id=io.containerd.warning.v1.deprecations type=io.containerd.warning.v1
+2026-10-27T09:51:45.943703-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.943694336-04:00" level=info msg="loading plugin" id=io.containerd.mount-handler.v1.erofs type=io.containerd.mount-handler.v1
+2026-10-27T09:51:45.943713-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.943707664-04:00" level=info msg="loading plugin" id=io.containerd.snapshotter.v1.blockfile type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.943937-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.943912304-04:00" level=info msg="skip loading plugin" error="no scratch file generator: skip plugin" id=io.containerd.snapshotter.v1.blockfile type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.943946-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.943938544-04:00" level=info msg="loading plugin" id=io.containerd.snapshotter.v1.btrfs type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.944430-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.944408752-04:00" level=info msg="skip loading plugin" error="path /var/lib/containerd/io.containerd.snapshotter.v1.btrfs (ext4) must be a btrfs filesystem to be used with the btrfs snapshotter: skip plugin" id=io.containerd.snapshotter.v1.btrfs type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.944440-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.944431472-04:00" level=info msg="loading plugin" id=io.containerd.snapshotter.v1.devmapper type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.944448-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.944442192-04:00" level=info msg="skip loading plugin" error="devmapper not configured: skip plugin" id=io.containerd.snapshotter.v1.devmapper type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.944456-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.944449248-04:00" level=info msg="loading plugin" id=io.containerd.snapshotter.v1.erofs type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.944796-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.944776512-04:00" level=info msg="skip loading plugin" error="EROFS unsupported, please `modprobe erofs`: skip plugin" id=io.containerd.snapshotter.v1.erofs type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.944840-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.944797664-04:00" level=info msg="loading plugin" id=io.containerd.snapshotter.v1.native type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.944933-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.944921680-04:00" level=info msg="loading plugin" id=io.containerd.snapshotter.v1.overlayfs type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.945138-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.945116992-04:00" level=info msg="loading plugin" id=io.containerd.snapshotter.v1.zfs type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.945186-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.945144944-04:00" level=info msg="skip loading plugin" error="lstat /var/lib/containerd/io.containerd.snapshotter.v1.zfs: no such file or directory: skip plugin" id=io.containerd.snapshotter.v1.zfs type=io.containerd.snapshotter.v1
+2026-10-27T09:51:45.945186-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.945153568-04:00" level=info msg="loading plugin" id=io.containerd.event.v1.exchange type=io.containerd.event.v1
+2026-10-27T09:51:45.945385-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.945367344-04:00" level=info msg="loading plugin" id=io.containerd.monitor.task.v1.cgroups type=io.containerd.monitor.task.v1
+2026-10-27T09:51:45.945732-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.945716128-04:00" level=info msg="loading plugin" id=io.containerd.metadata.v1.bolt type=io.containerd.metadata.v1
+2026-10-27T09:51:45.945754-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.945747392-04:00" level=info msg="metadata content store policy set" policy=shared
+2026-10-27T09:51:45.964619-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964593680-04:00" level=info msg="loading plugin" id=io.containerd.gc.v1.scheduler type=io.containerd.gc.v1
+2026-10-27T09:51:45.964690-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964631856-04:00" level=info msg="loading plugin" id=io.containerd.nri.v1.nri type=io.containerd.nri.v1
+2026-10-27T09:51:45.964690-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964685952-04:00" level=info msg="built-in NRI default validator is disabled"
+2026-10-27T09:51:45.964723-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964691136-04:00" level=info msg="runtime interface created"
+2026-10-27T09:51:45.964723-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964695152-04:00" level=info msg="created NRI interface"
+2026-10-27T09:51:45.964723-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964702176-04:00" level=info msg="loading plugin" id=io.containerd.differ.v1.erofs type=io.containerd.differ.v1
+2026-10-27T09:51:45.964949-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964848288-04:00" level=info msg="skip loading plugin" error="failed to check mkfs.erofs availability: failed to run mkfs.erofs --help: exec: \"mkfs.erofs\": executable file not found in $PATH: skip plugin" id=io.containerd.differ.v1.erofs type=io.containerd.differ.v1
+2026-10-27T09:51:45.964949-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964862160-04:00" level=info msg="loading plugin" id=io.containerd.mount-manager.v1.bolt type=io.containerd.mount-manager.v1
+2026-10-27T09:51:45.965036-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964965920-04:00" level=info msg="loading plugin" id=io.containerd.differ.v1.walking type=io.containerd.differ.v1
+2026-10-27T09:51:45.965036-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964984320-04:00" level=info msg="loading plugin" id=io.containerd.lease.v1.manager type=io.containerd.lease.v1
+2026-10-27T09:51:45.965036-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.964993552-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.containers-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965036-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965002864-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.content-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965036-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965010000-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.diff-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965036-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965022512-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.images-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965036-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965031392-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.introspection-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965128-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965038752-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.namespaces-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965128-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965045824-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.snapshots-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965128-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965052992-04:00" level=info msg="loading plugin" id=io.containerd.shim.v1.manager type=io.containerd.shim.v1
+2026-10-27T09:51:45.965128-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965061200-04:00" level=info msg="loading plugin" id=io.containerd.runtime.v2.task type=io.containerd.runtime.v2
+2026-10-27T09:51:45.965128-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965105136-04:00" level=info msg="loading plugin" id=io.containerd.service.v1.tasks-service type=io.containerd.service.v1
+2026-10-27T09:51:45.965128-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965119280-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.containers type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965246-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965208640-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.content type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965266-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965244384-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.diff type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965266-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965260880-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.events type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965294-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965272752-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.images type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965773-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965589808-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.introspection type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965773-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965722560-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.leases type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965773-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965748672-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.mounts type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965773-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965764368-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.namespaces type=io.containerd.grpc.v1
+2026-10-27T09:51:45.965773-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965779136-04:00" level=info msg="loading plugin" id=io.containerd.sandbox.store.v1.local type=io.containerd.sandbox.store.v1
+2026-10-27T09:51:45.965902-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.965795216-04:00" level=info msg="loading plugin" id=io.containerd.transfer.v1.local type=io.containerd.transfer.v1
+2026-10-27T09:51:45.966207-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.966097248-04:00" level=info msg="loading plugin" id=io.containerd.cri.v1.images type=io.containerd.cri.v1
+2026-10-27T09:51:45.966590-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.966465440-04:00" level=info msg="Get image filesystem path \"/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs\" for snapshotter \"overlayfs\""
+2026-10-27T09:51:45.966590-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.966510192-04:00" level=info msg="Start snapshots syncer"
+2026-10-27T09:51:45.967210-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967108320-04:00" level=info msg="loading plugin" id=io.containerd.cri.v1.runtime type=io.containerd.cri.v1
+2026-10-27T09:51:45.967332-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967305936-04:00" level=info msg="starting cri plugin" config="{\"containerd\":{\"defaultRuntimeName\":\"runc\",\"runtimes\":{\"runc\":{\"runtimeType\":\"io.containerd.runc.v2\",\"runtimePath\":\"\",\"PodAnnotations\":null,\"ContainerAnnotations\":null,\"options\":{\"BinaryName\":\"\",\"CriuImagePath\":\"\",\"CriuWorkPath\":\"\",\"IoGid\":0,\"IoUid\":0,\"NoNewKeyring\":false,\"Root\":\"\",\"ShimCgroup\":\"\",\"SystemdCgroup\":false},\"privileged_without_host_devices\":false,\"privileged_without_host_devices_all_devices_allowed\":false,\"cgroupWritable\":false,\"baseRuntimeSpec\":\"\",\"cniConfDir\":\"\",\"cniMaxConfNum\":0,\"snapshotter\":\"\",\"sandboxer\":\"podsandbox\",\"io_type\":\"\"}},\"ignoreBlockIONotEnabledErrors\":false,\"ignoreRdtNotEnabledErrors\":false},\"cni\":{\"binDir\":\"\",\"binDirs\":[\"/opt/cni/bin\"],\"confDir\":\"/etc/cni/net.d\",\"maxConfNum\":1,\"setupSerially\":false,\"confTemplate\":\"\",\"ipPref\":\"\",\"useInternalLoopback\":false},\"enableSelinux\":false,\"selinuxCategoryRange\":1024,\"maxContainerLogLineSize\":16384,\"disableApparmor\":false,\"restrictOOMScoreAdj\":false,\"disableProcMount\":false,\"unsetSeccompProfile\":\"\",\"tolerateMissingHugetlbController\":true,\"disableHugetlbController\":true,\"device_ownership_from_security_context\":false,\"ignoreImageDefinedVolumes\":false,\"netnsMountsUnderStateDir\":false,\"enableUnprivilegedPorts\":true,\"enableUnprivilegedICMP\":true,\"enableCDI\":true,\"cdiSpecDirs\":[\"/etc/cdi\",\"/var/run/cdi\"],\"drainExecSyncIOTimeout\":\"0s\",\"ignoreDeprecationWarnings\":null,\"containerdRootDir\":\"/var/lib/containerd\",\"containerdEndpoint\":\"/run/containerd/containerd.sock\",\"rootDir\":\"/var/lib/containerd/io.containerd.grpc.v1.cri\",\"stateDir\":\"/run/containerd/io.containerd.grpc.v1.cri\"}"
+2026-10-27T09:51:45.967406-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967350016-04:00" level=info msg="loading plugin" id=io.containerd.podsandbox.controller.v1.podsandbox type=io.containerd.podsandbox.controller.v1
+2026-10-27T09:51:45.967680-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967571968-04:00" level=info msg="loading plugin" id=io.containerd.sandbox.controller.v1.shim type=io.containerd.sandbox.controller.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967788432-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.sandbox-controllers type=io.containerd.grpc.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967809728-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.sandboxes type=io.containerd.grpc.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967825104-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.snapshots type=io.containerd.grpc.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967833664-04:00" level=info msg="loading plugin" id=io.containerd.streaming.v1.manager type=io.containerd.streaming.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967843024-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.streaming type=io.containerd.grpc.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967851104-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.tasks type=io.containerd.grpc.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967859056-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.transfer type=io.containerd.grpc.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967868208-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.version type=io.containerd.grpc.v1
+2026-10-27T09:51:45.967888-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.967875296-04:00" level=info msg="loading plugin" id=io.containerd.monitor.container.v1.restart type=io.containerd.monitor.container.v1
+2026-10-27T09:51:45.968223-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968122928-04:00" level=info msg="loading plugin" id=io.containerd.tracing.processor.v1.otlp type=io.containerd.tracing.processor.v1
+2026-10-27T09:51:45.968223-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968139104-04:00" level=info msg="skip loading plugin" error="skip plugin: tracing endpoint not configured" id=io.containerd.tracing.processor.v1.otlp type=io.containerd.tracing.processor.v1
+2026-10-27T09:51:45.968223-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968146240-04:00" level=info msg="loading plugin" id=io.containerd.internal.v1.tracing type=io.containerd.internal.v1
+2026-10-27T09:51:45.968223-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968154336-04:00" level=info msg="skip loading plugin" error="skip plugin: tracing endpoint not configured" id=io.containerd.internal.v1.tracing type=io.containerd.internal.v1
+2026-10-27T09:51:45.968223-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968160528-04:00" level=info msg="loading plugin" id=io.containerd.ttrpc.v1.otelttrpc type=io.containerd.ttrpc.v1
+2026-10-27T09:51:45.968223-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968168192-04:00" level=info msg="loading plugin" id=io.containerd.grpc.v1.healthcheck type=io.containerd.grpc.v1
+2026-10-27T09:51:45.968640-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968543488-04:00" level=info msg=serving... address=/run/containerd/containerd.sock.ttrpc
+2026-10-27T09:51:45.968640-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968587728-04:00" level=info msg=serving... address=/run/containerd/containerd.sock
+2026-10-27T09:51:45.968640-04:00 cisc-hoedus containerd[2458]: time="2026-10-27T09:51:45.968636384-04:00" level=info msg="containerd successfully booted in 0.035236s"
+2026-10-27T09:51:45.968801-04:00 cisc-hoedus systemd[1]: Started containerd.service - containerd container runtime.
+2026-10-27T09:51:45.981586-04:00 cisc-hoedus systemd[1]: Starting docker.service - Docker Application Container Engine...
+2026-10-27T09:51:45.982933-04:00 cisc-hoedus wpa_supplicant[1709]: wlP9s9: CTRL-EVENT-REGDOM-CHANGE init=DRIVER type=COUNTRY alpha2=US
+2026-10-27T09:51:45.983107-04:00 cisc-hoedus wpa_supplicant[1709]: p2p-dev-wlP9s9: Channel list changed: 6 GHz was enabled
+2026-10-27T09:51:45.983249-04:00 cisc-hoedus wpa_supplicant[1709]: wlP9s9: Channel list changed: 6 GHz was enabled
+2026-10-27T09:51:45.983288-04:00 cisc-hoedus wpa_supplicant[1709]: wlP9s9: CTRL-EVENT-REGDOM-CHANGE init=DRIVER type=COUNTRY alpha2=US
+2026-10-27T09:51:45.988301-04:00 cisc-hoedus dbus-daemon[1548]: [system] Successfully activated service 'org.freedesktop.RealtimeKit1'
+2026-10-27T09:51:45.988508-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully called chroot.
+2026-10-27T09:51:45.988541-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully dropped privileges.
+2026-10-27T09:51:45.988519-04:00 cisc-hoedus systemd[1]: Started rtkit-daemon.service - RealtimeKit Scheduling Policy Service.
+2026-10-27T09:51:45.988547-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully limited resources.
+2026-10-27T09:51:45.988619-04:00 cisc-hoedus rtkit-daemon[2438]: Canary thread running.
+2026-10-27T09:51:45.988647-04:00 cisc-hoedus rtkit-daemon[2438]: Running.
+2026-10-27T09:51:45.988680-04:00 cisc-hoedus rtkit-daemon[2438]: Watchdog thread running.
+2026-10-27T09:51:45.988702-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.988724-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.988740-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.988754-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.989195-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.989253-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.989274-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.989300-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.989370-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.989391-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 0 threads of 0 processes of 0 users.
+2026-10-27T09:51:45.991524-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9914] policy: auto-activating connection 'eduroam [0a37333e]' (0a37333e-f0cd-4973-90fb-028548f60d7e)
+2026-10-27T09:51:45.991810-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9918] device (wlP9s9): Activation: starting connection 'eduroam [0a37333e]' (0a37333e-f0cd-4973-90fb-028548f60d7e)
+2026-10-27T09:51:45.991858-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9918] device (wlP9s9): state change: disconnected -> prepare (reason 'none', sys-iface-state: 'managed')
+2026-10-27T09:51:45.992006-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9919] manager: NetworkManager state is now CONNECTING
+2026-10-27T09:51:45.992119-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9921] device (wlP9s9): state change: prepare -> config (reason 'none', sys-iface-state: 'managed')
+2026-10-27T09:51:45.992300-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9922] device (wlP9s9): Activation: (wifi) access point 'eduroam [0a37333e]' has security, but secrets are required.
+2026-10-27T09:51:45.992309-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9923] device (wlP9s9): state change: config -> need-auth (reason 'none', sys-iface-state: 'managed')
+2026-10-27T09:51:45.994343-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9943] device (wlP9s9): state change: need-auth -> prepare (reason 'none', sys-iface-state: 'managed')
+2026-10-27T09:51:45.994494-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9944] device (wlP9s9): state change: prepare -> config (reason 'none', sys-iface-state: 'managed')
+2026-10-27T09:51:45.995057-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109105.9950] device (wlP9s9): Activation: (wifi) connection 'eduroam [0a37333e]' has security, and secrets exist.  No new secrets needed.
+2026-10-27T09:51:46.010317-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully made thread 2425 of process 2425 owned by '127' high priority at nice level -11.
+2026-10-27T09:51:46.010341-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 1 threads of 1 processes of 1 users.
+2026-10-27T09:51:46.010418-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 1 threads of 1 processes of 1 users.
+2026-10-27T09:51:46.011782-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0117] Config: added 'ssid' value 'eduroam'
+2026-10-27T09:51:46.011796-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0117] Config: added 'scan_ssid' value '1'
+2026-10-27T09:51:46.011802-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0117] Config: added 'bgscan' value 'simple:30:-65:300'
+2026-10-27T09:51:46.011814-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0118] Config: added 'key_mgmt' value 'WPA-EAP FT-EAP FT-EAP-SHA384 WPA-EAP-SHA256'
+2026-10-27T09:51:46.011819-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0118] Config: added 'auth_alg' value 'OPEN'
+2026-10-27T09:51:46.011824-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0118] Config: added 'pairwise' value 'CCMP'
+2026-10-27T09:51:46.011829-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0118] Config: added 'group' value 'CCMP'
+2026-10-27T09:51:46.011834-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0118] Config: added 'eap' value 'TLS'
+2026-10-27T09:51:46.011839-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0118] Config: added 'fragment_size' value '1266'
+2026-10-27T09:51:46.011848-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0118] Config: added 'private_key' value '/home/dmihovch/.joinnow/tls-client-certs/sw2-joinnow-client-cert-da39a3ee5e6b4b0d3255bfef95601890afd80709_20261023-125806_1281362.p12'
+2026-10-27T09:51:46.011941-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully made thread 2439 of process 2426 owned by '127' RT at priority 20.
+2026-10-27T09:51:46.011957-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 2 threads of 2 processes of 1 users.
+2026-10-27T09:51:46.012053-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0120] Config: added 'private_key_passwd' value '<hidden>'
+2026-10-27T09:51:46.012062-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0120] Config: added 'identity' value 'dmihovch@UDel.Edu'
+2026-10-27T09:51:46.012066-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0120] Config: added 'proactive_key_caching' value '1'
+2026-10-27T09:51:46.013276-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully made thread 2442 of process 2425 owned by '127' RT at priority 20.
+2026-10-27T09:51:46.013294-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 3 threads of 2 processes of 1 users.
+2026-10-27T09:51:46.013369-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 3 threads of 2 processes of 1 users.
+2026-10-27T09:51:46.015019-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully made thread 2428 of process 2428 owned by '127' high priority at nice level -11.
+2026-10-27T09:51:46.015037-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 4 threads of 3 processes of 1 users.
+2026-10-27T09:51:46.016389-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully made thread 2443 of process 2428 owned by '127' RT at priority 20.
+2026-10-27T09:51:46.016406-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 5 threads of 3 processes of 1 users.
+2026-10-27T09:51:46.017953-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully made thread 2427 of process 2427 owned by '127' high priority at nice level -11.
+2026-10-27T09:51:46.017967-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 6 threads of 4 processes of 1 users.
+2026-10-27T09:51:46.019045-04:00 cisc-hoedus rtkit-daemon[2438]: Successfully made thread 2440 of process 2427 owned by '127' RT at priority 20.
+2026-10-27T09:51:46.019062-04:00 cisc-hoedus rtkit-daemon[2438]: Supervising 7 threads of 4 processes of 1 users.
+2026-10-27T09:51:46.025357-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0253] device (wlP9s9): supplicant interface state: disconnected -> scanning
+2026-10-27T09:51:46.025372-04:00 cisc-hoedus NetworkManager[1697]: <info>  [1793109106.0253] device (p2p-dev-wlP9s9): supplicant management interface state: disconnected -> scanning
+2026-10-27T09:51:46.058398-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0): DPI set to (109, 107); computed from "UseEdidDpi" X config
+2026-10-27T09:51:46.058398-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (--) NVIDIA(0):     option
+2026-10-27T09:51:46.058506-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (WW) NVIDIA: Failed to bind sideband socket to
+2026-10-27T09:51:46.058506-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (WW) NVIDIA:     '/var/run/nvidia-xdriver-b7367dc9' Permission denied
+2026-10-27T09:51:46.060962-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA: Reserving 24576.00 MB of virtual memory for indirect memory
+2026-10-27T09:51:46.060962-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA:     access.
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0): ACPI: failed to connect to the ACPI event daemon; the daemon
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     may not be running or the "AcpidSocketPath" X
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     configuration option may not be set correctly.  When the
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     ACPI event daemon is available, the NVIDIA X driver will
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     try to use it to receive ACPI event notifications.  For
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     details, please see the "ConnectToAcpid" and
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     "AcpidSocketPath" X configuration options in Appendix B: X
+2026-10-27T09:51:46.078606-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0):     Config Options in the README.
+2026-10-27T09:51:46.096170-04:00 cisc-hoedus ModemManager[1802]: <msg> [base-manager] couldn't check support for device '/sys/devices/pci0009:00/0009:00:00.0/0009:01:00.0': not supported by any plugin
+2026-10-27T09:51:46.096492-04:00 cisc-hoedus /usr/libexec/gdm-x-session[2432]: (II) NVIDIA(0): Setting mode "DFP-2:nvidia-auto-select"
+2026-10-27T09:51:46.139758-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.139514384-04:00" level=info msg="Starting up"
+2026-10-27T09:51:46.141382-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.141363296-04:00" level=info msg="OTEL tracing is not configured, using no-op tracer provider"
+2026-10-27T09:51:46.142862-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.142849888-04:00" level=info msg="CDI directory does not exist, skipping" dir=/etc/cdi
+2026-10-27T09:51:46.143099-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.143090976-04:00" level=info msg="detected 127.0.0.53 nameserver, assuming systemd-resolved, so using resolv.conf: /run/systemd/resolve/resolv.conf"
+2026-10-27T09:51:46.176890-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.176851936-04:00" level=info msg="Creating a containerd client" address=/run/containerd/containerd.sock timeout=1m0s
+2026-10-27T09:51:46.180709-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.180690912-04:00" level=info msg="Loading containers: start."
+2026-10-27T09:51:46.182342-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.182331712-04:00" level=info msg="NRI is disabled"
+2026-10-27T09:51:46.182342-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.182337952-04:00" level=info msg="Starting daemon with containerd snapshotter integration enabled"
+2026-10-27T09:51:46.185916-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.185865968-04:00" level=info msg="Restoring containers: start."
+2026-10-27T09:51:46.196496-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.196372560-04:00" level=error msg="error unmounting container" container=44b5c1080f13fcc5d7edc1e9c4ec40967584e4f02c4bcf2ce5dd7a9a1aef7c9d error="layer not mounted"
+2026-10-27T09:51:46.197210-04:00 cisc-hoedus dockerd[2470]: time="2026-10-27T09:51:46.197190608-04:00" level=error msg="error unmounting container" container=28c0fd9480be4360e3a3d61db1387c35927f08381bbc2f4d4b9cbd50a5607c7b error="layer not mounted"
+
+[exit 0]

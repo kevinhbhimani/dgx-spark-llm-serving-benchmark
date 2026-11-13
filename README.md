@@ -990,12 +990,17 @@ all-reduce data, index, and figures into `campaign_manifest.json`. Run it on
 the head node: raw telemetry and server logs are not in git (see
 [Raw data and the repository](#raw-data-and-the-repository)).
 
-Campaign knobs for `run_job.sh`: `OUT_DIR`, `CONCURRENCIES`, `REPEATS`
+Campaign knobs for `run_job.sh`: `MODELS_YAML` (default
+`configs/models.yaml`), `OUT_DIR`, `CONCURRENCIES`, `REPEATS`
 (default 3), `CANARY_FIRST` (`auto`, `0`, `1`), `STOP_AFTER_CANARY`,
 `ALLOW_CANARY_FAILURES`, `PURGE_WEIGHTS`, and the subset selectors
 `CAMPAIGN_LABELS` and `CAMPAIGN_CONFIGS`. The old `FULL_REPEATS`,
 `REPEAT_CONCS`, and `REPEAT_TOTAL` knobs are rejected rather than silently
 ignored.
+Set `MODELS_YAML` in the environment or `.env` to use another model matrix,
+such as `MODELS_YAML=configs/models-small.yaml scripts/run_job.sh`. The matrix
+file is part of campaign identity. Use a fresh `OUT_DIR` when its contents
+change.
 
 Key environment variables for the multi-model wrapper: `MODELS_YAML` (default
 `configs/models.yaml`), `OUT_DIR`, `BASE_URL`, `POWER_BACKEND`,
