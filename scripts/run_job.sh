@@ -19,6 +19,8 @@
 #   measure  REPEATS replicates of every config it lists
 #   purge    the snapshot from both caches (PURGE_WEIGHTS=1, the default)
 # so peak per-node cache use is the largest single snapshot (~163 GB).
+# MODELS_ONDISK=1 validates pinned snapshots in HF_CACHE without Hub access
+# and retains weights during canary and measurement cleanup.
 #
 # Replicates. A replicate is one fresh server launch plus a complete ascending
 # concurrency sweep, so the spread across replicates includes launch-to-launch
@@ -60,7 +62,7 @@
 #   REPEATS (default 3), CANARY_FIRST
 #   (auto|0|1), STOP_AFTER_CANARY, ALLOW_CANARY_FAILURES, PURGE_WEIGHTS,
 #   CAMPAIGN_LABELS / CAMPAIGN_CONFIGS (space-separated subsets, e.g. for the
-#   TCP transport ablation), PLAN_ONLY.
+#   TCP transport ablation), PLAN_ONLY, MODELS_ONDISK (offline HF_CACHE snapshots).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
@@ -87,6 +89,14 @@ export CAMPAIGN_CONFIGS="${CAMPAIGN_CONFIGS-}"
 export PLAN_ONLY="${PLAN_ONLY-0}"
 
 source scripts/connectx_env.sh || exit 1 # mode, topology, shared environment
+export MODELS_ONDISK="${MODELS_ONDISK-0}"
+if [[ "$MODELS_ONDISK" != "0" && "$MODELS_ONDISK" != "1" ]]; then
+  echo "[job] MODELS_ONDISK must be exactly 0 or 1, got '$MODELS_ONDISK'" >&2
+  exit 2
+fi
+if [[ "$MODELS_ONDISK" == "1" ]]; then
+  export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+fi
 if [[ "$SINGLE_NODE_ONLY" == "1" && "${PURGE_WORKER:-0}" == "1" ]]; then
   echo "[job] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2
   exit 2
@@ -274,6 +284,9 @@ else
     --value "worker_cx_iface=$WORKER_CX_IFACE"
   )
 fi
+if [[ "$MODELS_ONDISK" == "1" ]]; then
+  IDENTITY_ARGS+=(--value "models_ondisk=1" --value "hf_cache=$HF_CACHE")
+fi
 CAMPAIGN_IDENTITY="$("$PYTHON" "$HERE/utils/campaign_output.py" identity \
   "${IDENTITY_ARGS[@]}")" || exit 1
 prepare_args=(--out-dir "$OUT_DIR" --identity-json "$CAMPAIGN_IDENTITY")
@@ -397,7 +410,12 @@ print(f"{float(value):g}")' "$MODELS_YAML")"
   done
   echo "[plan] minimum scheduled phase time: ~${minimum_h} h (${point_s:-?} s per window before automatic extensions)"
   echo "[plan] canary pass: CANARY_FIRST=$CANARY_FIRST STOP_AFTER_CANARY=$STOP_AFTER_CANARY ALLOW_CANARY_FAILURES=$ALLOW_CANARY_FAILURES"
-  echo "[plan] weights: PURGE_WEIGHTS=$PURGE_WEIGHTS (acquire, mirror if dual-node, measure, purge per model)"
+  if [[ "$MODELS_ONDISK" == "1" ]]; then
+    echo "[plan] weights: MODELS_ONDISK=1 HF_CACHE=$HF_CACHE (local validation, mirror if dual-node, retain snapshots)"
+    echo "[plan] compile-cache cleanup: canaries always; measurements when PURGE_WEIGHTS=$PURGE_WEIGHTS is 1"
+  else
+    echo "[plan] weights: MODELS_ONDISK=0 PURGE_WEIGHTS=$PURGE_WEIGHTS (acquire, mirror if dual-node, measure, purge per model)"
+  fi
   if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
     echo "[plan] SINGLE_NODE_ONLY=1; local-only readiness, standalone serving, and local cache cleanup"
     echo "[plan] finalization skips interconnect figures and NCCL transport audit"
@@ -672,14 +690,23 @@ canary_identity() {
 
 acquire_group() {
   local labels="$1" needs_dual="$2"
-  env MODEL_LABELS="$labels" scripts/predownload.sh all || return 1
+  if [[ "$MODELS_ONDISK" == "1" ]]; then
+    env MODEL_LABELS="$labels" CHECK_ONLY=1 scripts/predownload.sh all || return 1
+  else
+    env MODEL_LABELS="$labels" scripts/predownload.sh all || return 1
+  fi
   if [[ "$needs_dual" == "1" ]]; then
     env MODEL_LABELS="$labels" scripts/mirror_worker_cache.sh all || return 1
   fi
 }
 
 purge_group() {
-  env MODEL_LABELS="$1" PURGE_COMPILE_CACHE=1 scripts/purge_model_cache.sh
+  if [[ "$MODELS_ONDISK" == "1" ]]; then
+    env MODEL_LABELS="$1" PURGE_WEIGHTS=0 PURGE_CACHE_GARBAGE=0 \
+      PURGE_COMPILE_CACHE=1 scripts/purge_model_cache.sh
+  else
+    env MODEL_LABELS="$1" PURGE_WEIGHTS=1 PURGE_COMPILE_CACHE=1 scripts/purge_model_cache.sh
+  fi
 }
 
 # 0: every (label, config) of the group is complete; 3: work remains; else an
@@ -829,6 +856,12 @@ prep "isolated locked client environment" \
     --manifest "$CAMPAIGN_RESULTS_DIR/client_environment.json"
 prep "valid complete campaign definition" \
   "$PYTHON" scripts/validate_campaign.py plan "${SELECTION_ARGS[@]}"
+if [[ "$MODELS_ONDISK" == "1" ]]; then
+  prep "local serving image available" \
+    docker image inspect --format '{{.Id}}' "$VLLM_IMAGE"
+  prep "selected pinned snapshots complete in local cache" \
+    env MODEL_LABELS="$SELECTED_LABELS" CHECK_ONLY=1 scripts/predownload.sh all
+fi
 if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
   HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
   export HF_HUB_OFFLINE

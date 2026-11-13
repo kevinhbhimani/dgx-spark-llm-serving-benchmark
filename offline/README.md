@@ -146,6 +146,20 @@ The all-reduce output is written to
 
 ## Run model benchmarks from the local cache
 
+For a clean committed Git checkout with the image and client dependencies
+installed locally, `run_job.sh` supports the full offline campaign:
+
+```bash
+MODELS_ONDISK=1 HF_CACHE="/media/$USER/external-drive/huggingface" \
+  scripts/run_job.sh
+```
+
+Disk mode validates the pinned head snapshots locally, mirrors dual-node
+groups over the cluster network, and retains model snapshots throughout
+canaries and measurements. Set the cache path on each node before starting
+Ray. `MODELS_ONDISK=0` or an unset variable selects JIT acquisition. The
+campaign schedule and measurement methodology are shared by both modes.
+
 Model-serving runs require complete pinned snapshots in the Hugging Face cache.
 When the bundle includes `model-cache.tar`, the installer extracts it into
 `HF_CACHE`. Otherwise copy a complete `hub/` cache to each node. For a custom

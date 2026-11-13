@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import socket
 import subprocess
@@ -140,6 +142,115 @@ class RunJobContractTests(unittest.TestCase):
                 result = self._plan(**{name: "1"})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("replaced by REPEATS", result.stderr)
+
+    def test_disk_and_jit_modes_plan_the_same_measurements(self: RunJobContractTests) -> None:
+        for solo in ("0", "1"):
+            with self.subTest(solo=solo):
+                jit = self._plan(SINGLE_NODE_ONLY=solo, MODELS_ONDISK="0")
+                disk = self._plan(
+                    SINGLE_NODE_ONLY=solo, MODELS_ONDISK="1",
+                    HF_CACHE="/media/user/model cache", HF_HUB_OFFLINE="0",
+                )
+                self.assertEqual(jit.returncode, 0, jit.stderr)
+                self.assertEqual(disk.returncode, 0, disk.stderr)
+                for prefix in ("[plan] selection:", "[plan] model groups:",
+                               "[plan] concurrencies", "[plan] replicates:"):
+                    self.assertEqual(
+                        [line for line in jit.stdout.splitlines() if line.startswith(prefix)],
+                        [line for line in disk.stdout.splitlines() if line.startswith(prefix)],
+                    )
+                self.assertIn("MODELS_ONDISK=1 HF_CACHE=/media/user/model cache", disk.stdout)
+
+    def test_disk_mode_rejects_invalid_values(self: RunJobContractTests) -> None:
+        for value in ("", "2", "true"):
+            with self.subTest(value=value):
+                result = self._plan(MODELS_ONDISK=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("MODELS_ONDISK must be exactly 0 or 1", result.stderr)
+
+    def test_disk_mode_forces_offline_hub_and_transformers(self: RunJobContractTests) -> None:
+        source = (ROOT / "scripts/run_job.sh").read_text()
+        start = source.index("source scripts/connectx_env.sh || exit 1")
+        end = source.index('if [[ "$SINGLE_NODE_ONLY" == "1" && "${PURGE_WORKER')
+        setup = "set -euo pipefail\n" + source[start:end]
+        environment = {**os.environ, "SINGLE_NODE_ONLY": "1", "ENV_FILE": "/dev/null",
+                       "MODELS_ONDISK": "1", "HF_HUB_OFFLINE": "0",
+                       "TRANSFORMERS_OFFLINE": "0"}
+        environment.pop("DGX_SPARK_ENV_LOADED", None)
+        result = subprocess.run(
+            ["bash", "-c", setup + '\nprintf "%s %s" "$HF_HUB_OFFLINE" "$TRANSFORMERS_OFFLINE"'],
+            cwd=ROOT, env=environment, text=True, capture_output=True,
+            timeout=15, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "1 1")
+
+    def test_missing_disk_snapshot_stops_before_mirroring(self: RunJobContractTests) -> None:
+        source = (ROOT / "scripts/run_job.sh").read_text()
+        start = source.index("\nacquire_group() {\n") + 1
+        end = source.index("\n}\n", start) + 3
+        script = '''set -euo pipefail
+MODELS_ONDISK=1
+env() { echo "$*"; return 1; }
+'''
+        result = subprocess.run(
+            ["bash", "-c", script + source[start:end] + "\nacquire_group model-a 1"],
+            text=True, capture_output=True, timeout=15, check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("CHECK_ONLY=1 scripts/predownload.sh", result.stdout)
+        self.assertNotIn("mirror_worker_cache", result.stdout)
+
+    def test_disk_and_jit_modes_execute_the_same_canaries_and_replicates(self: RunJobContractTests) -> None:
+        source = (ROOT / "scripts/run_job.sh").read_text()
+        functions: list[str] = []
+        for name in ("acquire_group", "purge_group", "canary_pass", "measure_group"):
+            start = source.index(f"\n{name}() {{\n") + 1
+            end = source.index("\n}\n", start) + 3
+            functions.append(source[start:end])
+        traces: list[list[str]] = []
+        for mode in ("0", "1"):
+            with tempfile.TemporaryDirectory() as temporary:
+                script = r'''
+set -euo pipefail
+log() { :; }
+ray_ok() { return 0; }
+run_child() { "$@"; }
+leg() { shift; "$@"; }
+group_status() { return 3; }
+canary_identity() { echo identity; }
+env() { printf '%s\n' "$*"; }
+SINGLE_NODE_ONLY=0
+PURGE_WEIGHTS=1
+REPEATS=2
+CONCURRENCIES='1 4'
+ALLOW_CANARY_FAILURES=0
+FAILED=()
+MODEL_GROUPS=('model-a|1|1:single:model-a;1:tp2:model-a;2:tp2:model-a;2:single:model-a')
+'''
+                result = subprocess.run(
+                    ["bash", "-c", script + "\n".join(functions)
+                     + '\ncanary_pass\nmeasure_group model-a 1 "${MODEL_GROUPS[0]##*|}"\n'],
+                    env={**os.environ, "MODELS_ONDISK": mode,
+                         "CAMPAIGN_RESULTS_DIR": temporary},
+                    text=True, capture_output=True, timeout=15, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                lines = result.stdout.splitlines()
+                traces.append([line for line in lines if "scripts/run_models.sh" in line])
+                acquisitions = [line for line in lines if "scripts/predownload.sh" in line]
+                self.assertEqual(len(acquisitions), 2)
+                self.assertTrue(all(("CHECK_ONLY=1" in line) == (mode == "1")
+                                    for line in acquisitions))
+                self.assertEqual(sum("scripts/mirror_worker_cache.sh" in line for line in lines), 2)
+                cleanups = [line for line in lines if "scripts/purge_model_cache.sh" in line]
+                self.assertEqual(len(cleanups), 2)
+                self.assertTrue(all("PURGE_COMPILE_CACHE=1" in line for line in cleanups))
+                self.assertTrue(all(f"PURGE_WEIGHTS={1 - int(mode)}" in line for line in cleanups))
+                if mode == "1":
+                    self.assertTrue(all("PURGE_CACHE_GARBAGE=0" in line for line in cleanups))
+        self.assertEqual(traces[0], traces[1])
+        self.assertEqual(len(traces[0]), 6)
 
     def test_campaign_subset_knobs_are_validated(self):
         result = self._plan(CAMPAIGN_CONFIGS="tp2 tp4")

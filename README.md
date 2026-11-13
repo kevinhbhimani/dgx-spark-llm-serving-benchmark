@@ -917,23 +917,51 @@ microbenchmark while the GPUs are idle. It then works through
    order between replicates (see below);
 4. **purge** the snapshot, and vLLM's compile cache, from both nodes.
 
-With the default `PURGE_WEIGHTS=1`, peak per-node cache use is the largest
-selected snapshot, about 163 GB for Qwen3-Next 80B BF16. The canary purges each
-group. `PURGE_WEIGHTS=0` retains weights after measurement. In dual-node
-campaigns, single-node launches run inside the Ray head container
+With `MODELS_ONDISK` unset or `0` and the default `PURGE_WEIGHTS=1`, peak
+per-node cache use is the largest selected snapshot, about 163 GB for
+Qwen3-Next 80B BF16. The canary purges each
+group in JIT mode. `PURGE_WEIGHTS=0` retains weights after measurement. In
+dual-node campaigns, single-node launches run inside the Ray head container
 (`SINGLE_CONTAINER=ray`).
 
 Before the first measurement, a **canary pass** acquires each model group on
 the head using the same pinned-snapshot step for single- and dual-node runs,
 mirrors it to the worker when needed, launches it once under every config with
 the strict stream contract and the client tokenizer preflight, and purges it
-again. It collects every failure and stops the job before any measurement if
-one failed. The default pass launches each of the 47 model/configuration pairs
+again in JIT mode. It collects every failure and stops the job before any
+measurement if one failed. The default pass launches each of the 47 model/configuration pairs
 once. It is skipped automatically after success for the same commit, matrix,
 image, and network policy. `STOP_AFTER_CANARY=1 scripts/run_job.sh` runs the
 canary pass and exits before measurements. Run it after changing the image or
 `models.yaml`.
 `ALLOW_CANARY_FAILURES=1` measures the models that passed.
+
+Set `MODELS_ONDISK=1` to run the same campaign from complete pinned Hugging
+Face snapshots in `HF_CACHE`. The cache root must contain `hub/`, including
+the model and tokenizer revisions listed in `configs/models.yaml`.
+
+```bash
+MODELS_ONDISK=1 HF_CACHE="/media/$USER/external-drive/huggingface" \
+  scripts/run_job.sh
+```
+
+Disk mode forces `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. It checks
+that the serving image is installed locally and validates all selected head
+snapshots before the canary pass. Each model group is checked again before
+use. Missing or incomplete snapshots fail locally without a Hub download.
+Dual-node groups use the existing mirror to copy snapshots to the worker
+over the cluster network. Set `HF_CACHE` in each node's `.env` before starting
+Ray; the worker needs space for its mirrored snapshots.
+
+Disk mode retains model snapshots and disables Hugging Face garbage pruning
+during canary and measurement cleanup, including failure cleanup.
+Compile-cache clearing follows the existing policy: after each canary group,
+and after measurement groups when `PURGE_WEIGHTS=1`. Both modes use the same
+selection, canaries, rotated replicate schedule, workloads, measurement
+checks, resume checks, and finalization. Disk mode records the mode and head
+cache path in campaign identity; use a separate `OUT_DIR` when switching modes
+or paths. The local serving image and locked client dependencies must be
+installed before an offline run. See the [offline bundle guide](offline/README.md).
 
 A paper point is published only with zero failed requests, at least 20
 successful requests, complete required power coverage, and complete unambiguous
@@ -991,7 +1019,7 @@ the head node: raw telemetry and server logs are not in git (see
 [Raw data and the repository](#raw-data-and-the-repository)).
 
 Campaign knobs for `run_job.sh`: `MODELS_YAML` (default
-`configs/models.yaml`), `OUT_DIR`, `CONCURRENCIES`, `REPEATS`
+`configs/models.yaml`), `MODELS_ONDISK` (`0` or `1`), `OUT_DIR`, `CONCURRENCIES`, `REPEATS`
 (default 3), `CANARY_FIRST` (`auto`, `0`, `1`), `STOP_AFTER_CANARY`,
 `ALLOW_CANARY_FAILURES`, `PURGE_WEIGHTS`, and the subset selectors
 `CAMPAIGN_LABELS` and `CAMPAIGN_CONFIGS`. The old `FULL_REPEATS`,
