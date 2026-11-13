@@ -233,8 +233,11 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("repos", nargs="*")
     args = parser.parse_args(argv)
-    if not args.repos and not args.prune_cache_garbage:
-        parser.error("provide at least one repo when --no-prune-cache-garbage is set")
+    if not args.repos and not args.prune_cache_garbage and not args.compile_cache:
+        parser.error(
+            "provide at least one repo or --compile-cache "
+            "when --no-prune-cache-garbage is set"
+        )
     try:
         for repo in args.repos:
             repo_dir(repo)

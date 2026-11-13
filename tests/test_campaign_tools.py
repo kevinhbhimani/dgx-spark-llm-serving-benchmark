@@ -228,6 +228,25 @@ class PurgeModelCacheTests(unittest.TestCase):
                     (["org/model"], False, False, expected_prune),
                 )
 
+    def test_compile_only_cli_preserves_model_files(self: PurgeModelCacheTests) -> None:
+        compile_directory = Path(self.tmp.name) / "compile"
+        compile_directory.mkdir()
+        (compile_directory / "kernel").write_bytes(b"compiled fixture")
+        model_files: dict[Path, bytes] = {
+            path: path.read_bytes() for path in self.hub.rglob("*") if path.is_file()
+        }
+        with (
+            mock.patch.object(purge_model_cache_container, "COMPILE_CACHE", str(compile_directory)),
+            mock.patch.object(purge_model_cache_container, "prune_cache_garbage") as prune,
+        ):
+            self.assertEqual(purge_model_cache_container.main(
+                ["--compile-cache", "--no-prune-cache-garbage"]
+            ), 0)
+        prune.assert_not_called()
+        self.assertEqual(list(compile_directory.iterdir()), [])
+        self.assertEqual({path: path.read_bytes() for path in self.hub.rglob("*")
+                          if path.is_file()}, model_files)
+
 
 class SnapshotSizeTests(unittest.TestCase):
     REVISION = "a" * 40

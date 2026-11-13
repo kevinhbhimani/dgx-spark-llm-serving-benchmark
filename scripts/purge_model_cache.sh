@@ -19,6 +19,7 @@
 # Env: MODEL_LABELS (optional; selects pinned model snapshots), MODELS_YAML, PYTHON,
 #      PURGE_WORKER (1 also purges the worker; default 1 when Ray is up),
 #      PURGE_COMPILE_CACHE (1 also clears vLLM's torch.compile cache, default 0),
+#      PURGE_WEIGHTS (0 retains model snapshots and disables garbage pruning, default 1),
 #      PURGE_CACHE_GARBAGE (prunes detached revisions, incomplete files, and
 #                           unreferenced shared blobs; default 1, set to 0 to
 #                           pass --no-prune-cache-garbage),
@@ -32,12 +33,16 @@ PYTHON="${PYTHON:-python3}"
 MODEL_LABELS="${MODEL_LABELS:-}"
 DRY_RUN="${DRY_RUN:-0}"
 PURGE_COMPILE_CACHE="${PURGE_COMPILE_CACHE:-0}"
+PURGE_WEIGHTS="${PURGE_WEIGHTS:-1}"
 PURGE_CACHE_GARBAGE="${PURGE_CACHE_GARBAGE:-1}"
 
-for flag_name in DRY_RUN PURGE_COMPILE_CACHE PURGE_CACHE_GARBAGE; do
+for flag_name in DRY_RUN PURGE_COMPILE_CACHE PURGE_WEIGHTS PURGE_CACHE_GARBAGE; do
   [[ "${!flag_name}" == "0" || "${!flag_name}" == "1" ]] || {
     echo "[purge] $flag_name must be 0 or 1" >&2; exit 2; }
 done
+if [[ "$PURGE_WEIGHTS" == "0" ]]; then
+  PURGE_CACHE_GARBAGE=0
+fi
 if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
   if [[ "${PURGE_WORKER:-0}" == "1" ]]; then
     echo "[purge] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2
@@ -48,7 +53,7 @@ else
   validate_execution_environment "$HEAD_IP" "model cache cleanup role" 0 || exit 1
 fi
 acquire_resource_lock || exit 1
-if [[ -z "${MODEL_LABELS// /}" && "$PURGE_CACHE_GARBAGE" != "1" ]]; then
+if [[ -z "${MODEL_LABELS// /}" && "$PURGE_CACHE_GARBAGE" != "1" && "$PURGE_COMPILE_CACHE" != "1" ]]; then
   echo "[purge] set MODEL_LABELS when PURGE_CACHE_GARBAGE=0" >&2
   exit 2
 fi
@@ -81,7 +86,8 @@ PY
 )"; then
   exit 2
 fi
-if [[ -z "$repo_text" && "$PURGE_CACHE_GARBAGE" != "1" ]]; then
+if [[ "$PURGE_WEIGHTS" == "0" ]]; then repo_text=""; fi
+if [[ -z "$repo_text" && "$PURGE_CACHE_GARBAGE" != "1" && "$PURGE_COMPILE_CACHE" != "1" ]]; then
   echo "[purge] nothing to purge: every repo of '$MODEL_LABELS' is still used elsewhere"
   exit 0
 fi

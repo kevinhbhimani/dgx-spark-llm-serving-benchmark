@@ -832,6 +832,25 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.assertIn("--dry-run", arguments)
         self.assertNotIn("--no-prune-cache-garbage", arguments)
 
+    def test_compile_cleanup_retains_weights_and_disables_pruning(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        self.command("docker", '''case "$*" in
+          *'ray status'*) echo Active;;
+          *) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
+        result = self.run_script(
+            "purge_model_cache.sh",
+            MODEL_LABELS="llama3.1-8b",
+            MODELS_YAML=str(ROOT / "configs" / "models.yaml"),
+            PURGE_WEIGHTS="0", PURGE_COMPILE_CACHE="1",
+            PURGE_CACHE_GARBAGE="1", PURGE_WORKER="0",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = self.calls.read_text().splitlines()
+        self.assertIn("--compile-cache", arguments)
+        self.assertIn("--no-prune-cache-garbage", arguments)
+        self.assertNotIn("meta-llama/Llama-3.1-8B-Instruct", arguments)
+
     def test_socket_tuning_is_forwarded_to_ray_container(self):
         self.command("docker", '''case "$*" in
           'inspect '*) echo true;;
