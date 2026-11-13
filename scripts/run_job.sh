@@ -12,7 +12,7 @@
 # A path-style OUT_DIR is the complete campaign path for resuming a campaign.
 #
 # Model lifecycle. The matrix never has to fit on disk at once. Each model in
-# configs/models.yaml (file order; entries sharing a repo form one group) goes
+# the selected matrix (file order; entries sharing a repo form one group) goes
 # through:
 #   fetch    pinned snapshot into the head cache (skipped when already complete)
 #   mirror   that snapshot to the worker cache (only if it runs tp2/pp2)
@@ -55,7 +55,8 @@
 #     (harness_source_sha256). The launch gate also requires these files to be
 #     committed, so every row names a recoverable Git revision.
 #
-# Knobs (env): OUT_DIR (bare prefix or complete path), CAMPAIGN_NAME
+# Knobs (env): MODELS_YAML (default configs/models.yaml), OUT_DIR (bare prefix
+#   or complete path), CAMPAIGN_NAME
 #   (prefix when OUT_DIR is unset), GPU_UTIL (default 0.80, overrides the shared
 #   gpu_util_default for planning, validation, and serving), CONCURRENCIES,
 #   REPEATS (default 3), CANARY_FIRST
@@ -101,12 +102,10 @@ if [[ "$SINGLE_NODE_ONLY" == "1" && "${PURGE_WORKER:-0}" == "1" ]]; then
   exit 2
 fi
 
-# The unattended paper campaign owns these inputs. Clear same-named values
-# inherited from .env or the caller so planning, measurement, and final
-# verification cannot silently target different YAML, a label subset, a
-# canary-only sweep, or a power-policy override. Subsets go through the
-# explicit CAMPAIGN_* knobs claimed above.
-export MODELS_YAML="configs/models.yaml"
+# The unattended paper campaign fixes the experiment and serving policy.
+# MODELS_YAML selects the model matrix for this run and defaults to the shipped
+# matrix.
+export MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
 export CONFIG_YAML="configs/experiment.yaml"
 export POWER_BACKEND=""
 export CANARY_ONLY=0

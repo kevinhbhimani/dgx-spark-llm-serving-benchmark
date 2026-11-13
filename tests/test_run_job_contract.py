@@ -73,9 +73,11 @@ class RunJobContractTests(unittest.TestCase):
             self.assertEqual(marker.read_bytes(), marker_before)
             self.assertFalse((output / "logs").exists())
 
-    def test_plan_clears_inherited_campaign_overrides(self):
+    def test_plan_honors_model_yaml_and_clears_other_inherited_overrides(self):
         with tempfile.TemporaryDirectory() as temporary:
             topology = write_test_topology(Path(temporary))
+            model_yaml = Path(temporary) / "alternate-models.yaml"
+            model_yaml.write_bytes((ROOT / "configs/models.yaml").read_bytes())
             environment = os.environ.copy()
             environment.pop("SINGLE_NODE_ONLY", None)
             environment.pop("DGX_SPARK_ENV_LOADED", None)
@@ -87,7 +89,7 @@ class RunJobContractTests(unittest.TestCase):
                 "CLUSTER_CONFIG": str(topology),
                 "CONCURRENCIES": "1 2",
                 "EXPECTED_CONCURRENCIES": "2 1",
-                "MODELS_YAML": "/poison/models.yaml",
+                "MODELS_YAML": str(model_yaml),
                 "CONFIG_YAML": "/poison/experiment.yaml",
                 "POWER_BACKEND": "none",
                 "CANARY_ONLY": "1",
@@ -104,7 +106,7 @@ class RunJobContractTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("MODELS_YAML=configs/models.yaml", result.stdout)
+        self.assertIn(f"MODELS_YAML={model_yaml}", result.stdout)
         self.assertIn("CONFIG_YAML=configs/experiment.yaml", result.stdout)
         self.assertIn("POWER_BACKEND=<experiment.yaml>", result.stdout)
         self.assertIn("MODEL_LABELS=<all>", result.stdout)
