@@ -48,8 +48,10 @@ EOF
   shift
 done
 
-# shellcheck source=../scripts/connectx_env.sh
-source "$REPO_ROOT/scripts/connectx_env.sh"
+# shellcheck source=../scripts/load_env.sh
+source "$REPO_ROOT/scripts/load_env.sh"
+# shellcheck source=../scripts/runtime_defaults.sh
+source "$REPO_ROOT/scripts/runtime_defaults.sh"
 
 TARGET_PLATFORM="${TARGET_PLATFORM:-linux/arm64}"
 TARGET_PYTHON="${TARGET_PYTHON:-3.12}"
