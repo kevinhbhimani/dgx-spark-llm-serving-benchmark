@@ -1,0 +1,64 @@
+{
+  "cluster_runtime": "7ddeaec296f11b3e42f235d80073cc4ac366aabb7e5a94e331afab749613ab17",
+  "config": "single",
+  "dtype": "auto",
+  "execution_scope": "single-node",
+  "execution_sha256": "03435afc0616c2454b9cafba16049807115da6f743f03d4015fb82de8a374355",
+  "flashinfer_autotune": "0",
+  "generation_config": "vllm",
+  "gpu_util": "0.8",
+  "hf_hub_offline": "0",
+  "hostname": "hoedus",
+  "image": "nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2",
+  "max_model_len": "8704",
+  "max_num_seqs": "",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "power_backend": "nvidia_smi",
+  "prefix_caching": "0",
+  "quant": "",
+  "revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+  "runtime_facts": {
+    "execution_sha256": "03435afc0616c2454b9cafba16049807115da6f743f03d4015fb82de8a374355",
+    "gpus": [
+      {
+        "application_graphics_clock_mhz": "2418",
+        "compute_capability": "12.1",
+        "default_application_graphics_clock_mhz": "2418",
+        "driver": "580.178.04",
+        "gpu_name": "NVIDIA GB10",
+        "gpu_uuid": "GPU-15940a3b-66b3-b11b-0211-5123fdaa3fb8",
+        "max_graphics_clock_mhz": "3003",
+        "power_limit_w": "[N/A]"
+      }
+    ],
+    "hostname": "hoedus",
+    "image": "nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2",
+    "loopback_address": "127.0.0.1",
+    "query_fields": [
+      "name",
+      "uuid",
+      "driver_version",
+      "power.limit",
+      "compute_cap",
+      "clocks.max.graphics",
+      "clocks.applications.graphics",
+      "clocks.default_applications.graphics"
+    ],
+    "runtime_env": {
+      "HF_HUB_OFFLINE": "0",
+      "TORCHINDUCTOR_AUTOGRAD_CACHE": "0",
+      "TRANSFORMERS_OFFLINE": "0"
+    },
+    "serving_container": "standalone",
+    "source": "host-nvidia-smi"
+  },
+  "runtime_facts_sha256": "7ddeaec296f11b3e42f235d80073cc4ac366aabb7e5a94e331afab749613ab17",
+  "runtime_scope": "single-host",
+  "schema": "serving-v3",
+  "serving_container": "standalone",
+  "serving_fingerprint": "e147469b601b4167c91878881a1d8971deb9ab56e70dc2fe3c6b780b6819ec2d",
+  "tokenizer": "meta-llama/Llama-3.1-8B-Instruct",
+  "tokenizer_revision": "0e9e39f249a16976918f6564b8830bc894c89659",
+  "torchinductor_autograd_cache": "0",
+  "trust_remote_code": ""
+}
