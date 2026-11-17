@@ -12,6 +12,8 @@ The file has exactly two nodes. Each node has a stable ID, a short hostname,
 an SSH target, and one interface entry for every shared rail. `hostname -s`
 must match the configured hostname on each system. Interface names may differ
 between systems. The two addresses on each rail must use the same IPv4 subnet.
+Different rails may share a subnet or use overlapping subnets. Every configured
+IPv4 address must be unique across both nodes and all rails.
 
 Topology entrypoints default `CLUSTER_CONFIG` to
 `<repo-root>/configs/cluster.yaml`. Set it on both systems only when the

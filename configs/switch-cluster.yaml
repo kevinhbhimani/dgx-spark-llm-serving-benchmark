@@ -1,0 +1,40 @@
+# Peer mappings: perftest-suite-dgx-spark-cluster/configs/gx10-00.json and gx10-01.json.
+# Ethernet interface names: perftest-results/test-switch-1/run-001/{host/,}environment/*/link.json.
+# IPv4 prefixes: /26, supplied by the operator.
+schema_version: 1
+head_node: gx10-00
+rendezvous_rail: rail_0
+ray_port: 6379
+nodes:
+  - id: gx10-00
+    hostname: gx10-00
+    ssh_target: gx10-00
+    interfaces:
+      - rail: rail_0
+        name: enP2p1s0f0np0
+        ipv4: 10.65.0.10/26
+      - rail: rail_1
+        name: enP2p1s0f1np1
+        ipv4: 10.65.0.20/26
+      - rail: rail_2
+        name: enp1s0f0np0
+        ipv4: 10.65.0.30/26
+      - rail: rail_3
+        name: enp1s0f1np1
+        ipv4: 10.65.0.40/26
+  - id: gx10-01
+    hostname: gx10-01
+    ssh_target: gx10-01
+    interfaces:
+      - rail: rail_0
+        name: enp1s0f0np0
+        ipv4: 10.65.0.11/26
+      - rail: rail_1
+        name: enp1s0f1np1
+        ipv4: 10.65.0.21/26
+      - rail: rail_2
+        name: enP2p1s0f0np0
+        ipv4: 10.65.0.31/26
+      - rail: rail_3
+        name: enP2p1s0f1np1
+        ipv4: 10.65.0.41/26

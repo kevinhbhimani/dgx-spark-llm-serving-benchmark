@@ -103,6 +103,30 @@ class ClusterTopologyTests(unittest.TestCase):
                 )
                 self.assertEqual(len(topology.nodes[0].interfaces), rail_count)
 
+    def test_accepts_shared_and_overlapping_rail_networks(self) -> None:
+        node_addresses = (
+            ("10.65.0.10", "10.65.0.20", "10.65.0.30", "10.65.0.40"),
+            ("10.65.0.11", "10.65.0.21", "10.65.0.31", "10.65.0.41"),
+        )
+        for rail_prefixes in ((26, 26, 26, 26), (24, 26, 26, 26)):
+            with self.subTest(rail_prefixes=rail_prefixes):
+                document = valid_document(rail_count=len(rail_prefixes))
+                node_values = document["nodes"]
+                assert isinstance(node_values, list)
+                for node_value, addresses in zip(node_values, node_addresses, strict=True):
+                    assert isinstance(node_value, dict)
+                    interface_values = node_value["interfaces"]
+                    assert isinstance(interface_values, list)
+                    for interface_value, address, prefix in zip(
+                        interface_values, addresses, rail_prefixes, strict=True
+                    ):
+                        assert isinstance(interface_value, dict)
+                        interface_value["ipv4"] = f"{address}/{prefix}"
+
+                topology = cluster_topology.parse_topology(encode_document(document))
+
+                self.assertEqual(len(topology.nodes[0].interfaces), len(rail_prefixes))
+
     def test_rejects_duplicate_keys_unknown_fields_bad_types_and_node_counts(self) -> None:
         document = valid_document()
         invalid_documents = [

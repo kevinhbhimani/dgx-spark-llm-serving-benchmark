@@ -270,7 +270,6 @@ def parse_topology(raw_bytes: bytes) -> ClusterTopology:
         raise TopologyError("both nodes must declare the same rail IDs")
     if rendezvous_rail not in rail_sets[0]:
         raise TopologyError("rendezvous_rail must be present on both nodes")
-    networks: list[ipaddress.IPv4Network] = []
     addresses: set[ipaddress.IPv4Address] = set()
     first_node, second_node = nodes
     for rail in sorted(rail_sets[0]):
@@ -282,14 +281,10 @@ def parse_topology(raw_bytes: bytes) -> ClusterTopology:
             raise TopologyError(f"rail {rail} endpoints must use the same prefix")
         if first_interface.address == second_interface.address:
             raise TopologyError(f"rail {rail} endpoints must have different IPv4 addresses")
-        networks.append(first_interface.network)
         for interface in (first_interface, second_interface):
             if interface.address in addresses:
                 raise TopologyError(f"duplicate IPv4 address: {interface.address}")
             addresses.add(interface.address)
-    for network_index, network in enumerate(networks):
-        if any(network.overlaps(other) for other in networks[:network_index]):
-            raise TopologyError(f"rail networks must not overlap: {network}")
     return ClusterTopology(
         schema_version=1,
         head_node=head_node,
