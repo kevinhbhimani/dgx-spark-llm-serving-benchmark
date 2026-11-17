@@ -245,10 +245,6 @@ PRECISION_STYLE = {
     # white; checked with the dataviz palette validator.
     "mxfp4": dict(color="#882255", label="MXFP4"),
 }
-# Within precision/class figures configs are told apart by linestyle + marker
-# (colors there belong to precision or class), reusing each config's
-# established marker shape from CONFIG_STYLE.
-CONFIG_LINESTYLE = {"single": "-", "tp2": "--", "pp2": ":"}
 
 # Model classes for the frontier scatter. Hues avoid the config trio's
 # blue/vermillion/green so no color means one thing in the load-sweep figures
@@ -270,13 +266,6 @@ def class_of(label: str) -> str:
 
 def _peak(df: pd.DataFrame, model: str, cfg: str, tcol: str):
     return _peak_row(_series_rows(df, model, cfg), tcol)
-
-
-def _bar_labels(ax, xs, vals, fmt="{:.2f}x") -> None:
-    for x, v in zip(xs, vals):
-        if pd.notna(v):
-            ax.annotate(fmt.format(v), (x, v), textcoords="offset points",
-                        xytext=(0, 2), ha="center", fontsize=6, color="0.25")
 
 
 def _name_point(ax, x, y, label):

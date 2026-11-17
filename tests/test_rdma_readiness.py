@@ -117,8 +117,7 @@ class ConnectXPreflightTests(unittest.TestCase):
             "HEAD_NODE_ID", "WORKER_NODE_ID", "LOCAL_NODE_ID", "HEAD_HOST",
             "WORKER_HOST", "HEAD_IP", "WORKER_IP", "LOCAL_IP", "RAY_PORT",
             "CX_IFACE", "HEAD_CX_IFACE", "WORKER_CX_IFACE", "VLLM_HOST_IP",
-            "NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "DIYA_HOST", "DIYA_IP",
-            "HOEDUS_HOST", "HOEDUS_IP",
+            "NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME",
         ):
             self.env.pop(variable, None)
         self.env.update(

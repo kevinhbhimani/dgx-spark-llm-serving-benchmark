@@ -218,16 +218,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-.claude/
-
-results-*/server_*.log
-results-preflight
-
 # Raw campaign telemetry never goes into git: it is ~14 MB per measurement
 # window, ~16 GB for a full replicated campaign. Pack it with
 # scripts/pack_raw.sh and store the archive outside the repository. Commit
 # index.csv, *.summary.json, serving policies, interconnect CSVs, figures, and
-# the sealed manifest. Raw files already tracked under baselines/ stay tracked.
+# the sealed manifest.
 *.raw.jsonl
 *.power.jsonl
 *.vllm_metrics.jsonl
@@ -236,14 +231,6 @@ server_*.log
 .canary_passed
 .index.lock
 
-# Superseded campaigns, kept for reference only. Deliberately outside the
-# results-* namespace so no analysis default or glob can reach them; each
-# carries a DO-NOT-MERGE.md explaining why its rows cannot be resumed.
-/archive/
-
 # Scratch figures from manual plot_results.py/plot_trends.py runs (default --out).
 # Campaign figures live under a campaign results directory and are not ignored.
 /figs/
-points-120b.txt
-points-safe.txt
-temp_run.sh

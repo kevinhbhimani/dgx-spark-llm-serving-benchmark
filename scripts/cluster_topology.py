@@ -7,7 +7,6 @@ import hashlib
 import ipaddress
 import json
 import re
-import socket
 import stat
 import subprocess
 import sys

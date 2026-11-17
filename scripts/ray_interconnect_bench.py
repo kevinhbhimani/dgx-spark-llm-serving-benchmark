@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Two-node interconnect microbench: all-reduce AND point-to-point over Ray.
 
-This is the supplement to scripts/ray_allreduce_bench.py that the PMBS paper's
-"why TP loses" section needs but the sealed campaign did not collect:
+This supplements scripts/ray_allreduce_bench.py with both primitives that the
+dual-node serving configs use:
 
   * all-reduce (the TP=2 collective: two per layer per decode step), and
   * send/recv ping-pong (the PP=2 primitive: one activation hand-off per stage
-    boundary) -- so the paper can *measure* the PP interconnect cost instead of
-    asserting it, and contrast it with the TP all-reduce cost on the same link.
+    boundary), so the PP interconnect cost is measured on the same link as the
+    TP all-reduce cost.
 
 It also records the transport NCCL actually used. The launch environment
 (NCCL_IB_DISABLE plus the socket-thread knobs) only says which transport was

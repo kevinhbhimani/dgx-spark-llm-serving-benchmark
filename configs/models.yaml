@@ -59,10 +59,6 @@ models:
     max_model_len: 8704
     meta: {pretty: "Qwen3.6-35B-A3B FP8", arch: moe, attention: linear-hybrid, quant: fp8, params_b: 36.0, active_b: 3.0, ladder_base: qwen3.6-35b-a3b, nvidia: false}
 
-
-
-
-
   # ---- 1. Llama 3.1 8B precision ladder: dense, full attention ----------------
   # Same labels and revisions as the PMBS26 TCP baseline. FP8 and NVFP4 are
   # NVIDIA ModelOpt checkpoints of the same base (FP8 KV cache); the base repo

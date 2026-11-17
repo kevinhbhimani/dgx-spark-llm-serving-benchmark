@@ -77,16 +77,6 @@ class RequestRecord:
         }
 
 
-def _extract_text(chunk):
-    choices = chunk.get("choices") or []
-    if not choices:
-        return ""
-    c0 = choices[0]
-    if "text" in c0:                       # completions endpoint
-        return c0.get("text", "")
-    return (c0.get("delta", {}) or {}).get("content", "") or ""   # chat endpoint
-
-
 def _first_choice(chunk):
     choices = chunk.get("choices") or []
     return choices[0] if choices else {}

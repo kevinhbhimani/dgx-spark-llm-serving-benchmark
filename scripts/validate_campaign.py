@@ -40,7 +40,6 @@ from bench.config import ExperimentConfig
 from scripts.campaign.manifest import build_manifest, sha256_file, write_json_atomic
 from scripts.campaign.plan import (
     COMMIT_RE,
-    Campaign,
     CampaignValidationError,
     ExpectedPoint,
     ModelSpec,
@@ -54,7 +53,6 @@ from scripts.campaign.plan import (
     load_campaign,
     parse_concurrencies,
     plan_campaign,
-    validate_experiment_yaml,
     validate_models_yaml,
 )
 from scripts.contracts.dependency_lock import (

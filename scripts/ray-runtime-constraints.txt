@@ -1,5 +1,7 @@
-# Python package constraints from the latest two-node runtime recorded in
-# results-rdma-v4-paper/serving_policy_qwen3-next-80b-bf16_pp2_ef05e178613d8850301cbe179fda768059bcb7e08a8c5af2c28fd6cf8397d0dc.json. Both nodes share pip_freeze_sha256 541cea0e6da64a0eb6bb4e757f48758443c60dfe0ffba4379586781ca52272be.
+# Python package constraints from the two-node runtime recorded in the
+# dual-node serving policies of
+# results/RDMA-Betelgeuse-Suite-benchmark-2026-10-30-001/results/. Both nodes
+# share pip_freeze_sha256 541cea0e6da64a0eb6bb4e757f48758443c60dfe0ffba4379586781ca52272be.
 # The pinned container image supplies the distributions recorded as local
 # wheel URLs. Keep this file aligned with VLLM_IMAGE and RAY_VERSION.
 Jinja2==3.1.6

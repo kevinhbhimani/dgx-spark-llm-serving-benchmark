@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate PMBS26 figures and tables from a campaign index.
+"""Generate campaign figures and tables from a campaign index.
 
 Reads the benchmark sweep index, groups rows by configuration label (single,
 tp2, pp2), and writes vector PDF figures plus PNG previews. Figures are sized
@@ -60,50 +60,6 @@ CONFIG_STYLE = {
     "tp2":    dict(label="Dual Spark, TP=2",  color="#D55E00", marker="s"),
     "pp2":    dict(label="Dual Spark, PP=2",  color="#009E73", marker="^"),
 }
-POSTER_MODEL_LABEL: str = "qwen3-next-80b-nvfp4"
-POSTER_CONFIG_LABELS: dict[str, str] = {
-    "single": "One Spark",
-    "tp2": "Tensor Parallelism (TP=2)",
-    "pp2": "Pipeline Parallelism (PP=2)",
-}
-POSTER_CONCURRENCIES: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64)
-POSTER_FIGURE_WIDTH_INCHES: float = 4.8
-POSTER_DEFAULT_ASPECT_RATIO: float = 3.0
-POSTER_TTFT_THRESHOLD_SECONDS: float = 3.0
-POSTER_ITL_THRESHOLD_MILLISECONDS: float = 100.0
-POSTER_SECONDS_TO_MILLISECONDS: float = 1e3
-POSTER_LINE_WIDTH: float = 1.8
-POSTER_REFERENCE_LINE_WIDTH: float = 1.2
-POSTER_MARKER_SIZE: float = 5.0
-POSTER_X_EDGE_MARGIN: float = 0.25
-POSTER_Y_HEADROOM: float = 1.1
-POSTER_AXES_LEFT: float = 0.16
-POSTER_AXES_RIGHT: float = 0.98
-POSTER_AXES_TOP: float = 0.83
-POSTER_AXES_BOTTOM: float = 0.2
-POSTER_REFERENCE_LABEL_RIGHT_X: float = 0.99
-POSTER_REFERENCE_LABEL_LEFT_X: float = 0.01
-POSTER_REFERENCE_LABEL_HORIZONTAL_OFFSET: float = 3.0
-POSTER_REFERENCE_LABEL_VERTICAL_OFFSET: float = 4.0
-POSTER_REFERENCE_LABEL_FONT_SIZE: float = 7.0
-POSTER_EXPECTED_POWER_NODES: dict[str, int] = {
-    "single": 1,
-    "tp2": 2,
-    "pp2": 2,
-}
-POSTER_METRICS: tuple[
-    tuple[str, str, str, float, float | None, str | None], ...
-] = (
-    ("ttft_by_concurrency", "ttft_p50", "TTFT (s)", 1.0,
-     POSTER_TTFT_THRESHOLD_SECONDS, "3 s target"),
-    ("itl_by_concurrency", "itl_p50", "ITL (ms)",
-     POSTER_SECONDS_TO_MILLISECONDS, POSTER_ITL_THRESHOLD_MILLISECONDS,
-     "100 ms target"),
-    ("goodput_by_concurrency", "goodput_rps", "Goodput\nRequests/s", 1.0,
-     None, None),
-    ("energy_by_concurrency", "energy_per_token_j", "Energy (J/token)", 1.0,
-     None, None),
-)
 _FALLBACK_COLORS = ["#CC79A7", "#E69F00", "#56B4E9", "#F0E442", "#000000"]
 _FALLBACK_MARKERS = ["D", "v", "P", "X", "*"]
 
@@ -208,12 +164,6 @@ BAND_COLS = [
 # Two-sided 95% Student-t critical values by degrees of freedom (n - 1).
 T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
        7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228}
-
-# Live capacity that vLLM settles on after memory profiling. It differs by a
-# few thousand KV blocks on every launch, so replicates that are separate
-# launches legitimately disagree; within one replicate it must not change.
-PER_LAUNCH_COLS = ["deployment_fingerprint", "gpu_blocks", "total_kv_tokens"]
-
 
 def window_col(df: pd.DataFrame) -> str:
     """Column naming the configured measurement window.
@@ -796,200 +746,6 @@ def save(fig, name: str, out: str, fmts: list[str], tight: bool = False) -> None
         fig.savefig(path, **kw)
         print(f"  wrote {path}")
     plt.close(fig)
-
-
-def poster_figure_size(aspect_ratio: float) -> tuple[float, float]:
-    """Return the fixed-width poster figure size for a width-to-height ratio."""
-    if not math.isfinite(aspect_ratio) or aspect_ratio <= 0:
-        raise ValueError("poster aspect ratio must be finite and greater than zero")
-    figure_width: float = POSTER_FIGURE_WIDTH_INCHES
-    figure_height: float = figure_width / aspect_ratio
-    if not math.isfinite(figure_height) or figure_height <= 0:
-        raise ValueError("poster aspect ratio produces an invalid figure size")
-    return figure_width, figure_height
-
-
-def parse_poster_aspect_ratio(value: str) -> float:
-    """Parse a finite, positive poster aspect ratio for an argparse option."""
-    try:
-        aspect_ratio: float = float(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError(
-            "poster aspect ratio must be a number"
-        ) from error
-    try:
-        poster_figure_size(aspect_ratio)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError(str(error)) from error
-    return aspect_ratio
-
-
-def fig_poster_metric(
-    df: pd.DataFrame,
-    out: str,
-    fmts: list[str],
-    *,
-    name: str,
-    metric_column: str,
-    y_label: str,
-    scale: float,
-    reference_value: float | None,
-    reference_label: str | None,
-    aspect_ratio: float,
-) -> None:
-    """Draw one categorical concurrency graph for the current poster model."""
-    if metric_column not in df.columns:
-        raise ValueError(f"poster index is missing {metric_column}")
-    if (reference_value is None) != (reference_label is None):
-        raise ValueError("poster reference lines require both value and label")
-
-    fig, ax = plt.subplots(
-        figsize=poster_figure_size(aspect_ratio), constrained_layout=False
-    )
-    ax.set_axisbelow(True)
-    ax.grid(axis="y")
-    ax.grid(axis="x", visible=False)
-    maximum_value = 0.0
-
-    for config in CONFIG_ORDER:
-        series: pd.DataFrame
-        load_column: str
-        mode: str
-        series, load_column, mode = group(df, config)
-        if mode != "closed" or load_column != "concurrency":
-            raise ValueError(f"poster config {config} is not a closed-load sweep")
-        series = series[series[load_column].isin(POSTER_CONCURRENCIES)].copy()
-        concurrency_values: pd.Series = pd.to_numeric(
-            series[load_column], errors="coerce"
-        )
-        numeric_concurrency_values = concurrency_values.to_numpy(dtype=float)
-        if (
-            concurrency_values.isna().any()
-            or not np.isfinite(numeric_concurrency_values).all()
-            or not np.isclose(
-                numeric_concurrency_values,
-                np.round(numeric_concurrency_values),
-            ).all()
-        ):
-            raise ValueError(f"poster config {config} has invalid concurrency values")
-        actual_concurrencies: tuple[int, ...] = tuple(
-            int(value) for value in numeric_concurrency_values
-        )
-        if actual_concurrencies != POSTER_CONCURRENCIES:
-            raise ValueError(
-                f"poster config {config} has concurrency values "
-                f"{actual_concurrencies}, expected {POSTER_CONCURRENCIES}"
-            )
-
-        metric_values: pd.Series = pd.to_numeric(
-            series[metric_column], errors="coerce"
-        )
-        numeric_values: np.ndarray = metric_values.to_numpy(dtype=float)
-        if not np.isfinite(numeric_values).all() or (numeric_values < 0).any():
-            raise ValueError(f"poster config {config} has invalid {metric_column} values")
-        plotted_values: pd.Series = metric_values * scale
-        maximum_value = max(maximum_value, float(plotted_values.max()))
-        positions: pd.Series = pd.Series(
-            np.arange(len(POSTER_CONCURRENCIES), dtype=float),
-            index=series.index,
-        )
-        style: dict[str, str] = CONFIG_STYLE[config]
-        ax.plot(
-            positions,
-            plotted_values,
-            color=style["color"],
-            marker=style["marker"],
-            linewidth=POSTER_LINE_WIDTH,
-            markersize=POSTER_MARKER_SIZE,
-            zorder=4,
-            clip_on=False,
-        )
-        draw_band(ax, series, positions, metric_column, style["color"], scale)
-
-    if reference_value is not None and reference_label is not None:
-        is_right_annotation = metric_column == "ttft_p50"
-        annotation_x = (
-            POSTER_REFERENCE_LABEL_RIGHT_X
-            if is_right_annotation else POSTER_REFERENCE_LABEL_LEFT_X
-        )
-        annotation_x_offset = (
-            -POSTER_REFERENCE_LABEL_HORIZONTAL_OFFSET
-            if is_right_annotation else POSTER_REFERENCE_LABEL_HORIZONTAL_OFFSET
-        )
-        ax.axhline(
-            reference_value,
-            color="0.35",
-            linestyle="--",
-            linewidth=POSTER_REFERENCE_LINE_WIDTH,
-        )
-        ax.annotate(
-            reference_label,
-            xy=(annotation_x, reference_value),
-            xycoords=("axes fraction", "data"),
-            xytext=(annotation_x_offset, -POSTER_REFERENCE_LABEL_VERTICAL_OFFSET),
-            textcoords="offset points",
-            ha="right" if is_right_annotation else "left",
-            va="top",
-            fontsize=POSTER_REFERENCE_LABEL_FONT_SIZE,
-            color="0.35",
-        )
-
-    top_value = max(maximum_value, reference_value or 0.0)
-    ax.set_ylim(0, top_value * POSTER_Y_HEADROOM if top_value else 1.0)
-    ax.set_yscale("linear")
-    ax.set_xlim(
-        -POSTER_X_EDGE_MARGIN,
-        len(POSTER_CONCURRENCIES) - 1 + POSTER_X_EDGE_MARGIN,
-    )
-    ax.set_xscale("linear")
-    ax.set_xticks(
-        np.arange(len(POSTER_CONCURRENCIES)),
-        [str(value) for value in POSTER_CONCURRENCIES],
-    )
-    ax.set_xlabel("Concurrent Requests")
-    ax.set_ylabel(y_label)
-    fig.subplots_adjust(
-        left=POSTER_AXES_LEFT,
-        right=POSTER_AXES_RIGHT,
-        top=POSTER_AXES_TOP,
-        bottom=POSTER_AXES_BOTTOM,
-    )
-    save(fig, name, out, fmts)
-
-
-def make_poster_figures(
-    df: pd.DataFrame,
-    out: str,
-    fmts: list[str],
-    *,
-    aspect_ratio: float,
-) -> None:
-    """Write the four poster figures from one model's measurement rows."""
-    if "power_scope" not in df.columns or not df["power_scope"].eq("gpu_devices").all():
-        raise ValueError("poster energy requires GPU-device power measurements")
-    if "power_nodes" not in df.columns:
-        raise ValueError("poster energy requires power_nodes in the campaign index")
-    for config, expected_nodes in POSTER_EXPECTED_POWER_NODES.items():
-        config_rows = df[df["config_label"] == config]
-        observed_nodes = pd.to_numeric(config_rows["power_nodes"], errors="coerce")
-        if config_rows.empty or not observed_nodes.eq(expected_nodes).all():
-            raise ValueError(
-                f"poster config {config} requires GPU energy from "
-                f"{expected_nodes} participating node(s)"
-            )
-    for name, column, y_label, scale, reference, reference_label in POSTER_METRICS:
-        fig_poster_metric(
-            df,
-            out,
-            fmts,
-            name=name,
-            metric_column=column,
-            y_label=y_label,
-            scale=scale,
-            reference_value=reference,
-            reference_label=reference_label,
-            aspect_ratio=aspect_ratio,
-        )
 
 
 # ---- figures -----------------------------------------------------------------
@@ -1694,7 +1450,7 @@ def make_config_figures(df, out, fmts) -> None:
 # ---- main --------------------------------------------------------------------
 def main() -> None:
     global MIN_SAMPLES, MIN_P99_SAMPLES
-    ap = argparse.ArgumentParser(description="Plot PMBS26 figures from index.csv")
+    ap = argparse.ArgumentParser(description="Plot campaign figures from index.csv")
     ap.add_argument("--index", help="campaign directory or index.csv path")
     ap.add_argument("--out", help="output directory (default: campaign/figs)")
     ap.add_argument("--format", default="pdf", choices=["pdf", "png", "both"])
@@ -1708,21 +1464,9 @@ def main() -> None:
         help="diagnostic only: plot missing intended loads/repeats with warnings",
     )
     ap.add_argument("--model", default=None,
-                    help="restrict to a model label; with --poster, select "
-                         "the poster model (default: Qwen3-Next NVFP4). With "
-                         "several models, the default is cross-model and "
-                         "per-model figures")
-    ap.add_argument("--poster", action="store_true",
-                    help="write the four poster figures only; defaults to "
-                         "Qwen3-Next NVFP4 or uses --model")
-    ap.add_argument(
-        "--aspect-ratio",
-        type=parse_poster_aspect_ratio,
-        help=(
-            "poster figure width-to-height ratio "
-            f"(default: {POSTER_DEFAULT_ASPECT_RATIO:g}); requires --poster"
-        ),
-    )
+                    help="restrict to one model label (or id); with several "
+                         "models the default is a cross-model comparison plus a "
+                         "per-model figure set under out/<model>/")
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES,
                     help="successful requests below this make median percentiles "
                          "unreliable; such points are circled (default: %(default)s)")
@@ -1730,8 +1474,6 @@ def main() -> None:
                     help="requests below this make p99 unreliable "
                          "(default: %(default)s)")
     args = ap.parse_args()
-    if args.aspect_ratio is not None and not args.poster:
-        ap.error("--aspect-ratio requires --poster")
 
     index_path = resolve_index_path(args.index)
     args.index = str(index_path)
@@ -1744,40 +1486,6 @@ def main() -> None:
     fmts = ["pdf", "png"] if args.format == "both" else [args.format]
     set_rc(args.dpi, args.serif)
     df = load_index(args.index)
-
-    if args.poster:
-        poster_model = args.model or POSTER_MODEL_LABEL
-        model_values = _model_values(df)
-        if model_values is None:
-            sys.exit("--poster requires model_label or model in the index")
-        poster_df = df[model_values == poster_model].copy()
-        if poster_df.empty:
-            sys.exit(f"no rows for poster model '{poster_model}' in {args.index}")
-        if "concurrency" not in poster_df.columns:
-            sys.exit("poster index has no concurrency column")
-        poster_df = poster_df[
-            poster_df["concurrency"].isin(POSTER_CONCURRENCIES)
-        ].copy()
-        if "expected_concurrencies" in poster_df.columns:
-            # Repeat validation uses the displayed schedule after the plotting filter.
-            poster_df["expected_concurrencies"] = " ".join(
-                str(value) for value in POSTER_CONCURRENCIES
-            )
-        poster_df = collapse_repeats(poster_df)
-        poster_out = os.path.join(args.out, "poster", _slug(poster_model))
-        make_poster_figures(
-            poster_df,
-            poster_out,
-            fmts,
-            aspect_ratio=(
-                args.aspect_ratio
-                if args.aspect_ratio is not None
-                else POSTER_DEFAULT_ASPECT_RATIO
-            ),
-        )
-        print("poster figures use concurrency values 1, 2, 4, 8, 16, 32, and 64")
-        print("done")
-        return
 
     if args.model is not None:
         model_values = _model_values(df)

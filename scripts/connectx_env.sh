@@ -197,12 +197,6 @@ connectx_check_topology_override CX_IFACE "$_provided_cx_iface" "$CX_IFACE" || r
 connectx_check_topology_override VLLM_HOST_IP "$_provided_vllm_host_ip" "$LOCAL_IP" || return 1 2>/dev/null || exit 1
 connectx_check_topology_override NCCL_SOCKET_IFNAME "$_provided_nccl_socket_ifname" "$CX_IFACE" || return 1 2>/dev/null || exit 1
 connectx_check_topology_override GLOO_SOCKET_IFNAME "$_provided_gloo_socket_ifname" "$CX_IFACE" || return 1 2>/dev/null || exit 1
-for _topology_name in DIYA_HOST DIYA_IP HOEDUS_HOST HOEDUS_IP; do
-  if declare -p "$_topology_name" >/dev/null 2>&1; then
-    echo "[topology] $_topology_name is obsolete; remove the fixed-node override and use CLUSTER_CONFIG" >&2
-    return 1 2>/dev/null || exit 1
-  fi
-done
 
 export SCHEMA_VERSION TOPOLOGY_SHA256 TOPOLOGY_RAW_SHA256 HEAD_NODE_ID WORKER_NODE_ID LOCAL_NODE_ID
 export HEAD_HOST WORKER_HOST HEAD_IP WORKER_IP LOCAL_IP RAY_PORT
@@ -226,7 +220,7 @@ unset _current_derived_signature _ignore_previous_derived_values
 unset _provided_name
 unset _topology_python _topology_record _topology_field_index _topology_rail_index
 unset _topology_rail_count _topology_interface _topology_cidr
-unset _topology_peer_interface _topology_peer_cidr _topology_field _topology_name
+unset _topology_peer_interface _topology_peer_cidr _topology_field
 
 # NCCL data plane uses RDMA over ConnectX by default. Set NCCL_IB_DISABLE=1
 # to fall back to TCP sockets, for example to diagnose a RoCE fault.
@@ -310,10 +304,6 @@ check_hf_cache_access_in_image() {
 #
 # CX_IFACE may be a comma-separated list. These functions iterate over every
 # interface in the list.
-connectx_local_ipv4() {
-  printf '%s\n' "$LOCAL_IP"
-}
-
 require_local_connectx_ip() {
   local expected="$1" role="${2:-requested role}"
   if [[ "$expected" != "$LOCAL_IP" ]]; then

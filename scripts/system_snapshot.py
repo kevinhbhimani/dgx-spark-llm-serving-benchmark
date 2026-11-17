@@ -21,7 +21,6 @@ from typing import TypeAlias, TypeGuard
 try:
     from scripts.cluster_topology import (
         ClusterNode,
-        ClusterTopology,
         TopologyError,
         local_hostname,
         read_topology,
@@ -29,7 +28,6 @@ try:
 except ImportError:
     from cluster_topology import (
         ClusterNode,
-        ClusterTopology,
         TopologyError,
         local_hostname,
         read_topology,
