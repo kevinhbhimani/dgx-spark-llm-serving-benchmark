@@ -11,6 +11,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 source "$HERE/scripts/load_env.sh" || exit 1
 resolve_single_node_mode || exit 2
+if [[ "${MODELS_ONDISK:-0}" != "0" && "${MODELS_ONDISK:-0}" != "1" ]]; then
+  echo "[serial] MODELS_ONDISK must be exactly 0 or 1, got '${MODELS_ONDISK}'" >&2
+  exit 2
+fi
+if [[ "${MODELS_ONDISK:-0}" == "1" ]]; then
+  export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+fi
 if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
   if [[ "${PURGE_WORKER:-0}" == "1" ]]; then
     echo "[serial] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2

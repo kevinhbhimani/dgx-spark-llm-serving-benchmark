@@ -119,7 +119,9 @@ export EXPECTED_CONCURRENCIES="$SMOKE_CONCURRENCIES" REPEATS=2
 
 downloaded=0
 step "fetch"
-if ! CHECK_ONLY=1 scripts/predownload.sh single >/dev/null 2>&1; then
+if [[ "${MODELS_ONDISK:-0}" == "1" ]]; then
+  CHECK_ONLY=1 scripts/predownload.sh single
+elif ! CHECK_ONLY=1 scripts/predownload.sh single >/dev/null 2>&1; then
   scripts/predownload.sh single
   downloaded=1
 fi

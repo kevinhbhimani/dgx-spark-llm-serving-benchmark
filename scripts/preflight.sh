@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Run the full readiness sequence on the configured head and remove model snapshots
-# from both HF caches when the sequence finishes.
+# Run the full readiness sequence on the configured head. JIT mode removes model
+# snapshots from both HF caches when the sequence finishes; disk mode retains them.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 REQUESTED_OUT_DIR="${OUT_DIR:-}"
 source "$HERE/scripts/connectx_env.sh" || exit 1
 export MODELS_YAML="${MODELS_YAML:-configs/models.yaml}"
+if [[ "${MODELS_ONDISK:-0}" == "1" ]] \
+    && ! docker image inspect --format '{{.Id}}' "$VLLM_IMAGE" >/dev/null 2>&1; then
+  echo "[preflight] MODELS_ONDISK=1 requires local image $VLLM_IMAGE; refusing to pull it" >&2
+  exit 1
+fi
 if [[ "$SINGLE_NODE_ONLY" == "1" && "${PURGE_WORKER:-0}" == "1" ]]; then
   echo "[preflight] PURGE_WORKER=1 is invalid with SINGLE_NODE_ONLY=1" >&2
   exit 2
@@ -156,6 +161,11 @@ verify_campaign_output_writes() {
 }
 
 purge_all_campaign_models() {
+  if [[ "${MODELS_ONDISK:-0}" == "1" ]]; then
+    echo "[preflight] MODELS_ONDISK=1; retaining configured model snapshots"
+    return 0
+  fi
+
   local both_nodes_status=0
   if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
     MODEL_LABELS="$ALL_CONFIGURED_MODEL_LABELS" PURGE_WORKER=0 \
@@ -184,9 +194,13 @@ finish_preflight() {
   local original_status="$?"
   trap - EXIT INT TERM
 
-  local purge_label="Purge all configured model snapshots on head and worker"
-  [[ "$SINGLE_NODE_ONLY" == "1" ]] && purge_label="Purge all configured model snapshots on local host"
-  run_step "$purge_label" \
+  local cache_cleanup_label="Purge all configured model snapshots on head and worker"
+  if [[ "${MODELS_ONDISK:-0}" == "1" ]]; then
+    cache_cleanup_label="Retain configured model snapshots"
+  elif [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    cache_cleanup_label="Purge all configured model snapshots on local host"
+  fi
+  run_step "$cache_cleanup_label" \
     "purge-models" purge_all_campaign_models
   if (( LAST_STEP_STATUS != 0 )); then
     PREFLIGHT_FAILED=1
@@ -196,7 +210,9 @@ finish_preflight() {
   echo "[preflight] === Summary ==="
   printf '  %s\n' "${PREFLIGHT_RESULTS[@]}"
   if (( PREFLIGHT_FAILED == 0 && original_status == 0 )); then
-    if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
+    if [[ "${MODELS_ONDISK:-0}" == "1" ]]; then
+      echo "[preflight] ALL CHECKS PASSED; configured model weights were retained in the cache"
+    elif [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
       echo "[preflight] ALL LOCAL CHECKS PASSED; configured model weights were purged from the local cache"
     else
       echo "[preflight] ALL CHECKS PASSED; configured model weights were purged from both nodes"
@@ -235,7 +251,7 @@ fi
 
 run_step "Run single-node serving and measurement smoke" "hardware-smoke" \
   env OUT_DIR="$SMOKE_OUT_DIR" SMOKE_GPU_UTIL="${GPU_UTIL:-0.80}" \
-  KEEP_WEIGHTS=0 \
+  KEEP_WEIGHTS="${MODELS_ONDISK:-0}" \
   "$HERE/scripts/hardware_smoke.sh"
 
 run_step "Run campaign gates, including all-reduce, and forced canary" \
