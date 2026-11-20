@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -256,6 +257,7 @@ class CampaignFixture:
         repeat_count: int = 1,
         gpu_blocks: int = 10,
         gpu_memory_utilization: float = 0.8,
+        gitless: bool = False,
     ) -> None:
         cfg = ExperimentConfig.from_yaml(str(self.experiment))
         cfg.model = "org/model"
@@ -295,7 +297,7 @@ class CampaignFixture:
         )
         harness_source_sha256 = _source_fingerprint()
         git_commit = _git_commit()
-        if git_commit is None:
+        if git_commit is None and not gitless:
             raise RuntimeError("campaign tests require a Git commit")
 
         summary = {
@@ -829,6 +831,31 @@ class VerifyTests(unittest.TestCase):
             self.assertEqual(report["status"], "ok")
             self.assertTrue(report["allow_source_match_commits"])
             self.assertEqual(report["harness_git_commits"], [_git_commit()])
+
+    def test_gitless_campaign_verifies_and_records_the_bypass(self: unittest.TestCase) -> None:
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ, {"SKIP_GIT_CHECK": "1"}):
+            fixture = CampaignFixture(Path(temporary))
+            fixture.add_point(gitless=True)
+            manifest = Path(temporary) / "sealed.json"
+            report = validator.verify_campaign(
+                fixture.models, fixture.experiment, fixture.results, [1], 1,
+                manifest_path=manifest,
+            )
+            self.assertEqual(report["status"], "ok")
+            self.assertTrue(report["git_checks_skipped"])
+            self.assertEqual(report["harness_git_commits"], [])
+            self.assertTrue(json.loads(manifest.read_text())["campaign"]["git_checks_skipped"])
+            with mock.patch.dict(os.environ, {"SKIP_GIT_CHECK": "0"}), mock.patch("bench.provenance.git_commit", return_value=None):
+                with self.assertRaisesRegex(validator.CampaignValidationError, "recoverable Git commit"):
+                    validator.verify_campaign(fixture.models, fixture.experiment, fixture.results, [1], 1)
+
+    def test_git_bypass_keeps_source_validation(self: unittest.TestCase) -> None:
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ, {"SKIP_GIT_CHECK": "1"}):
+            fixture = CampaignFixture(Path(temporary))
+            fixture.add_point(gitless=True)
+            fixture.mutate_index(harness_source_sha256="0" * 64)
+            with self.assertRaisesRegex(validator.CampaignValidationError, "harness_source_sha256"):
+                validator.verify_campaign(fixture.models, fixture.experiment, fixture.results, [1], 1)
 
     def test_allow_source_match_commits_still_requires_matching_source(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,7 +4,7 @@
 
 CONNECTX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECTX_REPO_ROOT="$(cd "$CONNECTX_SCRIPT_DIR/.." && pwd)"
-source "$CONNECTX_SCRIPT_DIR/load_env.sh"
+source "$CONNECTX_SCRIPT_DIR/load_env.sh" || return $? 2>/dev/null || exit $?
 if [[ "${DROP_CACHES:-0}" != "0" ]]; then
   echo "[memory] DROP_CACHES is unsupported; unset it or set it to 0. Launch preflights reclaim clean HF file pages without elevated access." >&2
   return 2 2>/dev/null || exit 2

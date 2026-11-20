@@ -12,6 +12,7 @@ import sys
 import time
 
 from scripts.contracts.dependency_lock import normalize_distribution_name
+from scripts.contracts.source_policy import skip_git_check
 
 from .config import ExperimentConfig
 from . import server_info
@@ -188,6 +189,7 @@ def source_fingerprint() -> str:
         "swept_concurrencies.py",
         "ray_allreduce_bench.py", "ray_interconnect_bench.py",
         "cluster_runtime_fingerprint.py", "contracts/dependency_lock.py",
+        "contracts/source_policy.py",
         "campaign/plan.py", "campaign/manifest.py",
         "local_execution.py",
     )]
@@ -200,6 +202,8 @@ def source_fingerprint() -> str:
 
 def git_commit() -> str | None:
     """Return the current Git commit when it is available."""
+    if skip_git_check():
+        return None
     try:
         root = Path(__file__).resolve().parents[1]
         p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,

@@ -15,7 +15,19 @@ resolve_single_node_mode() {
   esac
 }
 
+resolve_git_check_mode() {
+  SKIP_GIT_CHECK="${SKIP_GIT_CHECK-0}"
+  case "$SKIP_GIT_CHECK" in
+    0|1) export SKIP_GIT_CHECK ;;
+    *)
+      echo "[source] SKIP_GIT_CHECK must be exactly 0 or 1, got '$SKIP_GIT_CHECK'" >&2
+      return 2
+      ;;
+  esac
+}
+
 if [[ -n "${DGX_SPARK_ENV_LOADED:-}" ]]; then
+  resolve_git_check_mode || return 2
   return 0 2>/dev/null || exit 0
 fi
 export DGX_SPARK_ENV_LOADED=1
@@ -56,3 +68,4 @@ fi
 
 unset _load_env_root _load_env_file _load_env_had_allexport _load_env_had_nounset \
       _load_env_snapshot
+resolve_git_check_mode || return 2

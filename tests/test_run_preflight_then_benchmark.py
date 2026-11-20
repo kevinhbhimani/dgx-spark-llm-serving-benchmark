@@ -40,6 +40,7 @@ class SerialCampaignRunnerTests(unittest.TestCase):
         self.preflight_out_dir_log = self.root / "preflight-out-dir.log"
         self.benchmark_log = self.root / "benchmark.log"
         self.mode_log = self.root / "mode.log"
+        self.git_check_log = self.root / "git-check.log"
         self.campaign_out_dir = self.root / "campaign"
 
         self._write_executable(
@@ -48,6 +49,7 @@ class SerialCampaignRunnerTests(unittest.TestCase):
 set -euo pipefail
 printf '%s\\n' "$OUT_DIR" > "$PREFLIGHT_OUT_DIR_LOG"
 printf '%s\\n' "$SINGLE_NODE_ONLY" > "$MODE_LOG"
+printf '%s\\n' "$SKIP_GIT_CHECK" >> "$GIT_CHECK_LOG"
 for stage in output-writes plan connectx hardware-smoke campaign-canary purge-models; do
   printf '%s\\n' "$stage" >> "$PREFLIGHT_STAGE_LOG"
   if [[ "${FAIL_STAGE:-}" == "$stage" ]]; then
@@ -60,6 +62,7 @@ done
             self.scripts_directory / "run_job.sh",
             """#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\\n' "$SKIP_GIT_CHECK" >> "$GIT_CHECK_LOG"
 printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
   "$ALLOW_CANARY_FAILURES" "$SINGLE_NODE_ONLY" > "$BENCHMARK_LOG"
 """,
@@ -83,11 +86,14 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
         campaign_configs: str | None = None,
         purge_worker: str | None = None,
         dotenv_mode: str | None = None,
+        skip_git_check: str | None = None,
+        dotenv_git_check: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment.pop("SINGLE_NODE_ONLY", None)
         environment.pop("DGX_SPARK_ENV_LOADED", None)
         environment.pop("CAMPAIGN_CONFIGS", None)
+        environment.pop("SKIP_GIT_CHECK", None)
         environment["ENV_FILE"] = str(self.fixture_root / ".env")
         if dotenv_mode is not None:
             (self.fixture_root / ".env").write_text(
@@ -95,6 +101,11 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
             )
         else:
             (self.fixture_root / ".env").unlink(missing_ok=True)
+        if dotenv_git_check is not None:
+            with (self.fixture_root / ".env").open("a", encoding="utf-8") as dotenv:
+                dotenv.write(f"SKIP_GIT_CHECK={dotenv_git_check}\n")
+        if skip_git_check is not None:
+            environment["SKIP_GIT_CHECK"] = skip_git_check
         if single_node_only is not None:
             environment["SINGLE_NODE_ONLY"] = single_node_only
         if campaign_configs is not None:
@@ -109,6 +120,7 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
                 "PREFLIGHT_OUT_DIR_LOG": str(self.preflight_out_dir_log),
                 "BENCHMARK_LOG": str(self.benchmark_log),
                 "MODE_LOG": str(self.mode_log),
+                "GIT_CHECK_LOG": str(self.git_check_log),
                 "FAIL_STAGE": fail_stage,
                 "FAIL_STATUS": str(fail_status),
             }
@@ -194,6 +206,26 @@ printf '%s\\n' "$OUT_DIR" "$PLAN_ONLY" "$STOP_AFTER_CANARY" \\
                 self.preflight_stage_log.unlink(missing_ok=True)
                 result = self._run_runner(**options)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.preflight_stage_log.exists())
+
+    def test_git_bypass_propagates_from_environment_and_dotenv(self: SerialCampaignRunnerTests) -> None:
+        for options, expected in (
+            ({"skip_git_check": "1"}, "1"),
+            ({"dotenv_git_check": "1"}, "1"),
+            ({"dotenv_git_check": "1", "skip_git_check": "0"}, "0"),
+        ):
+            with self.subTest(options=options):
+                self.git_check_log.unlink(missing_ok=True)
+                result = self._run_runner(**options)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.git_check_log.read_text().splitlines(), [expected, expected])
+
+    def test_invalid_git_bypass_fails_before_preflight(self: SerialCampaignRunnerTests) -> None:
+        for value in ("", "true", "2"):
+            with self.subTest(value=value):
+                result = self._run_runner(skip_git_check=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("SKIP_GIT_CHECK must be exactly 0 or 1", result.stderr)
                 self.assertFalse(self.preflight_stage_log.exists())
 
 

@@ -2,7 +2,7 @@
 #
 # scripts/start_ray.sh installs ray[default] at container start. This image
 # preinstalls the same constrained runtime and disables package-index access.
-ARG BASE_IMAGE
+ARG BASE_IMAGE=nvcr.io/nvidia/vllm@sha256:557747337846eecf34486866f3d992383c6f8af869fdb0e365b5093fcaee02c2
 FROM ${BASE_IMAGE}
 
 ARG RAY_VERSION

@@ -53,13 +53,15 @@
 #     config_file_sha256, so a mid-campaign change requires a fresh OUT_DIR;
 #   - do not edit bench/*.py or the fingerprinted scripts mid-campaign
 #     (harness_source_sha256). The launch gate also requires these files to be
-#     committed, so every row names a recoverable Git revision.
+#     committed by default. SKIP_GIT_CHECK=1 permits Git-free source and retains
+#     source/configuration hashes and the source stability checks.
 #
 # Knobs (env): MODELS_YAML (default configs/models.yaml), OUT_DIR (bare prefix
 #   or complete path), CAMPAIGN_NAME
 #   (prefix when OUT_DIR is unset), GPU_UTIL (default 0.80, overrides the shared
 #   gpu_util_default for planning, validation, and serving), CONCURRENCIES,
 #   REPEATS (default 3), CANARY_FIRST
+#   SKIP_GIT_CHECK (0|1, default 0; bypass Git requirements only),
 #   (auto|0|1), STOP_AFTER_CANARY, ALLOW_CANARY_FAILURES, PURGE_WEIGHTS,
 #   CAMPAIGN_LABELS / CAMPAIGN_CONFIGS (space-separated subsets, e.g. for the
 #   TCP transport ablation), PLAN_ONLY, MODELS_ONDISK (offline HF_CACHE snapshots).
@@ -237,8 +239,17 @@ if [[ "$SINGLE_NODE_ONLY" == "1" && "$PLAN_ONLY" != "1" ]]; then
   refuse_solo_ray_container_collision || exit 1
 fi
 
+SOURCE_IDENTITY=""
+SOURCE_IDENTITY_FIELD=git_commit
+if [[ "$SKIP_GIT_CHECK" == "1" ]]; then
+  SOURCE_IDENTITY_FIELD=harness_source_sha256
+  SOURCE_IDENTITY="$(PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" -c \
+    'from bench.provenance import source_fingerprint; print(source_fingerprint())')" || exit 1
+else
+  SOURCE_IDENTITY="$(git rev-parse HEAD 2>/dev/null || true)"
+fi
 IDENTITY_ARGS=(--file "$MODELS_YAML" --file "$CONFIG_YAML"
-  --value "git_commit=$(git rev-parse HEAD)"
+  --value "$SOURCE_IDENTITY_FIELD=$SOURCE_IDENTITY"
   --value "concurrencies=$CONCURRENCIES" --value "repeats=$REPEATS"
   --value "gpu_util_override=${GPU_UTIL:-}"
   --value "image=$VLLM_IMAGE"
@@ -248,6 +259,9 @@ IDENTITY_ARGS=(--file "$MODELS_YAML" --file "$CONFIG_YAML"
   --value "generation_config=${GENERATION_CONFIG:-vllm}"
   --value "inductor_cache=${TORCHINDUCTOR_AUTOGRAD_CACHE:-0}"
   --value "single_container=$SINGLE_CONTAINER")
+if [[ "$SKIP_GIT_CHECK" == "1" ]]; then
+  IDENTITY_ARGS+=(--value "skip_git_check=1")
+fi
 if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
   SOLO_EXECUTION_SHA256="$(PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" -m bench.local_execution identity "$LOCAL_HOSTNAME" standalone)" || exit 1
@@ -584,6 +598,17 @@ no_stale_server() {
 
 source_tree_ok() {
   local untracked
+  if [[ "$SKIP_GIT_CHECK" == "1" ]]; then
+    local current_source
+    current_source="$(PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" -c \
+      'from bench.provenance import source_fingerprint; print(source_fingerprint())')" || return 1
+    if [[ "$current_source" != "$SOURCE_IDENTITY" ]]; then
+      log "benchmark source changed during this campaign"
+      return 1
+    fi
+    log "SKIP_GIT_CHECK=1; Git requirement bypassed; source SHA-256=$current_source"
+    return 0
+  fi
   git rev-parse --verify HEAD >/dev/null 2>&1 || {
     log "repository has no recoverable Git commit"
     return 1
@@ -658,7 +683,7 @@ canary_identity() {
       sha256sum "$MODELS_YAML" "$CONFIG_YAML" \
         "$CAMPAIGN_RESULTS_DIR/client_environment.json" \
         "$CAMPAIGN_RESULTS_DIR/inputs/local_execution.json"
-      printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" \
+      printf '%s\n' "$SOURCE_IDENTITY" "$VLLM_IMAGE" \
         "$SOLO_EXECUTION_SHA256" "$SOLO_RUNTIME_SHA256" "$LOCAL_HOSTNAME" \
         "$SINGLE_CONTAINER" "$SELECTED_LABELS" "$SELECTED_CONFIGS" \
         "$EXCLUDED_LABELS" "$CONCURRENCIES" "$REPEATS" \
@@ -674,7 +699,7 @@ canary_identity() {
     # serving policy, and network policy that passed it. The Git commit alone
     # does not identify environment-supplied launch options or live hardware.
     sha256sum "$CAMPAIGN_RESULTS_DIR/client_environment.json"
-    printf '%s\n' "$(git rev-parse HEAD)" "$VLLM_IMAGE" "$RAY_VERSION" \
+    printf '%s\n' "$SOURCE_IDENTITY" "$VLLM_IMAGE" "$RAY_VERSION" \
       "$CLUSTER_RUNTIME_FINGERPRINT" "$HEAD_IP" "$WORKER_IP" "$CX_IFACE" \
       "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
       "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
@@ -850,7 +875,7 @@ log "campaign start; log: $LOG"
 capture_system_snapshot
 print_plan
 
-prep "clean committed benchmark source tree" source_tree_ok
+prep "benchmark source provenance" source_tree_ok
 prep "isolated locked client environment" \
   "$PYTHON" scripts/check_environment.py \
     --manifest "$CAMPAIGN_RESULTS_DIR/client_environment.json"
@@ -922,7 +947,7 @@ fi
 # Recheck after the multi-day measurement campaign. This catches any source
 # edit or checkout performed while the job was running before those current
 # files can be sealed beside rows produced by a different revision.
-prep "final clean committed benchmark source tree" source_tree_ok
+prep "final benchmark source provenance" source_tree_ok
 if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
   prep "local execution record matches saved campaign input" verify_saved_topology_input
 else
@@ -977,7 +1002,7 @@ if [[ -f baselines/rdma-pilot-2026-10/index.csv ]]; then
       --md "$CAMPAIGN_FIGURES_DIR/stats/compare_vs_rdma_pilot.md"
 fi
 
-prep "pre-seal clean committed benchmark source tree" source_tree_ok
+prep "pre-seal benchmark source provenance" source_tree_ok
 
 prep "sealed final artifact manifest" \
   "$PYTHON" scripts/validate_campaign.py verify "${VERIFY_ARGS[@]}" \

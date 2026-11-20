@@ -2,7 +2,7 @@
 # Assemble an offline bundle for the DGX Spark benchmark.
 #
 # Usage:
-#   offline/build_bundle.sh [--include-models] [OUTPUT_DIR]
+#   offline/build_bundle.sh [--emulated] [--include-models] [OUTPUT_DIR]
 #
 # Environment overrides:
 #   VLLM_IMAGE       base image from scripts/connectx_env.sh by default
@@ -18,15 +18,22 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 
 INCLUDE_MODELS=0
+EMULATED=0
 OUTPUT_DIR=""
 while (($#)); do
   case "$1" in
+    --emulated)
+      EMULATED=1
+      ;;
     --include-models)
       INCLUDE_MODELS=1
       ;;
     --help|-h)
       cat <<EOF
-Usage: $(basename "$0") [--include-models] [OUTPUT_DIR]
+Usage: $(basename "$0") [--emulated] [--include-models] [OUTPUT_DIR]
+
+Native builds require no architecture flag. Pass --emulated to build an ARM64
+bundle on an x86_64 Docker host using BuildKit's bundled QEMU emulator.
 
 Model weights are excluded unless --include-models is set. The Hugging Face
 hub cache under MODEL_CACHE_DIR or HF_CACHE is added when that option is used.
@@ -124,6 +131,52 @@ if [[ -e "$OUTPUT_DIR" ]]; then
 fi
 OUTPUT_PARENT="$(dirname "$OUTPUT_DIR")"
 
+if ! DOCKER_HOST_PLATFORM="$(docker info --format '{{.OSType}}/{{.Architecture}}')"; then
+  echo "[offline] cannot access the Docker daemon" >&2
+  exit 1
+fi
+case "$DOCKER_HOST_PLATFORM" in
+  linux/aarch64|linux/arm64) DOCKER_HOST_ARCH=arm64 ;;
+  linux/x86_64|linux/amd64) DOCKER_HOST_ARCH=amd64 ;;
+  *)
+    echo "[offline] unsupported Docker host platform: $DOCKER_HOST_PLATFORM" >&2
+    exit 1
+    ;;
+esac
+IMAGE_INSPECT_ARGS=()
+if (( EMULATED )); then
+  if [[ "$DOCKER_HOST_ARCH" != amd64 || "$TARGET_PLATFORM" != linux/arm64 ]]; then
+    echo "[offline] --emulated requires an x86_64 Docker host and TARGET_PLATFORM=linux/arm64" >&2
+    exit 1
+  fi
+  IMAGE_INSPECT_ARGS=(--platform "$TARGET_PLATFORM")
+elif [[ "$DOCKER_HOST_ARCH" != "$TARGET_IMAGE_ARCH" ]]; then
+  echo "[offline] native build targets $TARGET_PLATFORM, Docker host is $DOCKER_HOST_PLATFORM" >&2
+  echo "[offline] pass --emulated for an x86_64 Docker host building an ARM64 bundle" >&2
+  exit 1
+fi
+
+# The Docker archive exporter requires a container builder. Keep a cache per
+# Docker endpoint without changing the user's selected Buildx builder.
+BUILDER_ENDPOINT="${DOCKER_CONTEXT:-${DOCKER_HOST:-$(docker context show)}}"
+BUILDER_ENDPOINT_HASH="$(printf '%s' "$BUILDER_ENDPOINT" | sha256sum | cut -c 1-16)"
+BUILDER_NAME="dgx-spark-offline-$BUILDER_ENDPOINT_HASH"
+if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+  docker buildx create --name "$BUILDER_NAME" --driver docker-container >/dev/null
+fi
+echo "[offline] checking builder $BUILDER_NAME"
+BUILDER_DETAILS="$(docker buildx inspect --bootstrap "$BUILDER_NAME")"
+printf '%s\n' "$BUILDER_DETAILS"
+if ! grep -Eq '^Driver:[[:space:]]+docker-container[[:space:]]*$' <<<"$BUILDER_DETAILS"; then
+  echo "[offline] builder $BUILDER_NAME must use the docker-container driver" >&2
+  exit 1
+fi
+if ! grep -Eq "Platforms:.*[[:space:],]${TARGET_PLATFORM}([/,*[:space:]]|$)" <<<"$BUILDER_DETAILS"; then
+  echo "[offline] builder $BUILDER_NAME cannot execute $TARGET_PLATFORM" >&2
+  echo "[offline] ARM64 emulation requires an official BuildKit image with bundled QEMU support" >&2
+  exit 1
+fi
+
 SOURCE_COMMIT=unknown
 SOURCE_BRANCH=unknown
 SOURCE_WORKTREE_STATE=unknown
@@ -147,18 +200,45 @@ mkdir -p "$OUTPUT_PARENT"
 STAGING_DIR="$(mktemp -d "$OUTPUT_PARENT/.offline-bundle.XXXXXX")"
 trap 'if [[ -n "${STAGING_DIR:-}" && -d "$STAGING_DIR" ]]; then rm -rf -- "$STAGING_DIR"; fi' EXIT
 
+echo "[offline] archiving source"
+SOURCE_ARCHIVE=dgx-spark-benchmark-src.tar.gz
+SOURCE_BUNDLED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+cat > "$STAGING_DIR/commit.md" <<EOF
+# Bundle source metadata
+
+- Commit: $SOURCE_COMMIT
+- Branch: $SOURCE_BRANCH
+- Source bundled at (UTC): $SOURCE_BUNDLED_UTC
+- Git working tree: $SOURCE_WORKTREE_STATE
+EOF
+python3 "$HERE/source_release.py" snapshot --source "$REPO_ROOT" \
+  --metadata "$STAGING_DIR/commit.md" --output "$STAGING_DIR/$SOURCE_ARCHIVE"
+BUILD_SOURCE_DIR="$STAGING_DIR/source"
+mkdir "$BUILD_SOURCE_DIR"
+tar --no-same-owner -xzf "$STAGING_DIR/$SOURCE_ARCHIVE" -C "$BUILD_SOURCE_DIR"
+REQUIREMENTS_FILE="$BUILD_SOURCE_DIR/requirements.lock"
+RAY_CONSTRAINTS="$BUILD_SOURCE_DIR/scripts/ray-runtime-constraints.txt"
+cp "$BUILD_SOURCE_DIR/offline/install_offline.sh" "$STAGING_DIR/install_offline.sh"
+cp "$BUILD_SOURCE_DIR/offline/source_release.py" "$STAGING_DIR/source_release.py"
+chmod +x "$STAGING_DIR/install_offline.sh"
+
 echo "[offline] pulling $VLLM_IMAGE for $TARGET_PLATFORM"
 docker pull --platform "$TARGET_PLATFORM" "$VLLM_IMAGE"
-BASE_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$VLLM_IMAGE")"
+BASE_IMAGE_ID="$(docker image inspect "${IMAGE_INSPECT_ARGS[@]}" --format '{{.Id}}' "$VLLM_IMAGE")"
+BASE_IMAGE_ARCH="$(docker image inspect "${IMAGE_INSPECT_ARGS[@]}" --format '{{.Architecture}}' "$VLLM_IMAGE")"
+if [[ "$BASE_IMAGE_ARCH" != "$TARGET_IMAGE_ARCH" ]]; then
+  echo "[offline] base image architecture is $BASE_IMAGE_ARCH, expected $TARGET_IMAGE_ARCH" >&2
+  exit 1
+fi
 
 BUILD_CONTEXT="$STAGING_DIR/docker-context"
 mkdir -p "$BUILD_CONTEXT"
-cp "$HERE/Dockerfile.ray" "$BUILD_CONTEXT/Dockerfile.ray"
+cp "$BUILD_SOURCE_DIR/offline/Dockerfile.ray" "$BUILD_CONTEXT/Dockerfile.ray"
 cp "$RAY_CONSTRAINTS" "$BUILD_CONTEXT/ray-runtime-constraints.txt"
 
 IMAGE_TAR="$STAGING_DIR/vllm-ray-image.tar"
 echo "[offline] building $DERIVED_IMAGE for $TARGET_PLATFORM"
-docker buildx build --platform "$TARGET_PLATFORM" \
+docker buildx build --builder "$BUILDER_NAME" --platform "$TARGET_PLATFORM" \
   --build-arg "BASE_IMAGE=$VLLM_IMAGE" \
   --build-arg "RAY_VERSION=$RAY_VERSION" \
   --tag "$DERIVED_IMAGE" \
@@ -169,18 +249,19 @@ rm -rf -- "$BUILD_CONTEXT"
 
 echo "[offline] loading image archive for architecture inspection"
 docker load --input "$IMAGE_TAR"
-IMAGE_ARCH="$(docker image inspect --format '{{.Architecture}}' "$DERIVED_IMAGE")"
+IMAGE_ARCH="$(docker image inspect "${IMAGE_INSPECT_ARGS[@]}" --format '{{.Architecture}}' "$DERIVED_IMAGE")"
 if [[ "$IMAGE_ARCH" != "$TARGET_IMAGE_ARCH" ]]; then
   echo "[offline] built image architecture is $IMAGE_ARCH, expected $TARGET_IMAGE_ARCH" >&2
   exit 1
 fi
 
-echo "[offline] verifying Ray in the derived image"
-if docker run --rm --platform "$TARGET_PLATFORM" --entrypoint python3 "$DERIVED_IMAGE" \
-    -c 'import ray; print("ray", ray.__version__)'; then
-  :
+if (( EMULATED )); then
+  # BuildKit's emulator is scoped to build RUN instructions, not docker run.
+  echo "[offline] Ray import verified during the emulated image build"
 else
-  echo "[offline] image execution is unavailable on this builder; verify Ray on the target system" >&2
+  echo "[offline] verifying Ray in the derived image"
+  docker run --rm --platform "$TARGET_PLATFORM" --entrypoint python3 "$DERIVED_IMAGE" \
+    -c 'import ray; print("ray", ray.__version__)'
 fi
 
 if command -v zstd >/dev/null 2>&1; then
@@ -207,40 +288,6 @@ PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip download \
   --dest "$WHEEL_DIR" \
   --only-binary=:all: \
   "${PIP_TARGET_ARGS[@]}"
-
-echo "[offline] archiving source"
-SOURCE_ARCHIVE=dgx-spark-benchmark-src.tar.gz
-SOURCE_BUNDLED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-cat > "$STAGING_DIR/commit.md" <<EOF
-# Bundle source metadata
-
-- Commit: $SOURCE_COMMIT
-- Branch: $SOURCE_BRANCH
-- Source bundled at (UTC): $SOURCE_BUNDLED_UTC
-- Git working tree: $SOURCE_WORKTREE_STATE
-EOF
-
-SOURCE_TAR_EXCLUDES=(
-  --exclude-vcs
-  --exclude='./.venv' --exclude='./venv' --exclude='./env'
-  --exclude='./.aws' --exclude='./.ssh' --exclude='./.gnupg' --exclude='./.codex'
-  --exclude='./.cache' --exclude='./__pycache__' --exclude='*.pyc'
-  --exclude='./.env*' --exclude='*/.env*' --exclude='./.netrc' --exclude='./.pypirc'
-  --exclude='./commit.md'
-  --exclude='./offline-bundle' --exclude='./offline-bundle-*'
-  --exclude='./offline/offline-bundle-*' --exclude='./offline/.offline-bundle.*'
-  --exclude='results*' --exclude='figs' --exclude='__pycache__'
-)
-case "$STAGING_DIR/" in
-  "$REPO_ROOT/"*)
-    STAGING_RELATIVE="${STAGING_DIR#"$REPO_ROOT"/}"
-    SOURCE_TAR_EXCLUDES+=(--exclude="./$STAGING_RELATIVE")
-    ;;
-esac
-tar -C "$REPO_ROOT" "${SOURCE_TAR_EXCLUDES[@]}" -czf "$STAGING_DIR/$SOURCE_ARCHIVE" . \
-  -C "$STAGING_DIR" commit.md
-cp "$HERE/install_offline.sh" "$STAGING_DIR/install_offline.sh"
-chmod +x "$STAGING_DIR/install_offline.sh"
 
 MODEL_CACHE_ARCHIVE=none
 if (( INCLUDE_MODELS )); then
@@ -269,8 +316,11 @@ model_cache_archive=$MODEL_CACHE_ARCHIVE
 built_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
+rm -rf -- "$BUILD_SOURCE_DIR"
 ( cd "$STAGING_DIR" && find . -type f ! -name SHA256SUMS -print0 \
     | sort -z | xargs -0 sha256sum > SHA256SUMS )
+python3 "$STAGING_DIR/source_release.py" record-bundle --bundle "$STAGING_DIR"
+( cd "$STAGING_DIR" && sha256sum SOURCE_RELEASE.json >> SHA256SUMS )
 
 mv "$STAGING_DIR" "$OUTPUT_DIR"
 STAGING_DIR=""

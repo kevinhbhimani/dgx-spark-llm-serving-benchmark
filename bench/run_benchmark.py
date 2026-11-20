@@ -23,6 +23,7 @@ from utils.campaign_output import (
     resolve_campaign_dir,
     resolve_campaign_results_dir,
 )
+from scripts.contracts.source_policy import skip_git_check
 
 from .config import ExperimentConfig
 from .workload import Workload
@@ -540,6 +541,7 @@ def main() -> None:
     summary["client_environment_sha256"] = client_environment_sha256
     summary["client_environment"] = captured_client_environment
     summary["harness_git_commit"] = harness_git_commit
+    summary["git_checks_skipped"] = skip_git_check()
     summary["serving_fingerprint"] = cfg.serving_fingerprint
     if serving_policy is not None:
         summary["serving_policy"] = serving_policy

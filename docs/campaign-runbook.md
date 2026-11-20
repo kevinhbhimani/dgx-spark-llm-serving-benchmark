@@ -162,6 +162,16 @@ before running the campaign. `scripts/run_job.sh` stops if benchmark sources
 or inputs under its protected paths have uncommitted, staged, or untracked
 changes.
 
+Git-free offline installations can set `SKIP_GIT_CHECK=1` in `.env` or export
+it before invoking the benchmark entrypoint. The setting propagates through
+`run_preflight_then_benchmark.sh`, `preflight.sh`, and `run_job.sh`, including
+canaries and final verification. It bypasses Git commit and cleanliness checks.
+Source fingerprints, configuration hashes, environment checks, and result
+validation remain active. Direct Python commands require the variable in their
+environment. Final campaign manifests record the exception. See
+[source-only offline updates](../offline/README.md#source-only-updates) for
+baseline registration, validation, installation, and rollback.
+
 The benchmark source fingerprint covers Python modules under `bench/`, the
 planning and manifest modules in `scripts/campaign/`, the dependency-lock
 module in `scripts/contracts/`, the topology loader, and the launch and
