@@ -164,12 +164,12 @@ models:
   # ---- 7. gpt-oss-120b: MoE, alternating sliding-window attention, MXFP4 -----
   # Native MXFP4 checkpoint. The repo also carries original/ and metal/ copies
   # (195.8 GB total); the snapshot acquisition command skips both.
-  - name: openai/gpt-oss-120b                         # 65.3 GB
-    label: gpt-oss-120b
-    revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a
-    configs: [single, tp2, pp2]
-    max_model_len: 8704
-    meta: {pretty: "gpt-oss-120b", arch: moe, attention: sliding-window, quant: mxfp4, params_b: 117.0, active_b: 5.1, nvidia: false}
+  #- name: openai/gpt-oss-120b                         # 65.3 GB
+  #  label: gpt-oss-120b
+  # revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+  # configs: [single, tp2, pp2]
+  #max_model_len: 8704
+  #meta: {pretty: "gpt-oss-120b", arch: moe, attention: sliding-window, quant: mxfp4, params_b: 117.0, active_b: 5.1, nvidia: false}
 
   # ---- 8. Qwen3 235B-A22B Instruct-2507: MoE, full attention ------------------
   # 139.2 GB: dual-node only. NVIDIA ModelOpt NVFP4 (FP8 KV).
