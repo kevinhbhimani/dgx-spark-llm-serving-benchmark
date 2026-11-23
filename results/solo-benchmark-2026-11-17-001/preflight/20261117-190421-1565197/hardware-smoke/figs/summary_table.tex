@@ -1,0 +1,11 @@
+% Requires \usepackage{booktabs}.
+\begin{tabular}{l r r r r r r r r r r r}
+\toprule
+Config & Load & Win (s) & $n$ & Tok/s & Req/s & TTFT$_{50}$ (ms) & TTFT$_{99}$ (ms) & ITL$_{50}$ (ms) & E2E$_{50}$ (s) & Goodput & GPU J/tok \\
+\midrule
+Single Spark & 1 & 40 & 6\rlap{$^\dagger$} & 38 $\pm$ 0 & 0.15 & 238 & 839 & 25 $\pm$ 1 & 6.6 & 0.15 & 1.106 \\
+Single Spark & 4 & 30 & 15\rlap{$^\dagger$} & 126 $\pm$ 3 & 0.50 & 464 & 1339 & 27 $\pm$ 1 & 8.4 & 0.50 & 0.382 \\
+\bottomrule
+\end{tabular}
+% $^\dagger$ fewer than 100 requests for p99.
+% Means over up to 2 independent launches; $\pm$ is the 95% Student-t half-width.
