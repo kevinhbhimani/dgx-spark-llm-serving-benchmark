@@ -83,6 +83,7 @@ def build_manifest(
     topology: Mapping[str, str] | None = None,
     execution: Mapping[str, object] | None = None,
     selection: Mapping[str, object] | None = None,
+    git_checks_skipped: bool = False,
 ) -> dict[str, object]:
     """Describe the verified campaign and sorted artifact inventory."""
     manifest: dict[str, object] = {
@@ -102,6 +103,7 @@ def build_manifest(
             "skipped_combos": list(skipped_combos),
             "allow_source_match_commits": allow_source_match_commits,
             "harness_git_commits": list(harness_git_commits),
+            "git_checks_skipped": git_checks_skipped,
             **({"selection": dict(selection)} if selection is not None else {}),
         },
         "artifacts": {

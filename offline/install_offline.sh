@@ -172,7 +172,11 @@ PYTHONNOUSERSITE=1 PIP_NO_INDEX=1 "$SRC_DIR/.venv/bin/pip" install \
   -r "$SRC_DIR/$requirements_file"
 
 echo "[offline] validating client environment"
-PYTHONNOUSERSITE=1 "$SRC_DIR/.venv/bin/python" "$SRC_DIR/scripts/check_environment.py"
+PYTHONNOUSERSITE=1 "$SRC_DIR/.venv/bin/python" "$SRC_DIR/scripts/check_environment.py" \
+  --manifest "$SRC_DIR/.offline-client-environment.json"
+if [[ -f "$BUNDLE_DIR/source_release.py" && -f "$BUNDLE_DIR/SOURCE_RELEASE.json" ]]; then
+  python3 "$BUNDLE_DIR/source_release.py" register --bundle "$BUNDLE_DIR" --source "$SRC_DIR"
+fi
 
 cat <<EOF
 

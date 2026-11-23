@@ -62,6 +62,7 @@ from scripts.contracts.dependency_lock import (
     normalize_distribution_name,
     parse_lock,
 )
+from scripts.contracts.source_policy import skip_git_check
 from scripts.cluster_topology import TopologyError, read_topology
 
 
@@ -631,7 +632,7 @@ def _validate_summary(
         raise CampaignValidationError(
             f"{context} methodology_version does not match index.csv"
         )
-    if summary.get("harness_git_commit") != row.get("harness_git_commit"):
+    if str(summary.get("harness_git_commit") or "") != str(row.get("harness_git_commit") or ""):
         raise CampaignValidationError(
             f"{context} harness_git_commit does not match index.csv"
         )
@@ -868,6 +869,9 @@ def verify_campaign(
     ``harness_source_sha256`` must be identical and equal the current source
     fingerprint. Use for a campaign whose results were committed incrementally
     without changing the fingerprinted harness source.
+
+    ``SKIP_GIT_CHECK=1`` permits missing Git metadata. Source, configuration,
+    environment, artifact, and result checks remain active.
     """
     campaign = load_campaign(models_path, experiment_path)
     selection = select_models(
@@ -956,8 +960,9 @@ def verify_campaign(
         ) from exc
     current_source = provenance.source_fingerprint()
     current_environment = provenance.client_environment_fingerprint()
+    git_checks_skipped = skip_git_check()
     current_commit = provenance.git_commit()
-    if not COMMIT_RE.fullmatch(str(current_commit or "")):
+    if not git_checks_skipped and not COMMIT_RE.fullmatch(str(current_commit or "")):
         raise CampaignValidationError(
             "current benchmark source has no recoverable Git commit"
         )
@@ -1071,12 +1076,13 @@ def verify_campaign(
                 f"{context} trace_sha256 does not match the supplied trace"
             )
         git_commit = str(row.get("harness_git_commit") or "")
-        if not COMMIT_RE.fullmatch(git_commit):
+        if not git_checks_skipped and not COMMIT_RE.fullmatch(git_commit):
             raise CampaignValidationError(
                 f"{context} is missing a valid harness_git_commit"
             )
-        commit_values.add(git_commit)
-        if not allow_source_match_commits:
+        if git_commit:
+            commit_values.add(git_commit)
+        if not git_checks_skipped and not allow_source_match_commits:
             previous_commit = consistent_global.setdefault(
                 "harness_git_commit", git_commit
             )
@@ -1623,6 +1629,7 @@ def verify_campaign(
             skipped_combos=skipped_combos,
             allow_source_match_commits=allow_source_match_commits,
             harness_git_commits=sorted(commit_values),
+            git_checks_skipped=git_checks_skipped,
             topology=topology_manifest,
             execution=local_execution_manifest,
             selection={
@@ -1654,6 +1661,7 @@ def verify_campaign(
         "skipped_combos": skipped_combos,
         "allow_source_match_commits": allow_source_match_commits,
         "harness_git_commits": sorted(commit_values),
+        "git_checks_skipped": git_checks_skipped,
         "manifest": manifest_written,
     }
 
@@ -1771,7 +1779,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.configs,
                 args.single_node_only,
             )
-    except (CampaignValidationError, OSError, RuntimeError) as exc:
+    except (CampaignValidationError, OSError, RuntimeError, ValueError) as exc:
         print(f"validate_campaign.py: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))

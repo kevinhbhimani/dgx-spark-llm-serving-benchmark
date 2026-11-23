@@ -43,7 +43,7 @@ if [[ -z "${CLUSTER_RUNTIME_FINGERPRINT:-}" ]]; then
   cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" python3 - \
     "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
     "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
-    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
+    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$NO_IFACE_MATCH" \
     < "$HERE/cluster_runtime_fingerprint.py")"
   CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$cluster_runtime_json" \
     | sha256sum | awk '{print $1}')"
@@ -51,7 +51,7 @@ fi
 SOURCE_FINGERPRINT="$(sha256sum "$HERE/ray_interconnect_bench.py" \
   "$HERE/interconnect_extra_bench.sh" | sha256sum | awk '{print $1}')"
 ARTIFACT_FINGERPRINT="$(printf '%s\n' "$CLUSTER_RUNTIME_FINGERPRINT" \
-  "$SOURCE_FINGERPRINT" "$PORT" "$TOPOLOGY_SHA256" \
+  "$SOURCE_FINGERPRINT" "$PORT" "$TOPOLOGY_SHA256" "$NO_IFACE_MATCH" \
   "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$NCCL_IB_DISABLE" \
   "${NCCL_IB_HCA:-}" "${NCCL_IB_GID_INDEX:-}" "${NCCL_NET_PLUGIN:-}" \
   | sha256sum | awk '{print $1}')"
