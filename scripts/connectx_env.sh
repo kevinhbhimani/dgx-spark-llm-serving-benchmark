@@ -29,7 +29,16 @@ if [[ "$SINGLE_NODE_ONLY" == "1" ]]; then
   unset HEAD_CX_IFACE WORKER_CX_IFACE CX_IFACE VLLM_HOST_IP
   unset NCCL_SOCKET_IFNAME GLOO_SOCKET_IFNAME NCCL_IB_DISABLE NCCL_IB_HCA
   unset NCCL_IB_GID_INDEX NCCL_NET_PLUGIN NCCL_DEBUG NCCL_DEBUG_SUBSYS
+  unset NO_IFACE_MATCH
 else
+  NO_IFACE_MATCH="${NO_IFACE_MATCH-0}"
+  case "$NO_IFACE_MATCH" in
+    0|1) export NO_IFACE_MATCH ;;
+    *)
+      echo "[cluster] NO_IFACE_MATCH must be exactly 0 or 1, got '$NO_IFACE_MATCH'" >&2
+      return 2 2>/dev/null || exit 2
+      ;;
+  esac
   CLUSTER_CONFIG="${CLUSTER_CONFIG:-$CONNECTX_REPO_ROOT/configs/cluster.yaml}"
   if [[ "$CLUSTER_CONFIG" != /* ]]; then
     CLUSTER_CONFIG="$CONNECTX_REPO_ROOT/$CLUSTER_CONFIG"
@@ -365,6 +374,25 @@ refuse_solo_ray_container_collision() {
 validate_local_topology_links() {
   local index route route_interface route_source local_ip peer_ip address_output link_output
   local -a rails interfaces local_cidrs peer_cidrs
+  if [[ "$NO_IFACE_MATCH" == "1" ]]; then
+    peer_ip="$HEAD_IP"
+    if [[ "$LOCAL_NODE_ID" == "$HEAD_NODE_ID" ]]; then
+      peer_ip="$WORKER_IP"
+    fi
+    echo "[cluster] NO_IFACE_MATCH=1: per-rail address, interface, and peer checks disabled"
+    if ! route="$(ip -4 route get "$peer_ip" from "$LOCAL_IP" 2>/dev/null)"; then
+      echo "[cluster] no route from rendezvous address $LOCAL_IP to peer $peer_ip" >&2
+      return 1
+    fi
+    echo "[cluster] rendezvous route: $route"
+    if ! ping -I "$LOCAL_IP" -W 2 -c 3 "$peer_ip"; then
+      echo "[cluster] rendezvous ping failed from $LOCAL_IP to peer $peer_ip" >&2
+      return 1
+    fi
+    require_connectx_rdma || return 1
+    echo "[cluster] local connectivity checks passed; end-to-end transport and speed require the NCCL all-reduce gate"
+    return 0
+  fi
   IFS=',' read -ra rails <<<"$TOPOLOGY_RAILS"
   IFS=',' read -ra interfaces <<<"$TOPOLOGY_LOCAL_INTERFACES"
   IFS=',' read -ra local_cidrs <<<"$TOPOLOGY_LOCAL_CIDRS"
@@ -418,6 +446,7 @@ require_connectx_rdma() {
   esac
   local iface links index line token link_name rdma_device rdma_port netdev
   local state physical_state selector selector_device selector_port selector_exact
+  local has_active_rdma=0
   local -a ifaces rails local_cidrs peer_cidrs fields
   local -a hca_selectors
   local -A expected_interfaces selected_interfaces matched_selectors
@@ -449,16 +478,21 @@ require_connectx_rdma() {
   for index in "${!ifaces[@]}"; do
     iface="${ifaces[$index]}"
     if [[ -z "$NCCL_IB_HCA" ]]; then
-      if awk -v iface="$iface" '
+      if awk -v iface="$iface" -v no_iface_match="$NO_IFACE_MATCH" '
         {active=0; linked=0; physical=0;
          for(i=1;i<NF;i++) {
            if($i=="state" && $(i+1)=="ACTIVE") active=1;
            if($i=="physical_state" && $(i+1)=="LINK_UP") physical=1;
-           if($i=="netdev" && $(i+1)==iface) linked=1;
+           if($i=="netdev" && ($(i+1)==iface || no_iface_match==1)) linked=1;
          }
          if(active && physical && linked) found=1}
         END {exit !found}' <<< "$links"; then
+        if [[ "$NO_IFACE_MATCH" == "1" ]]; then return 0; fi
         continue
+      fi
+      if [[ "$NO_IFACE_MATCH" == "1" ]]; then
+        echo "[cluster] NO_IFACE_MATCH=1 requires at least one ACTIVE/LINK_UP RDMA port with a netdev" >&2
+        return 1
       fi
       echo "[cluster] rail ${rails[$index]} local $iface ${local_cidrs[$index]} to peer ${peer_cidrs[$index]} has no ACTIVE/LINK_UP RDMA port" >&2
       return 1
@@ -498,14 +532,16 @@ require_connectx_rdma() {
         [[ -z "$selector_port" || "$rdma_port" == "$selector_port" ]] || continue
         matched_selectors["$selector"]=1
         if [[ -z "$netdev" ]]; then
+          if [[ "$NO_IFACE_MATCH" == "1" ]]; then continue; fi
           echo "[cluster] NCCL_IB_HCA selector '$selector' maps $rdma_device/$rdma_port without a netdev; configured rails $TOPOLOGY_RAILS map $TOPOLOGY_LOCAL_CIDRS to peers $TOPOLOGY_PEER_CIDRS" >&2
           return 1
         fi
-        if [[ -z "${expected_interfaces[$netdev]+x}" ]]; then
+        if [[ "$NO_IFACE_MATCH" == "0" && -z "${expected_interfaces[$netdev]+x}" ]]; then
           echo "[cluster] NCCL_IB_HCA selector '$selector' maps $rdma_device/$rdma_port to unconfigured netdev '$netdev'; configured rails $TOPOLOGY_RAILS map $TOPOLOGY_LOCAL_CIDRS to peers $TOPOLOGY_PEER_CIDRS" >&2
           return 1
         fi
         if [[ "$state" != "ACTIVE" || "$physical_state" != "LINK_UP" ]]; then
+          if [[ "$NO_IFACE_MATCH" == "1" ]]; then continue; fi
           for index in "${!ifaces[@]}"; do
             if [[ "${ifaces[$index]}" == "$netdev" ]]; then
               echo "[cluster] rail ${rails[$index]} local $netdev ${local_cidrs[$index]} to peer ${peer_cidrs[$index]} maps to NCCL_IB_HCA device $rdma_device/$rdma_port without ACTIVE/LINK_UP state" >&2
@@ -514,6 +550,7 @@ require_connectx_rdma() {
           done
         fi
         selected_interfaces["$netdev"]=1
+        has_active_rdma=1
       done
     done <<< "$links"
     for selector in "${hca_selectors[@]}"; do
@@ -523,6 +560,13 @@ require_connectx_rdma() {
         return 1
       fi
     done
+    if [[ "$NO_IFACE_MATCH" == "1" ]]; then
+      if [[ "$has_active_rdma" != "1" ]]; then
+        echo "[cluster] NCCL_IB_HCA='$NCCL_IB_HCA' selects no ACTIVE/LINK_UP RDMA port with a netdev" >&2
+        return 1
+      fi
+      return 0
+    fi
     for index in "${!ifaces[@]}"; do
       iface="${ifaces[$index]}"
       if [[ -z "${selected_interfaces[$iface]+x}" ]]; then
@@ -538,7 +582,7 @@ validate_cluster_runtime() {
   if ! runtime_facts="$(docker exec -i "$VLLM_CONTAINER" python3 - \
       "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
       "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
-      "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
+      "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$NO_IFACE_MATCH" \
       < "$CONNECTX_SCRIPT_DIR/cluster_runtime_fingerprint.py")"; then
     echo "[cluster] per-node Ray runtime or topology validation failed" >&2
     return 1
@@ -551,7 +595,7 @@ validate_local_ray_container() {
   docker exec -i "$VLLM_CONTAINER" python3 - \
       "$TOPOLOGY_SHA256" "$LOCAL_NODE_ID" "$LOCAL_IP" "$CX_IFACE" \
       "$NCCL_IB_DISABLE" "$NCCL_IB_HCA" "$NCCL_IB_GID_INDEX" \
-      "$NCCL_NET_PLUGIN" <<'PY'
+      "$NCCL_NET_PLUGIN" "$NO_IFACE_MATCH" <<'PY'
 import os
 import sys
 
@@ -564,6 +608,7 @@ import sys
     expected_ib_hca,
     expected_gid_index,
     expected_net_plugin,
+    expected_no_iface_match,
 ) = sys.argv[1:]
 expected_values = {
     "TOPOLOGY_SHA256": expected_topology_sha256,
@@ -575,7 +620,9 @@ expected_values = {
     "NCCL_IB_HCA": expected_ib_hca,
     "NCCL_IB_GID_INDEX": expected_gid_index,
     "NCCL_NET_PLUGIN": expected_net_plugin,
+    "NO_IFACE_MATCH": expected_no_iface_match,
 }
+os.environ.setdefault("NO_IFACE_MATCH", "0")
 mismatches = [
     f"{name}={os.environ.get(name, '')!r}, expected {expected!r}"
     for name, expected in expected_values.items()

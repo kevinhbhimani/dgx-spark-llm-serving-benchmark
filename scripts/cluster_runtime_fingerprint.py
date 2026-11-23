@@ -16,8 +16,9 @@ import ray
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
-EXPECTED_ARGUMENT_COUNT = 10
+EXPECTED_ARGUMENT_COUNT = 11
 RUNTIME_ENV_NAMES = (
+    "NO_IFACE_MATCH",
     "NCCL_SOCKET_IFNAME",
     "GLOO_SOCKET_IFNAME",
     "NCCL_IB_DISABLE",
@@ -33,6 +34,7 @@ RUNTIME_ENV_NAMES = (
     "TRANSFORMERS_OFFLINE",
 )
 SHARED_RUNTIME_ENV_NAMES = (
+    "NO_IFACE_MATCH",
     "NCCL_IB_DISABLE",
     "NCCL_DEBUG",
     "NCCL_DEBUG_SUBSYS",
@@ -56,7 +58,7 @@ if len(sys.argv) != EXPECTED_ARGUMENT_COUNT:
     raise SystemExit(
         "usage: cluster_runtime_fingerprint.py HEAD_IP WORKER_IP IMAGE "
         "RAY_VERSION TOPOLOGY_SHA256 HEAD_NODE_ID WORKER_NODE_ID "
-        "HEAD_IFACES WORKER_IFACES"
+        "HEAD_IFACES WORKER_IFACES NO_IFACE_MATCH"
     )
 
 (
@@ -69,7 +71,10 @@ if len(sys.argv) != EXPECTED_ARGUMENT_COUNT:
     worker_node_id,
     head_interfaces,
     worker_interfaces,
+    expected_no_iface_match,
 ) = sys.argv[1:]
+if expected_no_iface_match not in {"0", "1"}:
+    raise SystemExit("NO_IFACE_MATCH must be exactly 0 or 1")
 expected_nodes_by_ip: dict[str, str] = {
     head_ip: head_node_id,
     worker_ip: worker_node_id,
@@ -86,6 +91,7 @@ def facts(
     node_ids_by_ip: dict[str, str],
     interfaces_by_node: dict[str, str],
     topology_sha256: str,
+    no_iface_match: str,
 ) -> JsonObject:
     import torch
     import ray as node_ray
@@ -99,6 +105,12 @@ def facts(
     observed_node_id = os.environ.get("LOCAL_NODE_ID", "")
     socket_interfaces = os.environ.get("NCCL_SOCKET_IFNAME", "")
     gloo_interfaces = os.environ.get("GLOO_SOCKET_IFNAME", "")
+    observed_no_iface_match = os.environ.get("NO_IFACE_MATCH", "0")
+    if observed_no_iface_match != no_iface_match:
+        raise RuntimeError(
+            f"node {node_ip} NO_IFACE_MATCH mismatch: "
+            f"{observed_no_iface_match!r} != {no_iface_match!r}"
+        )
     if observed_topology_sha256 != topology_sha256:
         raise RuntimeError(
             f"node {node_ip} topology digest mismatch: "
@@ -155,6 +167,7 @@ def facts(
     runtime_environment: dict[str, str] = {
         name: os.environ.get(name, "") for name in RUNTIME_ENV_NAMES
     }
+    runtime_environment["NO_IFACE_MATCH"] = observed_no_iface_match
     shared_runtime_environment: dict[str, str] = {
         name: runtime_environment[name] for name in SHARED_RUNTIME_ENV_NAMES
     }
@@ -202,6 +215,7 @@ references = [
         expected_nodes_by_ip,
         expected_interfaces_by_node,
         expected_topology_sha256,
+        expected_no_iface_match,
     )
     for ip in expected_ips
 ]

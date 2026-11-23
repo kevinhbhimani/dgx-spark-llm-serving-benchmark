@@ -373,7 +373,7 @@ else
   if ! cluster_runtime_json="$(docker exec -i "$VLLM_CONTAINER" \
       python3 - "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
       "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
-      "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
+      "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$NO_IFACE_MATCH" \
       < "$HERE/cluster_runtime_fingerprint.py")"; then
     echo "[models] dual-node runtime identity preflight failed" >&2
     exit 1

@@ -38,9 +38,11 @@ file path.
 
 The loader does not configure Netplan, DNS, routes, SSH, or firmware. Configure
 the declared IPv4 addresses and prefixes on the listed interfaces before
-starting Ray. Keep the interfaces up and route each declared peer address
-through its paired interface. `ssh_target` must be reachable from the selected
-head for the read-only worker snapshot. SSH uses strict host-key checking.
+starting Ray. Strict mode requires each declared peer address to route through
+its paired interface. `NO_IFACE_MATCH=1` selects the relaxed checks described
+under [Verify the local fabric](#verify-the-local-fabric). `ssh_target` must
+be reachable from the selected head for the read-only worker snapshot. SSH
+uses strict host-key checking.
 
 ## Administrator prerequisites
 
@@ -98,10 +100,10 @@ Only the selected head needs `HF_TOKEN` for gated model downloads.
 
 ## Verify the local fabric
 
-Run the verifier on both systems. It checks each configured local address and
-prefix, link state, route interface, route source address, peer reachability,
-and requested RDMA mapping. `NCCL_IB_DISABLE=1` skips the RDMA port check and
-retains the address, route, link, and peer checks.
+Run the verifier on both systems. By default, it checks each configured local
+address and prefix, link state, route interface, route source address, peer
+reachability, and requested RDMA mapping. `NCCL_IB_DISABLE=1` skips the RDMA
+port check and retains the address, route, link, and peer checks.
 
 ```bash
 scripts/verify_connectx.sh
@@ -109,10 +111,45 @@ scripts/verify_connectx.sh
 
 `NCCL_IB_HCA`, `NCCL_IB_GID_INDEX`, and `NCCL_NET_PLUGIN` remain per-host
 environment settings. `NCCL_IB_HCA` accepts device names with an optional port,
-such as `mlx5_0:1,mlx5_1:1`. Each selected device must map to a configured
-interface with an active RDMA link, and the allowlist must cover every
-configured interface. The runtime fingerprint records effective settings
+such as `mlx5_0:1,mlx5_1:1`. In strict mode, each selected device must map to a
+configured interface with an active RDMA link, and the allowlist must cover
+every configured interface. The runtime fingerprint records effective settings
 from both containers.
+
+Set `NO_IFACE_MATCH=1` on both systems for a switched fabric that does not
+preserve per-rail route selection:
+
+```bash
+export CLUSTER_CONFIG=configs/switch-cluster.yaml
+export NO_IFACE_MATCH=1
+scripts/verify_connectx.sh
+```
+
+`NO_IFACE_MATCH` accepts exactly `0` or `1` and defaults to `0` when unset.
+Relaxed mode checks one route and source-address-bound ping between the
+configured rendezvous addresses. It records the selected route and skips
+per-rail address, interface, prefix, link, and peer validation. With RDMA
+enabled, it requires at least one local `ACTIVE`/`LINK_UP` RDMA port with a
+netdev. If `NCCL_IB_HCA` is set, every selector must match an existing port
+and at least one selected port must be active. Coverage of every declared
+rail is optional in relaxed mode. `NCCL_IB_DISABLE=1` retains the explicit
+TCP mode and skips local RDMA checks.
+
+The flag does not change the topology, socket interface lists, RDMA adapter
+selection, or host networking. The configured rendezvous addresses must be
+available on their hosts. NCCL and Gloo retain their configured interface
+lists. Runtime validation requires the same flag value on both Ray nodes
+and records it in the runtime fingerprint and campaign identity. Start Ray
+on both nodes with the selected value and use a fresh `OUT_DIR` after
+changing it.
+
+Ray startup and `verify_connectx.sh` do not measure end-to-end RDMA or speed.
+The campaign's all-reduce gate remains required. In RDMA mode, it requires
+`NET/IB` channel evidence on both ranks, at least 16 GB/s at 1 GiB, and at
+most 100 microseconds for the 8-byte collective by default. The existing
+`ALLREDUCE_MIN_1G_BUSBW_GBPS` and `ALLREDUCE_MAX_8B_LATENCY_S` overrides
+remain available. Passing this gate does not establish traffic on every
+configured port. See [RDMA readiness](rdma-readiness.md).
 
 Optional verbs-level tests can use the separate
 [perftest-suite-dgx-spark-cluster](https://github.com/dmihovch/perftest-suite-dgx-spark-cluster)

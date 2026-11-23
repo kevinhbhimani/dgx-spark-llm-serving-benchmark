@@ -284,6 +284,7 @@ else
     --value "campaign_labels=$CAMPAIGN_LABELS"
     --value "campaign_configs=$CAMPAIGN_CONFIGS"
     --value "network_policy=$NCCL_IB_DISABLE"
+    --value "no_iface_match=$NO_IFACE_MATCH"
     --value "ib_hca=${NCCL_IB_HCA:-}"
     --value "gid_index=${NCCL_IB_GID_INDEX:-}"
     --value "net_plugin=${NCCL_NET_PLUGIN:-}"
@@ -633,7 +634,7 @@ cluster_runtime_ok() {
   CLUSTER_RUNTIME_JSON="$(docker exec -i "$VLLM_CONTAINER" python3 - \
     "$HEAD_IP" "$WORKER_IP" "$VLLM_IMAGE" "$RAY_VERSION" \
     "$TOPOLOGY_SHA256" "$HEAD_NODE_ID" "$WORKER_NODE_ID" \
-    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" \
+    "$HEAD_CX_IFACE" "$WORKER_CX_IFACE" "$NO_IFACE_MATCH" \
     < scripts/cluster_runtime_fingerprint.py)" || return 1
   CLUSTER_RUNTIME_FINGERPRINT="$(printf '%s' "$CLUSTER_RUNTIME_JSON" \
     | sha256sum | awk '{print $1}')"

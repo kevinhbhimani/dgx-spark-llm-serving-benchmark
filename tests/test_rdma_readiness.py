@@ -77,7 +77,7 @@ class TransportEvidenceTests(unittest.TestCase):
 
 
 class ConnectXPreflightTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self: ConnectXPreflightTests) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -119,6 +119,7 @@ class ConnectXPreflightTests(unittest.TestCase):
             "CX_IFACE", "HEAD_CX_IFACE", "WORKER_CX_IFACE", "VLLM_HOST_IP",
             "NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "DIYA_HOST", "DIYA_IP",
             "HOEDUS_HOST", "HOEDUS_IP",
+            "NO_IFACE_MATCH",
         ):
             self.env.pop(variable, None)
         self.env.update(
@@ -143,13 +144,18 @@ class ConnectXPreflightTests(unittest.TestCase):
             else echo '1: cx0: <UP,LOWER_UP> state UP'; fi;;
           '-o link show dev cx1') echo '2: cx1: <UP,LOWER_UP> state UP';;
           '-4 route get 10.10.10.2 from 10.10.10.1')
+            [[ "${MOCK_ROUTE_FAIL:-0}" != 1 ]] || exit 1
             echo "10.10.10.2 from 10.10.10.1 dev ${MOCK_ROUTE_IFACE_RAIL0:-cx0} uid 1001";;
+          '-4 route get 10.10.10.1 from 10.10.10.2')
+            echo '10.10.10.1 from 10.10.10.2 dev mlx1 uid 1001';;
           '-4 route get 10.10.11.2 from 10.10.11.1')
             echo "10.10.11.2 from 10.10.11.1 dev ${MOCK_ROUTE_IFACE_RAIL1:-cx1} uid 1001";;
           '-s link show '*) echo counters;;
           *) exit 1;; esac''')
         self.command("ping", 'printf "ping %s\\n" "$*" >> "$CALL_LOG"; [[ "${MOCK_PING_FAIL:-0}" != 1 ]]')
-        self.command("rdma", '''echo 'link roce0/1 state ACTIVE physical_state LINK_UP netdev cx0'
+        self.command("rdma", '''[[ "${MOCK_RDMA_QUERY_FAIL:-0}" != 1 ]] || exit 1
+          [[ "${MOCK_NO_RDMA:-0}" != 1 ]] || exit 0
+          echo "link roce0/1 state ${MOCK_RDMA0_STATE:-ACTIVE} physical_state ${MOCK_RDMA0_PHYSICAL_STATE:-LINK_UP} netdev ${MOCK_RDMA0_NETDEV:-cx0}"
           if [ "${MOCK_MISSING_RAIL:-0}" != 1 ]; then
             echo 'link roce1/1 state ACTIVE physical_state LINK_UP netdev cx1'
           fi''')
@@ -427,6 +433,111 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("rail rail_1 local cx1", result.stderr)
 
+    def test_relaxed_mode_accepts_another_route_and_one_active_rdma_port(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        result = self.run_script(
+            "verify_connectx.sh", NO_IFACE_MATCH="1",
+            MOCK_ROUTE_IFACE_RAIL0="cx1", MOCK_MISSING_RAIL="1",
+            MOCK_RDMA0_NETDEV="fabric0",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("per-rail address, interface, and peer checks disabled", result.stdout)
+        self.assertIn("dev cx1", result.stdout)
+        self.assertIn("require the NCCL all-reduce gate", result.stdout)
+        self.assertEqual(
+            self.calls.read_text().splitlines(),
+            ["ping -I 10.10.10.1 -W 2 -c 3 10.10.10.2"],
+        )
+
+    def test_relaxed_worker_probes_the_head_rendezvous_address(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        result = self.run_script(
+            "verify_connectx.sh", NO_IFACE_MATCH="1", MOCK_HOSTNAME="lab-beta",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            self.calls.read_text().splitlines(),
+            ["ping -I 10.10.10.2 -W 2 -c 3 10.10.10.1"],
+        )
+
+    def test_relaxed_mode_requires_peer_reachability_and_local_rdma(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        failures = (
+            ({"MOCK_ROUTE_FAIL": "1"}, "no route from rendezvous address"),
+            ({"MOCK_PING_FAIL": "1"}, "rendezvous ping failed"),
+            ({"MOCK_NO_RDMA": "1"}, "requires at least one ACTIVE/LINK_UP"),
+            ({"MOCK_RDMA_QUERY_FAIL": "1"}, "cannot read RDMA link state"),
+            ({"MOCK_MISSING_RAIL": "1", "MOCK_RDMA0_STATE": "DOWN"},
+             "requires at least one ACTIVE/LINK_UP"),
+            ({"MOCK_MISSING_RAIL": "1", "MOCK_RDMA0_PHYSICAL_STATE": "DISABLED"},
+             "requires at least one ACTIVE/LINK_UP"),
+        )
+        for environment, error_message in failures:
+            with self.subTest(environment=environment):
+                result = self.run_script(
+                    "verify_connectx.sh", NO_IFACE_MATCH="1", **environment,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error_message, result.stderr)
+
+    def test_relaxed_mode_respects_the_rdma_allowlist_without_rail_coverage(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        for allowlist in ("=roce0:1", "roce0:1,roce1:1"):
+            with self.subTest(allowlist=allowlist):
+                result = self.run_script(
+                    "verify_connectx.sh", NO_IFACE_MATCH="1", NCCL_IB_HCA=allowlist,
+                    MOCK_RDMA0_NETDEV="fabric0",
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_script(
+            "verify_connectx.sh", NO_IFACE_MATCH="1",
+            NCCL_IB_HCA="roce0:1,roce1:1", MOCK_RDMA0_STATE="DOWN",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for allowlist, error_message in (
+            ("roce0:1", "selects no ACTIVE/LINK_UP"),
+            ("roce9:1", "has no RDMA port mapping"),
+            ("^roce0", "unsupported NCCL_IB_HCA selector"),
+        ):
+            with self.subTest(allowlist=allowlist):
+                result = self.run_script(
+                    "verify_connectx.sh", NO_IFACE_MATCH="1", NCCL_IB_HCA=allowlist,
+                    MOCK_RDMA0_STATE="DOWN",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error_message, result.stderr)
+
+    def test_relaxed_mode_rejects_rdma_ports_without_a_netdev(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        self.command("rdma", "echo 'link roce0/1 state ACTIVE physical_state LINK_UP'")
+        for allowlist in ("", "roce0:1"):
+            with self.subTest(allowlist=allowlist):
+                result = self.run_script(
+                    "verify_connectx.sh", NO_IFACE_MATCH="1", NCCL_IB_HCA=allowlist,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("RDMA port with a netdev", result.stderr)
+
+    def test_interface_match_flag_requires_zero_or_one(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        for value in ("", "true", "2"):
+            with self.subTest(value=value):
+                result = self.run_script("verify_connectx.sh", NO_IFACE_MATCH=value)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("NO_IFACE_MATCH must be exactly 0 or 1", result.stderr)
+        self.assertFalse(self.calls.exists())
+        result = self.run_script(
+            "verify_connectx.sh", NO_IFACE_MATCH="0", MOCK_MISSING_RAIL="1",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rail rail_1", result.stderr)
+
     def test_rdma_allowlist_must_cover_configured_interfaces(self) -> None:
         result = self.run_script(
             "verify_connectx.sh", NCCL_IB_HCA="roce0:1,roce1:1"
@@ -528,7 +639,9 @@ class ConnectXPreflightTests(unittest.TestCase):
             "spark_a spark_b 10.10.10.2 10.10.10.1 cx0,cx1",
         )
 
-    def test_ray_container_must_match_current_local_topology(self) -> None:
+    def test_ray_container_must_match_current_local_topology(
+        self: ConnectXPreflightTests,
+    ) -> None:
         self.command(
             "docker",
             '''script_input="$(cat)"
@@ -538,6 +651,7 @@ class ConnectXPreflightTests(unittest.TestCase):
               VLLM_HOST_IP="${MOCK_CONTAINER_IP:-$VLLM_HOST_IP}" \\
               NCCL_SOCKET_IFNAME="${MOCK_CONTAINER_IFACES:-$NCCL_SOCKET_IFNAME}" \\
               GLOO_SOCKET_IFNAME="${MOCK_CONTAINER_IFACES:-$GLOO_SOCKET_IFNAME}" \\
+              NO_IFACE_MATCH="${MOCK_CONTAINER_NO_IFACE_MATCH:-${NO_IFACE_MATCH:-0}}" \\
               /usr/bin/python3 - "${@:6}" <<< "$script_input"''',
         )
         validation = subprocess.run(
@@ -570,6 +684,20 @@ class ConnectXPreflightTests(unittest.TestCase):
         )
         self.assertNotEqual(stale_container.returncode, 0)
         self.assertIn("TOPOLOGY_SHA256", stale_container.stderr)
+        for requested_mode, container_mode in (("1", "1"), ("1", "0"), ("0", "1")):
+            with self.subTest(requested=requested_mode, container=container_mode):
+                result = subprocess.run(
+                    ["bash", "-c", 'source "$1"; validate_local_ray_container',
+                     "bash", str(ROOT / "scripts" / "connectx_env.sh")],
+                    env=dict(self.env, NO_IFACE_MATCH=requested_mode,
+                             MOCK_CONTAINER_NO_IFACE_MATCH=container_mode),
+                    capture_output=True, text=True, timeout=10,
+                )
+                if requested_mode == container_mode:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("NO_IFACE_MATCH", result.stderr)
 
     def test_invalid_scheduler_limit_fails_before_host_or_docker_operations(self):
         for value in ("0", "-1", "4.5", "abc"):
@@ -851,7 +979,9 @@ class ConnectXPreflightTests(unittest.TestCase):
         self.assertIn("--no-prune-cache-garbage", arguments)
         self.assertNotIn("meta-llama/Llama-3.1-8B-Instruct", arguments)
 
-    def test_socket_tuning_is_forwarded_to_ray_container(self):
+    def test_socket_tuning_is_forwarded_to_ray_container(
+        self: ConnectXPreflightTests,
+    ) -> None:
         self.command("docker", '''case "$*" in
           'inspect '*) echo true;;
           *'ray status'*) echo 'Active:';;
@@ -862,6 +992,40 @@ class ConnectXPreflightTests(unittest.TestCase):
         args = self.calls.read_text().splitlines()
         self.assertIn("NCCL_NSOCKS_PERTHREAD=4", args)
         self.assertIn("NCCL_SOCKET_NTHREADS=4", args)
+        self.assertIn("NO_IFACE_MATCH=0", args)
+
+    def test_relaxed_mode_is_forwarded_to_ray_container(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        self.command("docker", '''case "$*" in
+          'inspect '*) echo true;;
+          *'ray status'*) echo 'Active:';;
+          'run '*) printf '%s\\n' "$@" > "$CALL_LOG";; esac''')
+        result = self.run_script(
+            "start_ray.sh", "head", NO_IFACE_MATCH="1", NCCL_IB_DISABLE="1",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        arguments = self.calls.read_text().splitlines()
+        self.assertIn("NO_IFACE_MATCH=1", arguments)
+        self.assertIn("NCCL_IB_DISABLE=1", arguments)
+
+    def test_microbench_identity_distinguishes_interface_validation_modes(
+        self: ConnectXPreflightTests,
+    ) -> None:
+        for script in ("ray_allreduce_bench.sh", "interconnect_extra_bench.sh"):
+            with self.subTest(script=script):
+                environment = {
+                    "CLUSTER_RUNTIME_FINGERPRINT": "a" * 64,
+                    "CAMPAIGN_LOCK_FILE": str(self.root / "campaign.lock"),
+                }
+                strict = self.run_script(script, "--fingerprint-only", **environment)
+                relaxed = self.run_script(
+                    script, "--fingerprint-only", NO_IFACE_MATCH="1", **environment,
+                )
+                self.assertEqual(strict.returncode, 0, strict.stdout + strict.stderr)
+                self.assertEqual(relaxed.returncode, 0, relaxed.stdout + relaxed.stderr)
+                self.assertRegex(relaxed.stdout.strip(), r"^[0-9a-f]{64}$")
+                self.assertNotEqual(strict.stdout, relaxed.stdout)
 
     def test_interconnect_identity_is_bound_to_requested_policy(self):
         env = {"CLUSTER_RUNTIME_FINGERPRINT": "a" * 64,

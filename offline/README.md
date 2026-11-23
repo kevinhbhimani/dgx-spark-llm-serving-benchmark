@@ -147,7 +147,9 @@ scripts so the source uses the extracted cache.
 New bundles register `.offline-release.json` in the installed source directory.
 The receipt records the source identity, runtime artifact identities, and
 installation time. `.offline-client-environment.json` records the validated
-client environment.
+client environment. Local source additions, edits, moves, and deletions do not
+block registration or verification. Verification lists local differences from
+the recorded release.
 
 The source archive omits `.env` files and Git history. Configure each node's
 repo-local `.env` with `CLUSTER_CONFIG` when the default topology file does not
@@ -164,8 +166,7 @@ required baseline. Changes to `requirements.txt`, `requirements.lock`,
 `offline/Dockerfile.ray`, `scripts/runtime_defaults.sh`, or
 `scripts/ray-runtime-constraints.txt` require a runtime rebuild.
 
-On the build host, commit the packaged source changes and create an update
-against the original bundle:
+On the build host, create an update against the original bundle:
 
 ```bash
 python3 offline/source_release.py build-patch \
@@ -175,8 +176,10 @@ python3 offline/source_release.py build-patch \
 
 For a subsequent update, pass the previous source-update directory to `--base`.
 The output path must not exist. The command performs no image build, package
-download, model download, or hardware operation. Git-free build trees use
-their current files and record an unknown commit.
+download, model download, or hardware operation. Source snapshots include
+uncommitted changes and extra files, including backup cluster configurations.
+The generated source metadata records the Git commit and working-tree state.
+Git-free build trees record an unknown commit.
 
 Copy the update directory to each node. Stop campaigns and serving processes
 before applying updates. Patching an active campaign changes its source
@@ -188,8 +191,8 @@ SRC_DIR="$HOME/dgx-spark-llm-serving-benchmark"
 (cd "$PATCH_DIR" && sha256sum -c SHA256SUMS)
 ```
 
-For an installation made with an older bundle, register its unchanged source
-against that original bundle once. This command does not rebuild artifacts:
+For an installation made with an older bundle, register its source against
+that original bundle once. This command does not rebuild artifacts:
 
 ```bash
 python3 "$PATCH_DIR/source_release.py" register \
@@ -204,28 +207,33 @@ python3 "$PATCH_DIR/source_release.py" apply --source "$SRC_DIR"
 python3 "$PATCH_DIR/source_release.py" verify --source "$SRC_DIR"
 ```
 
-`check` validates the baseline, archive contents, dependency inputs, file modes,
-symlinks, and the staged source's client environment. It lists added, changed,
-and deleted paths without changing the installation. Unexpected source files
-and local edits block updates. `.env*`, results, caches, virtual environments,
-Git metadata, and `.offline-*` installation state are excluded from source
-comparison and remain in place. Model availability and serving behavior remain
-subject to the benchmark preflights. A changed model matrix may require
-separately transferring its pinned snapshots.
-Source paths with symlink parents are rejected. Replacing a managed directory
-with a symlink requires a fresh source installation.
+`check` validates the release receipt, archive contents, dependency inputs,
+file modes, symlinks, and the staged source's client environment. It lists local
+differences and the update's added, changed, and deleted paths without changing
+the installation. Local source differences do not block updates. Updates replace
+paths changed by the release and retain other local files, edits, moves, and
+deletions. A changed release path can replace a local file or directory.
+`.env*`, results, caches, virtual environments, Git metadata, and `.offline-*`
+installation state remain excluded from source snapshots. Model availability
+and serving behavior remain subject to the benchmark preflights. A changed model
+matrix may require separately transferring its pinned snapshots.
+Archive traversal and symlinks that escape the source tree are rejected.
 
-`apply` validates before changing files, saves the previous source under
-`.offline-releases/`, and records the new receipt after verification. A failed
-application restores the previous source. Replacement is atomic per file;
-stop benchmark processes before applying. A process interruption leaves a
+`apply` validates before changing files, saves the actual local source tree and
+receipt under `.offline-releases/`, and records the new receipt after
+verification. Backups include extra files, local edits, and the absence of moved
+or deleted files. A failed application restores that snapshot. Replacement is
+atomic per file; stop benchmark processes before applying. A process interruption leaves a
 transaction record that blocks further updates until rollback succeeds.
 
 ```bash
 python3 "$PATCH_DIR/source_release.py" rollback --source "$SRC_DIR"
 ```
 
-`rollback` restores the previous release or recovers an interrupted update.
+`rollback` restores the previous snapshot's release changes and receipt or
+recovers an interrupted update. Other local files remain in place. Snapshot
+restoration does not run the client environment check. Restored local files can
+differ from the recorded release.
 Retained source history contains no wheels, container images, or model weights.
 Recovery refuses to overwrite source edits that match neither recorded release.
 

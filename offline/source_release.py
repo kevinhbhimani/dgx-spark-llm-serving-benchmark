@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -160,7 +160,10 @@ def extract_source(archive_path: Path, root: Path) -> tuple[SourceFile, ...]:
                 SourceFile.inspect(root, name)
             else:
                 raise ValueError(f"unsupported source archive entry: {name}")
-    # commit.md is generated provenance and is part of the installed identity.
+    return installed_files(root)
+
+
+def installed_files(root: Path) -> tuple[SourceFile, ...]:
     entries = list(inventory(root))
     if (root / "commit.md").exists() or (root / "commit.md").is_symlink():
         entries.append(SourceFile.inspect(root, "commit.md"))
@@ -215,6 +218,7 @@ class Release:
     dependencies: dict[str, str]
     archive_sha256: str
     previous_source_sha256: str = ""
+    previous_snapshot_sha256: str = ""
 
     @property
     def source_sha256(self) -> str:
@@ -227,6 +231,7 @@ class Release:
             "dependencies": self.dependencies,
             "archive_sha256": self.archive_sha256,
             "previous_source_sha256": self.previous_source_sha256,
+            "previous_snapshot_sha256": self.previous_snapshot_sha256,
             "files": [asdict(entry) for entry in self.files],
         }
 
@@ -254,13 +259,14 @@ class Release:
         names = [entry.path for entry in entries]
         archive_hash = document.get("archive_sha256")
         previous_hash = document.get("previous_source_sha256", "")
+        snapshot_hash = document.get("previous_snapshot_sha256", "")
         if names != sorted(set(names)) or not isinstance(archive_hash, str) \
-                or not isinstance(previous_hash, str):
+                or not isinstance(previous_hash, str) or not isinstance(snapshot_hash, str):
             raise ValueError(f"invalid source release inventory: {path}")
-        for digest in (archive_hash, previous_hash, str(document.get("source_sha256"))):
+        for digest in (archive_hash, previous_hash, snapshot_hash, str(document.get("source_sha256"))):
             if digest and (len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest)):
                 raise ValueError(f"invalid release digest: {path}")
-        release = cls(tuple(entries), dict(dependencies), archive_hash, previous_hash)
+        release = cls(tuple(entries), dict(dependencies), archive_hash, previous_hash, snapshot_hash)
         if document.get("source_sha256") != release.source_sha256:
             raise ValueError(f"source manifest hash mismatch: {path}")
         return release
@@ -312,21 +318,17 @@ def bundle_release(bundle: Path) -> Release:
     return release
 
 
+def report_changes(before: tuple[SourceFile, ...], after: tuple[SourceFile, ...], prefix: str = "") -> None:
+    old = {entry.path: entry for entry in before}
+    new = {entry.path: entry for entry in after}
+    for name in sorted(old.keys() | new.keys()):
+        if old.get(name) != new.get(name):
+            action = "add" if name not in old else "delete" if name not in new else "change"
+            print(f"{prefix}{action} {name}")
+
+
 def verify_tree(root: Path, release: Release) -> None:
-    actual_files = {entry.path: entry for entry in inventory(root)}
-    metadata = root / "commit.md"
-    if metadata.exists() or metadata.is_symlink():
-        actual_files["commit.md"] = SourceFile.inspect(root, "commit.md")
-    for expected in release.files:
-        actual = actual_files.get(expected.path)
-        if actual is None:
-            raise ValueError(f"installed source is missing or unsafe: {expected.path}")
-        if actual != expected:
-            raise ValueError(f"installed source drift: {expected.path}")
-    expected_paths = {entry.path for entry in release.files}
-    unexpected = sorted(actual_files.keys() - expected_paths)
-    if unexpected:
-        raise ValueError("unexpected installed source path: " + ", ".join(unexpected[:10]))
+    report_changes(release.files, installed_files(root), "local ")
 
 
 def verify_payload(directory: Path, release: Release, stage: Path) -> None:
@@ -346,6 +348,7 @@ def source_snapshot(root: Path, output: Path, metadata: Path | None = None) -> N
         raise ValueError(f"output path already exists: {output}")
     entries = inventory(root)
     commit = "unknown"
+    worktree_state = "unknown"
     try:
         repository = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"], cwd=root, text=True,
@@ -356,27 +359,15 @@ def source_snapshot(root: Path, output: Path, metadata: Path | None = None) -> N
     if (root / ".git").exists() and (not repository or Path(repository).resolve() != root):
         raise ValueError("cannot validate the source tree's Git metadata")
     if repository and Path(repository).resolve() == root:
-        tracked = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=root, capture_output=True,
-            check=True, timeout=GIT_TIMEOUT_SECONDS,
-        ).stdout.decode().split("\0")
-        changed = subprocess.run(
-            ["git", "diff", "--name-only", "--no-renames", "-z", "HEAD"], cwd=root,
-            capture_output=True, check=True, timeout=GIT_TIMEOUT_SECONDS,
-        ).stdout.decode().split("\0")
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=root,
-            capture_output=True, check=True, timeout=GIT_TIMEOUT_SECONDS,
-        ).stdout.decode().split("\0")
-        dirty = [name for name in changed + untracked if name and is_packaged_path(root, name)]
-        if dirty:
-            raise ValueError("source release requires clean committed packaged files: " + ", ".join(dirty[:10]))
-        tracked_paths = set(tracked)
-        entries = tuple(entry for entry in entries if entry.path in tracked_paths)
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, text=True, capture_output=True,
             check=True, timeout=GIT_TIMEOUT_SECONDS,
         ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"], cwd=root,
+            text=True, capture_output=True, check=True, timeout=GIT_TIMEOUT_SECONDS,
+        ).stdout
+        worktree_state = "modified" if status else "clean"
     with tempfile.TemporaryDirectory(prefix="offline-source-") as temporary:
         stage = Path(temporary)
         for entry in entries:
@@ -390,7 +381,8 @@ def source_snapshot(root: Path, output: Path, metadata: Path | None = None) -> N
             shutil.copy2(metadata, stage / "commit.md")
         else:
             (stage / "commit.md").write_text(
-                f"# Source release metadata\n\n- Commit: {commit}\n", encoding="utf-8"
+                f"# Source release metadata\n\n- Commit: {commit}\n- Git working tree: {worktree_state}\n",
+                encoding="utf-8",
             )
         staged = list(inventory(stage))
         staged.append(SourceFile.inspect(stage, "commit.md"))
@@ -455,25 +447,28 @@ def validate_environment(root: Path, stage: Path) -> None:
     )
 
 
-def check_update(root: Path, current: Release, target: Release) -> None:
+def check_update(root: Path, current: Release, target: Release, restored_release: Release | None = None) -> None:
     if (root / TRANSACTION_FILENAME).exists():
         raise ValueError("interrupted source update; run rollback before applying another update")
     if target.previous_source_sha256 != current.source_sha256:
         raise ValueError("source update requires a different installed baseline")
-    if current.dependencies != target.dependencies:
+    runtime_release = target if restored_release is None else restored_release
+    if current.dependencies != runtime_release.dependencies:
         raise ValueError("source update requires a different runtime bundle")
-    verify_tree(root, current)
-    old_paths = {entry.path for entry in current.files}
-    for entry in target.files:
-        path = destination(root, entry.path)
-        if entry.path not in old_paths and (path.exists() or path.is_symlink()):
-            replaces_managed_directory = path.is_dir() and not path.is_symlink() and any(
-                name.startswith(entry.path + "/") for name in old_paths
-            )
-            if replaces_managed_directory and entry.kind == "symlink":
-                raise ValueError(f"directory/symlink transitions are unsupported: {entry.path}")
-            if not replaces_managed_directory:
-                raise ValueError(f"source update would overwrite a local path: {entry.path}")
+
+
+def updated_files(current: Release, target: Release, installed: tuple[SourceFile, ...]) -> tuple[SourceFile, ...]:
+    old = {entry.path: entry for entry in current.files}
+    new = {entry.path: entry for entry in target.files}
+    changed_paths = {name for name in old.keys() | new.keys() if old.get(name) != new.get(name)}
+    replacements = [entry for entry in target.files if entry.path in changed_paths]
+    retained = [
+        entry for entry in installed if entry.path not in changed_paths and not any(
+            entry.path.startswith(replacement.path + "/") or replacement.path.startswith(entry.path + "/")
+            for replacement in replacements
+        )
+    ]
+    return tuple(sorted(retained + replacements, key=lambda entry: entry.path))
 
 
 def activate_tree(root: Path, stage: Path, old: Release, new: Release, force: bool = False) -> None:
@@ -509,47 +504,62 @@ def activate_tree(root: Path, stage: Path, old: Release, new: Release, force: bo
 
 
 def save_history(root: Path, release: Release) -> Path:
-    history = root / HISTORY_DIRECTORY / release.source_sha256
+    entries = installed_files(root)
+    snapshot_hash = hashlib.sha256(canonical_json({
+        "release": release.serialize(), "files": [asdict(entry) for entry in entries],
+    })).hexdigest()
+    history = root / HISTORY_DIRECTORY / snapshot_hash
     if not history.exists():
         history.parent.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".offline-save-", dir=history.parent) as temporary:
             stage = Path(temporary)
-            write_archive(root, release.files, stage / SOURCE_ARCHIVE)
-            saved = Release(release.files, release.dependencies, sha256_file(stage / SOURCE_ARCHIVE), release.previous_source_sha256)
+            write_archive(root, entries, stage / SOURCE_ARCHIVE)
+            saved = Release(entries, {**release.dependencies, **dependency_files(entries)}, sha256_file(stage / SOURCE_ARCHIVE))
             write_json(stage / RELEASE_FILENAME, saved.serialize())
+            with tempfile.TemporaryDirectory(prefix="offline-source-") as extracted:
+                verify_payload(stage, saved, Path(extracted))
+            receipt = root / RECEIPT_FILENAME
+            write_json(stage / RECEIPT_FILENAME, read_mapping(receipt) if receipt.exists() else release.serialize())
             os.rename(stage, history)
     return history
 
 
-def apply_update(root: Path, patch: Path, check_only: bool) -> None:
+def apply_update(root: Path, patch: Path, check_only: bool, restored_release: Release | None = None) -> None:
     current = Release.read(root / RECEIPT_FILENAME)
     target = Release.read(patch / RELEASE_FILENAME)
-    check_update(root, current, target)
+    check_update(root, current, target, restored_release)
     with tempfile.TemporaryDirectory(prefix="offline-source-") as temporary:
         stage = Path(temporary)
         verify_payload(patch, target, stage)
-        validate_environment(root, stage)
-        old = {entry.path: entry for entry in current.files}
-        new = {entry.path: entry for entry in target.files}
-        for name in sorted(old.keys() | new.keys()):
-            if old.get(name) != new.get(name):
-                print(("add" if name not in old else "delete" if name not in new else "change") + " " + name)
+        if restored_release is None:
+            validate_environment(root, stage)
+        verify_tree(root, current)
+        report_changes(current.files, target.files)
         if check_only:
             print(f"source update validated: {current.source_sha256} -> {target.source_sha256}")
             return
         with installation_lock(root):
-            check_update(root, current, target)
-            save_history(root, current)
-            write_json(root / TRANSACTION_FILENAME, {"before": current.serialize(), "after": target.serialize()})
+            check_update(root, current, target, restored_release)
+            history = save_history(root, current)
+            before = replace(Release.read(history / RELEASE_FILENAME), previous_snapshot_sha256=history.name)
+            entries = updated_files(current, target, before.files)
+            after = Release(entries, {**target.dependencies, **dependency_files(entries)}, "")
+            receipt = replace(
+                target if restored_release is None else restored_release,
+                previous_source_sha256=current.source_sha256, previous_snapshot_sha256=history.name,
+            )
+            write_json(root / TRANSACTION_FILENAME, {"before": before.serialize(), "after": after.serialize()})
             try:
-                activate_tree(root, stage, current, target)
+                activate_tree(root, stage, before, after)
+                if installed_files(root) != after.files:
+                    raise ValueError("installed source differs from the planned update")
                 verify_tree(root, target)
-                write_receipt(root, target)
+                write_receipt(root, receipt)
                 (root / TRANSACTION_FILENAME).unlink()
             except BaseException:
                 recover_transaction(root)
                 raise
-    print(f"installed source SHA-256: {target.source_sha256}")
+    print(f"installed source SHA-256: {receipt.source_sha256}")
 
 
 def recover_transaction(root: Path) -> None:
@@ -571,7 +581,7 @@ def recover_transaction(root: Path) -> None:
             if path.exists() or path.is_symlink():
                 if SourceFile.inspect(root, name) not in (old.get(name), new.get(name)):
                     raise ValueError(f"cannot recover over a local edit: {name}")
-        history = root / HISTORY_DIRECTORY / before.source_sha256
+        history = root / HISTORY_DIRECTORY / (before.previous_snapshot_sha256 or before.source_sha256)
         saved = Release.read(history / RELEASE_FILENAME)
         extracted = stage / "source"
         extracted.mkdir()
@@ -579,8 +589,15 @@ def recover_transaction(root: Path) -> None:
         # Recovery rewrites the baseline because an interrupted file may still
         # have its pre-update contents while the journal describes the target.
         activate_tree(root, extracted, after, before, force=True)
+        recovered = {entry.path: entry for entry in installed_files(root)}
+        if any(recovered.get(name) != old.get(name) for name in old.keys() | new.keys()):
+            raise ValueError("recovered source differs from its snapshot")
         verify_tree(root, before)
-        write_receipt(root, before)
+        receipt = history / RECEIPT_FILENAME
+        if receipt.exists():
+            write_json(root / RECEIPT_FILENAME, read_mapping(receipt))
+        else:
+            write_receipt(root, before)
         (root / TRANSACTION_FILENAME).unlink()
 
 
@@ -641,14 +658,16 @@ def main() -> int:
                     current = Release.read(root / RECEIPT_FILENAME)
                     if not current.previous_source_sha256:
                         raise ValueError("installation has no previous source release")
-                    history = root / HISTORY_DIRECTORY / current.previous_source_sha256
+                    history = root / HISTORY_DIRECTORY / (current.previous_snapshot_sha256 or current.previous_source_sha256)
                     previous = Release.read(history / RELEASE_FILENAME)
+                    previous_receipt = history / RECEIPT_FILENAME
+                    restored_release = Release.read(previous_receipt) if previous_receipt.exists() else previous
                     with tempfile.TemporaryDirectory(prefix="offline-source-") as temporary:
                         patch = Path(temporary)
                         shutil.copy2(history / SOURCE_ARCHIVE, patch / SOURCE_ARCHIVE)
                         target = Release(previous.files, previous.dependencies, previous.archive_sha256, current.source_sha256)
                         write_json(patch / RELEASE_FILENAME, target.serialize())
-                        apply_update(root, patch, False)
+                        apply_update(root, patch, False, restored_release)
             else:
                 apply_update(root, arguments.patch.resolve(), arguments.command == "check")
     except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError) as exc:
